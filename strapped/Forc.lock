@@ -1,0 +1,17 @@
+[[package]]
+name = "std"
+version = "0.69.1"
+source = "registry+std?0.69.1#QmbPunScay4xpfHKpxQ71dFKXSiyJuPP8P8YhgX5Dkmzm9!"
+
+[[package]]
+name = "strapped"
+source = "member"
+dependencies = [
+    "std",
+    "vrf_abi",
+]
+
+[[package]]
+name = "vrf_abi"
+source = "path+from-root-CF3A891176BDDA24"
+dependencies = ["std"]

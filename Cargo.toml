@@ -1,0 +1,13 @@
+[package]
+name = "strapped-contract"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+fuels = "0.70.0"
+tokio = { version = "1.12", features = ["rt", "macros"] }
+
+[[test]]
+harness = true
+name = "integration_tests"
+path = "tests/harness.rs"
