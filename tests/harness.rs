@@ -126,22 +126,23 @@ async fn can_get_contract_id() {
 }
 
 #[tokio::test]
-async fn roll_dice__changes_the_last_roll() {
+async fn roll_dice__adds_roll_to_roll_history() {
     let ctx = TestContext::new().await;
     let owner = ctx.owner();
     // given
     let (instance, _id) = get_contract_instance(owner.clone()).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
-    let number = 34;
-    vrf_instance
-        .methods()
-        .set_number(number)
-        .call()
-        .await
-        .unwrap();
+    let first_number = 10;
+    let second_number = 34;
     instance
         .methods()
         .set_vrf_contract_id(Bits256(*vrf_id))
+        .call()
+        .await
+        .unwrap();
+    vrf_instance
+        .methods()
+        .set_number(first_number)
         .call()
         .await
         .unwrap();
@@ -154,13 +155,36 @@ async fn roll_dice__changes_the_last_roll() {
         .call()
         .await
         .unwrap();
+    // update changelog
+    vrf_instance
+        .methods()
+        .set_number(second_number)
+        .call()
+        .await
+        .unwrap();
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
 
     // then
-    let actual = instance.methods().last_roll().call().await.unwrap().value;
+    let actual = instance
+        .methods()
+        .roll_history()
+        .call()
+        .await
+        .unwrap()
+        .value;
+    // 0-35
+    // where 35 is Twelve and 0 is Two
+    // 10 % 36
+    // so 10 is Six
     // 34 % 36
-    // where 35 is 12 and 0 is 2
-    // so 34 is 11
-    let expected = strapped_types::Roll::Eleven;
+    // so 34 is Eleven
+    let expected = vec![strapped_types::Roll::Six, strapped_types::Roll::Eleven];
     assert_eq!(expected, actual);
 }
 
