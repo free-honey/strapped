@@ -54,16 +54,19 @@ impl Strapped for Contract {
         let rng_abi = abi(VRF, rng_contract_id);
         let random_number = rng_abi.get_random();
         let roll = u64_to_roll(random_number);
-        storage.roll_history.push(roll)
+        match roll {
+            Roll::Seven => {
+                storage.roll_history.clear();
+            }
+            _ => {
+                storage.roll_history.push(roll);
+            }
+        }
     }
 
     #[storage(read)]
     fn roll_history() -> Vec<Roll> {
-        let mut vec = Vec::new();
-        for entry in storage.roll_history.iter() {
-            vec.push(entry.read());
-        }
-        vec
+        storage.roll_history.load_vec()
     }
 
 #[storage(write)]

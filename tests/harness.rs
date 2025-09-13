@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use crate::strapped_types::Roll;
 use fuels::types::Bits256;
 use fuels::{prelude::*, types::ContractId};
 
@@ -155,7 +156,7 @@ async fn roll_dice__adds_roll_to_roll_history() {
         .call()
         .await
         .unwrap();
-    // update changelog
+    // update vrf
     vrf_instance
         .methods()
         .set_number(second_number)
@@ -247,4 +248,77 @@ async fn place_bet__fails_if_funds_not_transferred() {
 
     // then
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn roll_dice__if_seven_the_board_is_cleared() {
+    let ctx = TestContext::new().await;
+    let owner = ctx.owner();
+    // given
+    let (instance, _id) = get_contract_instance(owner.clone()).await;
+    let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
+    let first_number = 10;
+    let second_number = 34;
+    instance
+        .methods()
+        .set_vrf_contract_id(Bits256(*vrf_id))
+        .call()
+        .await
+        .unwrap();
+    // update vrf
+    vrf_instance
+        .methods()
+        .set_number(first_number)
+        .call()
+        .await
+        .unwrap();
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+    // update vrf
+    vrf_instance
+        .methods()
+        .set_number(second_number)
+        .call()
+        .await
+        .unwrap();
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+    // update vrf to something that will resolve to Seven
+    let third_number = 19; // 22 % 36 = 22 which is Seven
+    vrf_instance
+        .methods()
+        .set_number(third_number)
+        .call()
+        .await
+        .unwrap();
+
+    // when
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+
+    // then
+    let actual = instance
+        .methods()
+        .roll_history()
+        .call()
+        .await
+        .unwrap()
+        .value;
+    let expected: Vec<Roll> = Vec::new();
+    assert_eq!(expected, actual);
 }
