@@ -3,6 +3,8 @@ contract;
 mod contract_types;
 
 use std::storage::storage_vec::*;
+use std::call_frames::msg_asset_id;
+use std::context::msg_amount;
 use vrf_abi::VRF;
 use ::contract_types::*;
 
@@ -10,6 +12,7 @@ use ::contract_types::*;
 storage {
     last_roll: Roll = Roll::Seven,
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
+    chip_asset_id: AssetId = AssetId::zero(),
 
     // two_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
     // three_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
@@ -34,7 +37,10 @@ abi Strapped {
     #[storage(write)]
     fn set_vrf_contract_id(id: b256);
 
-    #[storage(read, write)]
+    #[storage(write)]
+    fn set_chip_asset_id(id: AssetId);
+
+    #[storage(read, write), payable]
     fn place_bet(roll: Roll, bet: Bet, amount: u64);
 
     #[storage(read)]
@@ -61,8 +67,23 @@ impl Strapped for Contract {
         storage.vrf_contract_id.write(id);
     }
 
-    #[storage(read, write)]
+    #[storage(write)]
+    fn set_chip_asset_id(id: AssetId) {
+        storage.chip_asset_id.write(id);
+    }
+
+    #[storage(read, write), payable]
     fn place_bet(roll: Roll, bet: Bet, amount: u64) {
+        // check
+        match bet {
+            Bet::Chip => {
+                let chip_asset_id = storage.chip_asset_id.read();
+                require(msg_asset_id() == chip_asset_id, "Must bet with chips");
+                require(msg_amount() == amount, "Must send the correct amount of chips");
+            },
+            Bet::Strap(strap) => {
+            }
+        }
         let caller = msg_sender().unwrap();
         match roll {
             Roll::Six => {

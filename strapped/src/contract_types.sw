@@ -55,7 +55,7 @@ pub struct Strap {
 }
 
 pub enum Bet {
-    Base: (),
+    Chip: (),
     Strap: Strap
 }
 
@@ -102,7 +102,7 @@ impl Hash for Modifier {
 impl Hash for Bet {
     fn hash(self, ref mut state: Hasher) {
         match self {
-            Bet::Base => {
+            Bet::Chip => {
                 0_u8.hash(state);
             }
             Bet::Strap(strap) => {
