@@ -13,18 +13,9 @@ storage {
     roll_history: StorageVec<Roll> = StorageVec {},
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
     chip_asset_id: AssetId = AssetId::zero(),
-
-    // two_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // three_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // four_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // five_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    six_bets: StorageMap<Identity, StorageVec<(Bet, u64)>> = StorageMap::<Identity, StorageVec<(Bet, u64)>> {},
-    seven_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // eight_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // nine_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // ten_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // eleven_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
-    // twelve_bets: StorageMap<(Identity, Bet), u64> = StorageMap::<(Identity, Bet), u64> {},
+    current_game: u64 = 0,
+    // (game_id, bettor, roll) -> list of (bet, amount)
+    bets: StorageMap<(u64, Identity, Roll), StorageVec<(Bet, u64)>> = StorageMap {},
 }
 
 abi Strapped {
@@ -92,9 +83,11 @@ impl Strapped for Contract {
             }
         }
         let caller = msg_sender().unwrap();
+        let current_game = storage.current_game.read();
         match roll {
             Roll::Six => {
-                storage.six_bets.get(caller).push((bet, amount));
+                let key = (current_game, caller, Roll::Six);
+                storage.bets.get(key).push((bet, amount));
             },
             _ => {}
         }
@@ -102,18 +95,16 @@ impl Strapped for Contract {
 
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, u64)> {
-        let mut results = Vec::new();
         let caller = msg_sender().unwrap();
         match roll {
             Roll::Six => {
-                let list = storage.six_bets.get(caller); 
-                for entry in list.iter() {
-                    results.push(entry.read());
-                }
+                let key = (storage.current_game.read(), caller, Roll::Six);
+                storage.bets.get(key).load_vec()
             },
-            _ => {}
+            _ => {
+                Vec::new()
+            }
         }
-        results
     }
 }
 

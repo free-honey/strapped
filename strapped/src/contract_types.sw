@@ -1,5 +1,6 @@
 library;
 
+use std::storage::storage_vec::*;
 use std::hash::*;
 
 pub enum Roll {
@@ -57,6 +58,24 @@ pub struct Strap {
 pub enum Bet {
     Chip: (),
     Strap: Strap
+}
+
+impl Hash for Roll {
+    fn hash(self, ref mut state: Hasher) {
+        match self {
+            Roll::Two => { 2_u8.hash(state); }
+            Roll::Three => { 3_u8.hash(state); }
+            Roll::Four => { 4_u8.hash(state); }
+            Roll::Five => { 5_u8.hash(state); }
+            Roll::Six => { 6_u8.hash(state); }
+            Roll::Seven => { 7_u8.hash(state); }
+            Roll::Eight => { 8_u8.hash(state); }
+            Roll::Nine => { 9_u8.hash(state); }
+            Roll::Ten => { 10_u8.hash(state); }
+            Roll::Eleven => { 11_u8.hash(state); }
+            Roll::Twelve => { 12_u8.hash(state); }
+        }
+    }
 }
 
 impl Hash for StrapKind {
