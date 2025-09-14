@@ -8,14 +8,14 @@ use std::context::msg_amount;
 use vrf_abi::VRF;
 use ::contract_types::*;
 
+type GameId = u64;
 
 storage {
-    roll_history: StorageVec<Roll> = StorageVec {},
+    roll_history: StorageMap<GameId, StorageVec<Roll>> = StorageMap {},
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
     chip_asset_id: AssetId = AssetId::zero(),
-    current_game: u64 = 0,
-    // (game_id, bettor, roll) -> list of (bet, amount)
-    bets: StorageMap<(u64, Identity, Roll), StorageVec<(Bet, u64)>> = StorageMap {},
+    current_game: GameId = 0,
+    bets: StorageMap<(GameId, Identity, Roll), StorageVec<(Bet, u64)>> = StorageMap {},
 }
 
 abi Strapped {
@@ -24,6 +24,7 @@ abi Strapped {
 
     #[storage(read)]
     fn roll_history() -> Vec<Roll>;
+
 
     #[storage(write)]
     fn set_vrf_contract_id(id: b256);
@@ -45,22 +46,24 @@ impl Strapped for Contract {
         let rng_abi = abi(VRF, rng_contract_id);
         let random_number = rng_abi.get_random();
         let roll = u64_to_roll(random_number);
+        let current_game = storage.current_game.read();
         match roll {
             Roll::Seven => {
-                storage.roll_history.clear();
+                storage.current_game.write(current_game + 1);
             }
             _ => {
-                storage.roll_history.push(roll);
+                storage.roll_history.get(current_game).push(roll);
             }
         }
     }
 
     #[storage(read)]
     fn roll_history() -> Vec<Roll> {
-        storage.roll_history.load_vec()
+        let current_game = storage.current_game.read();
+        storage.roll_history.get(current_game).load_vec()
     }
 
-#[storage(write)]
+    #[storage(write)]
     fn set_vrf_contract_id(id: b256) {
         storage.vrf_contract_id.write(id);
     }

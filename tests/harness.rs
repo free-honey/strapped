@@ -251,7 +251,7 @@ async fn place_bet__fails_if_funds_not_transferred() {
 }
 
 #[tokio::test]
-async fn roll_dice__if_seven_the_board_is_cleared() {
+async fn roll_dice__if_seven_rolled_move_to_next_game() {
     let ctx = TestContext::new().await;
     let owner = ctx.owner();
     // given
