@@ -1,12 +1,16 @@
 contract;
 
-mod contract_types;
+pub mod contract_types;
+pub mod helpers;
 
 use std::storage::storage_vec::*;
 use std::call_frames::msg_asset_id;
 use std::context::msg_amount;
+
 use vrf_abi::VRF;
+
 use ::contract_types::*;
+use ::helpers::*;
 
 type GameId = u64;
 
@@ -25,7 +29,6 @@ abi Strapped {
     #[storage(read)]
     fn roll_history() -> Vec<Roll>;
 
-
     #[storage(write)]
     fn set_vrf_contract_id(id: b256);
 
@@ -37,6 +40,12 @@ abi Strapped {
 
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, u64)>;
+
+    #[storage(read)]
+    fn current_game_id() -> GameId;
+
+    #[storage(read, write)]
+    fn claim_rewards(game_id: GameId);
 }
 
 impl Strapped for Contract {
@@ -109,35 +118,14 @@ impl Strapped for Contract {
             }
         }
     }
-}
 
-// Convert a u64 to a Roll based on 2-d6 probabilities
-// i.e. 7 is the most likely roll, 2 and 12 are the least likely
-// starting at the bottom give 1/36 chance to roll a 2, 2/36 chance to roll a 3, etc
-fn u64_to_roll(num: u64) -> Roll {
-    let modulo = num % 36;
+    #[storage(read)]
+    fn current_game_id() -> GameId {
+        storage.current_game.read()
+    }
 
-    if modulo == 0 {
-        Roll::Two
-    } else if modulo <= 2 {
-        Roll::Three
-    } else if modulo <= 5 {
-        Roll::Four
-    } else if modulo <= 9 {
-        Roll::Five
-    } else if modulo <= 14 {
-        Roll::Six
-    } else if modulo <= 20 {
-        Roll::Seven
-    } else if modulo <= 25 {
-        Roll::Eight
-    } else if modulo <= 29 {
-        Roll::Nine
-    } else if modulo <= 32 {
-        Roll::Ten
-    } else if modulo <= 34 {
-        Roll::Eleven
-    } else {
-        Roll::Twelve
+    #[storage(read, write)]
+    fn claim_rewards(game_id: GameId) {
+       // TODO
     }
 }
