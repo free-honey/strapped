@@ -330,6 +330,49 @@ async fn roll_dice__if_seven_rolled_move_to_next_game() {
     assert_eq!(expected, actual);
 }
 
+async fn roll_dice__if_seven_adds_new_strap_reward() {
+    let ctx = TestContext::new().await;
+    let owner = ctx.owner();
+    // given
+    let (instance, _id) = get_contract_instance(owner.clone()).await;
+    let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
+    instance
+        .methods()
+        .set_vrf_contract_id(Bits256(*vrf_id))
+        .call()
+        .await
+        .unwrap();
+    // update vrf to something that will resolve to Seven
+    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
+    vrf_instance
+        .methods()
+        .set_number(seven_vrf_number)
+        .call()
+        .await
+        .unwrap();
+
+    // when
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+
+    // then
+    let expected_roll = Roll::Eight;
+    let actual = instance
+        .methods()
+        .strap_rewards(expected_roll)
+        .call()
+        .await
+        .unwrap()
+        .value;
+    let expected = vec![2];
+    assert_eq!(expected, actual);
+}
+
 #[tokio::test]
 async fn claim_rewards__adds_chips_to_wallet() {
     let ctx = TestContext::new().await;

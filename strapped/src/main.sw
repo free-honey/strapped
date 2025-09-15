@@ -55,6 +55,9 @@ abi Strapped {
 
     #[storage(read, write), payable]
     fn fund();
+
+    #[storage(read)]
+    fn strap_rewards() -> Vec<(Roll, Strap)>;
 }
 
 impl Strapped for Contract {
