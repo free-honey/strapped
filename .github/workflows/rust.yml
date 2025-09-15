@@ -30,7 +30,7 @@ jobs:
       - name: Add fuelup to PATH
         run: echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
       - name: Install Forc components
-          fuelup toolchain install latest
+        run: fuelup toolchain install latest
       #
       #          fuelup component add forc forc-fmt forc-lsp
       - name: Add Forc to PATH
