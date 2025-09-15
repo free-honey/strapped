@@ -28,11 +28,11 @@ jobs:
       - name: Install Fuel toolchain
         run: |
           curl -sSf https://install.fuel.network | sh
+          export PATH="$HOME/.fuelup/bin:$PATH"
           echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
-          fuelup toolchain install latest
-          fuelup component add forc forc-fmt forc-lsp
-      - name: Add Forc to PATH
-        run: export PATH="${HOME}/.fuelup/bin:${PATH}"
+          "$HOME/.fuelup/bin/fuelup" --version
+          "$HOME/.fuelup/bin/fuelup" toolchain install latest
+          "$HOME/.fuelup/bin/fuelup" component add forc forc-fmt forc-lsp
       - name: Check path
         run: pwd && ls -la
       - name: check forc version
