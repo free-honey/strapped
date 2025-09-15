@@ -81,7 +81,7 @@ async fn get_wallet() -> WalletUnlocked {
 
 struct TestContext {
     alice: WalletUnlocked,
-    bob: WalletUnlocked,
+    // bob: WalletUnlocked,
     owner: WalletUnlocked,
 }
 
@@ -109,18 +109,18 @@ impl TestContext {
         .await
         .unwrap();
         let owner = wallets.pop().unwrap();
-        let bob = wallets.pop().unwrap();
+        // let bob = wallets.pop().unwrap();
         let alice = wallets.pop().unwrap();
-        Self { alice, bob, owner }
+        Self { alice, owner }
     }
 
     pub fn alice(&self) -> WalletUnlocked {
         self.alice.clone()
     }
 
-    pub fn bob(&self) -> WalletUnlocked {
-        self.bob.clone()
-    }
+    // pub fn bob(&self) -> WalletUnlocked {
+    //     self.bob.clone()
+    // }
 
     pub fn owner(&self) -> WalletUnlocked {
         self.owner.clone()

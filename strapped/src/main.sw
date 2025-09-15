@@ -65,6 +65,8 @@ impl Strapped for Contract {
         let random_number = rng_abi.get_random();
         let roll = u64_to_roll(random_number);
         let current_game_id = storage.current_game_id.read();
+        let old_roll_index = storage.roll_index.read();
+        storage.roll_index.write(old_roll_index + 1);
         match roll {
             Roll::Seven => {
                 storage.current_game_id.write(current_game_id + 1);
@@ -148,7 +150,7 @@ impl Strapped for Contract {
                 Roll::Six => {
                     let six_bets = storage.bets.get((game_id, identity, Roll::Six)).load_vec();
                     for (bet, amount, roll_index) in six_bets.iter() {
-                        if roll_index < index{
+                        if roll_index <= index{
                             match bet {
                                 Bet::Chip => {
                                     total_chips_winnings += six_payout(amount);
@@ -160,6 +162,7 @@ impl Strapped for Contract {
                             }
                         }
                     }
+                    storage.bets.get((game_id, identity, Roll::Six)).clear();
                 },
                 _ => {}
             }
