@@ -1,4 +1,4 @@
 # strapped smart contract
 
-#### massively-multiplayer online strip-craps game 😈
+#### massively-multiplayer strip-craps game 😈
 
