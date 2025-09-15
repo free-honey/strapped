@@ -23,27 +23,14 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      #      - name: Install Forc
-      #        run: curl https://install.fuel.network | sh
       - name: Install Fuel toolchain
         run: curl -sSf https://install.fuel.network | sh
       - name: Add fuelup to PATH
         run: echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
       - name: Install Forc components
         run: fuelup toolchain install latest
-      #
-      #          fuelup component add forc forc-fmt forc-lsp
       - name: Add Forc to PATH
         run: export PATH="${HOME}/.fuelup/bin:${PATH}"
-      - name: Check path
-        run: pwd && ls -la
-      - name: check forc version
-        #        run: forc --version && which forc
-        run: |
-          echo "PATH=$PATH"
-          fuelup show
-          which forc
-          forc --version
       - name: Build
         run: cargo build --verbose
       - name: Run tests
