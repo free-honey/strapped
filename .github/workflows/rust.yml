@@ -27,6 +27,8 @@ jobs:
         run: curl https://install.fuel.network | sh
       - name: Check path
         run: pwd && ls -la
+      - name: check forc version
+        run: forc --version && which forc
       - name: Build
         run: cargo build --verbose
       - name: Run tests
