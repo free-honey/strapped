@@ -25,6 +25,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Install Forc
         run: curl https://install.fuel.network | sh
+      - name: Check path
+        run: pwd && ls -la
       - name: Build
         run: cargo build --verbose
       - name: Run tests
