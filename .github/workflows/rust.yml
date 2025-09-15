@@ -25,6 +25,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Install Forc
         run: curl https://install.fuel.network | sh
+      - name: Add Forc to PATH
+        run: export PATH="${HOME}/.fuelup/bin:${PATH}"
       - name: Check path
         run: pwd && ls -la
       - name: check forc version
