@@ -25,6 +25,7 @@ storage {
     current_game_id: GameId = 0,
     bets: StorageMap<(GameId, Identity, Roll), StorageVec<(Bet, Amount, RollIndex)>> = StorageMap {},
     house_pot: u64 = 0,
+    strap_rewards: StorageVec<(Roll, Strap)> = StorageVec {},
 
 }
 
@@ -73,6 +74,11 @@ impl Strapped for Contract {
         match roll {
             Roll::Seven => {
                 storage.current_game_id.write(current_game_id + 1);
+                let new_straps = generate_straps(random_number);
+                storage.strap_rewards.clear();
+                for (roll, strap) in new_straps.iter() {
+                    storage.strap_rewards.push((roll, strap));
+                }
             }
             _ => {
                 storage.roll_history.get(current_game_id).push(roll);
@@ -187,8 +193,21 @@ impl Strapped for Contract {
         require(amount > 0, "Must send some amount to fund the house pot");
         storage.house_pot.write(storage.house_pot.read() + amount);
     }
+
+    #[storage(read)]
+    fn strap_rewards() -> Vec<(Roll, Strap)> {
+        storage.strap_rewards.load_vec()
+    }
 }
 
 fn six_payout(principal: u64) -> u64 {
     principal * 2
+}
+
+fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
+    let mut straps: Vec<(Roll, Strap)> = Vec::new();
+    let roll = Roll::Eight;
+    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    straps.push((roll, strap));
+    straps
 }

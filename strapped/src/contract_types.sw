@@ -55,6 +55,16 @@ pub struct Strap {
     modifier: Modifier,
 }
 
+impl Strap {
+    pub fn new(level: u8, kind: StrapKind, modifier: Modifier) -> Strap {
+        Strap {
+            level,
+            kind,
+            modifier,
+        }
+    }
+}
+
 pub enum Bet {
     Chip: (),
     Strap: Strap

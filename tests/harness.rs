@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::strapped_types::Roll;
+use crate::strapped_types::*;
 use fuels::types::Bits256;
 use fuels::{prelude::*, types::ContractId};
 
@@ -330,6 +330,7 @@ async fn roll_dice__if_seven_rolled_move_to_next_game() {
     assert_eq!(expected, actual);
 }
 
+#[tokio::test]
 async fn roll_dice__if_seven_adds_new_strap_reward() {
     let ctx = TestContext::new().await;
     let owner = ctx.owner();
@@ -361,15 +362,20 @@ async fn roll_dice__if_seven_adds_new_strap_reward() {
         .unwrap();
 
     // then
-    let expected_roll = Roll::Eight;
     let actual = instance
         .methods()
-        .strap_rewards(expected_roll)
+        .strap_rewards()
         .call()
         .await
         .unwrap()
         .value;
-    let expected = vec![2];
+    let expected_roll = Roll::Eight;
+    let expected_strap = Strap {
+        level: 1,
+        kind: StrapKind::Shirt,
+        modifier: Modifier::Nothing,
+    };
+    let expected = vec![(expected_roll, expected_strap)];
     assert_eq!(expected, actual);
 }
 
