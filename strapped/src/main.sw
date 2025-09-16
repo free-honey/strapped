@@ -76,6 +76,7 @@ impl Strapped for Contract {
                 storage.current_game_id.write(current_game_id + 1);
                 let new_straps = generate_straps(random_number);
                 storage.strap_rewards.clear();
+                storage.roll_index.write(0);
                 for (roll, strap) in new_straps.iter() {
                     storage.strap_rewards.push((roll, strap));
                 }
@@ -117,27 +118,15 @@ impl Strapped for Contract {
         let caller = msg_sender().unwrap();
         let current_game_id = storage.current_game_id.read();
         let roll_index = storage.roll_index.read();
-        match roll {
-            Roll::Six => {
-                let key = (current_game_id, caller, Roll::Six);
-                storage.bets.get(key).push((bet, amount, roll_index));
-            },
-            _ => {}
-        }
+        let key = (current_game_id, caller, roll);
+        storage.bets.get(key).push((bet, amount, roll_index));
     }
 
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, Amount, RollIndex)> {
         let caller = msg_sender().unwrap();
-        match roll {
-            Roll::Six => {
-                let key = (storage.current_game_id.read(), caller, Roll::Six);
-                storage.bets.get(key).load_vec()
-            },
-            _ => {
-                Vec::new()
-            }
-        }
+        let key = (storage.current_game_id.read(), caller, roll);
+        storage.bets.get(key).load_vec()
     }
 
     #[storage(read)]
@@ -155,26 +144,28 @@ impl Strapped for Contract {
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
         for roll in rolls.iter() {
-            match roll {
-                Roll::Six => {
-                    let six_bets = storage.bets.get((game_id, identity, Roll::Six)).load_vec();
-                    for (bet, amount, roll_index) in six_bets.iter() {
-                        if roll_index <= index{
-                            match bet {
-                                Bet::Chip => {
-                                    total_chips_winnings += six_payout(amount);
-                                    total_chips_winnings -= amount; 
+            let bets = storage.bets.get((game_id, identity, roll)).load_vec();
+            for (bet, amount, roll_index) in bets.iter() {
+                if roll_index <= index {
+                    match bet {
+                        Bet::Chip => {
+                            let bet_winnings = match roll {
+                                Roll::Six => six_payout(amount),
+                                Roll::Eight => {
+                                    eight_payout(amount)
                                 },
-                                Bet::Strap(strap) => {
-                                    // TODO: implement strap betting
-                                }
-                            }
+                                _ => 0,
+                            };
+                            total_chips_winnings += bet_winnings; 
+                            total_chips_winnings -= amount; 
+                        },
+                        Bet::Strap(strap) => {
+                            // TODO: implement strap betting
                         }
                     }
-                    storage.bets.get((game_id, identity, Roll::Six)).clear();
-                },
-                _ => {}
+                }
             }
+            storage.bets.get((game_id, identity, Roll::Six)).clear();
             index += 1;
         }
         if total_chips_winnings > 0 {
@@ -201,6 +192,10 @@ impl Strapped for Contract {
 }
 
 fn six_payout(principal: u64) -> u64 {
+    principal * 2
+}
+
+fn eight_payout(principal: u64) -> u64 {
     principal * 2
 }
 
