@@ -3,6 +3,7 @@
 use crate::strapped_types::*;
 use fuels::types::Bits256;
 use fuels::{prelude::*, types::ContractId};
+use hex::FromHex;
 
 pub mod strapped_types {
     use fuels::macros::abigen;
@@ -828,7 +829,7 @@ async fn claim_rewards__can_receive_strap_token() {
 
     // place bet
     let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
+    let bet = Bet::Chip;
     let roll = Roll::Eight;
     let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
     alice_instance
@@ -881,13 +882,16 @@ async fn claim_rewards__can_receive_strap_token() {
         .unwrap();
 
     // when
-    // let expected_strap_reward = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    // let strap_asset_id = AssetId::new(sub_id);
-    // let wallet_balance = ctx
-    //     .alice()
-    //     .get_asset_balance(&strap_asset_id)
-    //     .await
-    //     .unwrap();
+    // Strap { level: 1, kind: StrapKind::Shirt, modifier: Modifier::Nothing }
+    // hardcoded because I don't know how to construct it yet
+    let expected_asset_id_str = "550a72d9fcc2d2655e12bf8982a187431245bbc52eba14598f4c3b8255f0f02a";
+    let expected_asset_id =
+        AssetId::from(<[u8; 32]>::from_hex(expected_asset_id_str).expect("Decoding failed"));
+    let wallet_balance = ctx
+        .alice()
+        .get_asset_balance(&expected_asset_id)
+        .await
+        .unwrap();
     alice_instance
         .methods()
         .claim_rewards(bet_game_id)
@@ -897,14 +901,11 @@ async fn claim_rewards__can_receive_strap_token() {
         .unwrap();
 
     // then
-    // let expected = wallet_balance + 1;
-    let map = ctx
+    let expected = wallet_balance + 1;
+    let actual = ctx
         .alice()
-        // .get_asset_balance(&strap_asset_id)
-        .get_balances()
+        .get_asset_balance(&expected_asset_id)
         .await
         .unwrap();
-    let list: Vec<_> = map.iter().collect();
-    panic!("{:?}", list);
-    // assert_eq!(expected, actual);
+    assert_eq!(expected, actual);
 }
