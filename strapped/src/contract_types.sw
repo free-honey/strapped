@@ -55,6 +55,16 @@ pub struct Strap {
     modifier: Modifier,
 }
 
+impl Strap {
+    pub fn new(level: u8, kind: StrapKind, modifier: Modifier) -> Strap {
+        Strap {
+            level,
+            kind,
+            modifier,
+        }
+    }
+}
+
 pub enum Bet {
     Chip: (),
     Strap: Strap
@@ -74,6 +84,25 @@ impl Hash for Roll {
             Roll::Ten => { 10_u8.hash(state); }
             Roll::Eleven => { 11_u8.hash(state); }
             Roll::Twelve => { 12_u8.hash(state); }
+        }
+    }
+}
+
+impl PartialEq for Roll {
+    fn eq(self, other: Roll) -> bool {
+        match (self, other) {
+            (Roll::Two, Roll::Two) => true,
+            (Roll::Three, Roll::Three) => true,
+            (Roll::Four, Roll::Four) => true,
+            (Roll::Five, Roll::Five) => true,
+            (Roll::Six, Roll::Six) => true,
+            (Roll::Seven, Roll::Seven) => true,
+            (Roll::Eight, Roll::Eight) => true,
+            (Roll::Nine, Roll::Nine) => true,
+            (Roll::Ten, Roll::Ten) => true,
+            (Roll::Eleven, Roll::Eleven) => true,
+            (Roll::Twelve, Roll::Twelve) => true,
+            _ => false,
         }
     }
 }
@@ -118,6 +147,14 @@ impl Hash for Modifier {
     }
 }
 
+impl Hash for Strap {
+    fn hash(self, ref mut state: Hasher) {
+        self.level.hash(state);
+        self.kind.hash(state);
+        self.modifier.hash(state);
+    }
+}
+
 impl Hash for Bet {
     fn hash(self, ref mut state: Hasher) {
         match self {
@@ -126,9 +163,7 @@ impl Hash for Bet {
             }
             Bet::Strap(strap) => {
                 1_u8.hash(state);
-                strap.level.hash(state);
-                strap.kind.hash(state);
-                strap.modifier.hash(state);
+                strap.hash(state);
             }
         }
     }
