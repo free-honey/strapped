@@ -7,6 +7,7 @@ use std::storage::storage_vec::*;
 use std::call_frames::msg_asset_id;
 use std::context::msg_amount;
 use std::asset::transfer;
+use std::asset::mint_to;
 
 use vrf_abi::VRF;
 
@@ -143,17 +144,20 @@ impl Strapped for Contract {
         let rolls = storage.roll_history.get(game_id).load_vec();
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
+        let mut rewards: Vec<SubId> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
                         Bet::Chip => {
+                            let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
+                            for sub_id in roll_rewards.iter() {
+                                rewards.push(sub_id);
+                            }
                             let bet_winnings = match roll {
                                 Roll::Six => six_payout(amount),
-                                Roll::Eight => {
-                                    eight_payout(amount)
-                                },
+                                Roll::Eight => eight_payout(amount),
                                 _ => 0,
                             };
                             total_chips_winnings += bet_winnings; 
@@ -171,6 +175,10 @@ impl Strapped for Contract {
         if total_chips_winnings > 0 {
             let chip_asset_id = storage.chip_asset_id.read();
             transfer(identity, chip_asset_id, total_chips_winnings);
+            for sub_id in rewards.iter() {
+                mint_to(identity, sub_id, 1);
+            }
+        
         } else {
             require(false, "No winnings to claim");
         }
@@ -205,4 +213,23 @@ fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
     let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     straps.push((roll, strap));
     straps
+}
+
+fn rewards_for_roll(storage: Vec<(Roll, Strap)>, roll: Roll) -> Vec<SubId> {
+    let mut rewards: Vec<SubId> = Vec::new();
+    for (reward_roll, strap) in storage.iter() {
+        if reward_roll == roll {
+            let sub_id = strap_sub_id(strap);
+            rewards.push(sub_id);
+        }
+    }
+    rewards
+}
+
+
+use std::hash::*;
+fn strap_sub_id(strap: Strap) -> SubId {
+    let mut hasher = Hasher::new();
+    strap.hash(hasher);
+    hasher.sha256()
 }

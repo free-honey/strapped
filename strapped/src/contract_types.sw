@@ -88,6 +88,25 @@ impl Hash for Roll {
     }
 }
 
+impl PartialEq for Roll {
+    fn eq(self, other: Roll) -> bool {
+        match (self, other) {
+            (Roll::Two, Roll::Two) => true,
+            (Roll::Three, Roll::Three) => true,
+            (Roll::Four, Roll::Four) => true,
+            (Roll::Five, Roll::Five) => true,
+            (Roll::Six, Roll::Six) => true,
+            (Roll::Seven, Roll::Seven) => true,
+            (Roll::Eight, Roll::Eight) => true,
+            (Roll::Nine, Roll::Nine) => true,
+            (Roll::Ten, Roll::Ten) => true,
+            (Roll::Eleven, Roll::Eleven) => true,
+            (Roll::Twelve, Roll::Twelve) => true,
+            _ => false,
+        }
+    }
+}
+
 impl Hash for StrapKind {
     fn hash(self, ref mut state: Hasher) {
         match self {
@@ -128,6 +147,14 @@ impl Hash for Modifier {
     }
 }
 
+impl Hash for Strap {
+    fn hash(self, ref mut state: Hasher) {
+        self.level.hash(state);
+        self.kind.hash(state);
+        self.modifier.hash(state);
+    }
+}
+
 impl Hash for Bet {
     fn hash(self, ref mut state: Hasher) {
         match self {
@@ -136,9 +163,7 @@ impl Hash for Bet {
             }
             Bet::Strap(strap) => {
                 1_u8.hash(state);
-                strap.level.hash(state);
-                strap.kind.hash(state);
-                strap.modifier.hash(state);
+                strap.hash(state);
             }
         }
     }

@@ -848,14 +848,6 @@ async fn claim_rewards__can_receive_strap_token() {
         .unwrap()
         .value;
 
-    let my_bets = alice_instance
-        .methods()
-        .get_my_bets(Roll::Eight)
-        .call()
-        .await
-        .unwrap()
-        .value;
-
     // roll the correct number
     let first_number = 25; // 25 % 36 = 25 which is Eight
     vrf_instance
@@ -871,14 +863,6 @@ async fn claim_rewards__can_receive_strap_token() {
         .call()
         .await
         .unwrap();
-
-    let rolls = instance
-        .methods()
-        .roll_history()
-        .call()
-        .await
-        .unwrap()
-        .value;
 
     // roll seven
     let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
@@ -897,26 +881,30 @@ async fn claim_rewards__can_receive_strap_token() {
         .unwrap();
 
     // when
-    let strap_asset_id = (*contract_id).into();
-    let wallet_balance = ctx
-        .alice()
-        .get_asset_balance(&strap_asset_id)
-        .await
-        .unwrap();
+    // let expected_strap_reward = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    // let strap_asset_id = AssetId::new(sub_id);
+    // let wallet_balance = ctx
+    //     .alice()
+    //     .get_asset_balance(&strap_asset_id)
+    //     .await
+    //     .unwrap();
     alice_instance
         .methods()
         .claim_rewards(bet_game_id)
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
         .call()
         .await
         .unwrap();
 
     // then
-    let expected = wallet_balance + 1;
-    let actual = ctx
+    // let expected = wallet_balance + 1;
+    let map = ctx
         .alice()
-        .get_asset_balance(&strap_asset_id)
+        // .get_asset_balance(&strap_asset_id)
+        .get_balances()
         .await
         .unwrap();
-    assert_eq!(expected, actual);
+    let list: Vec<_> = map.iter().collect();
+    panic!("{:?}", list);
+    // assert_eq!(expected, actual);
 }
