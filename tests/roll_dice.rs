@@ -1,4 +1,9 @@
-use super::*;
+#![allow(non_snake_case)]
+use fuels::types::Bits256;
+use strapped_contract::get_contract_instance;
+use strapped_contract::strapped_types::{Modifier, Roll, Strap, StrapKind};
+use strapped_contract::test_helpers::*;
+
 #[tokio::test]
 async fn roll_dice__adds_roll_to_roll_history() {
     let ctx = TestContext::new().await;

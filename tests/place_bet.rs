@@ -1,4 +1,7 @@
-use super::*;
+#![allow(non_snake_case)]
+use fuels::prelude::{AssetId, CallParameters};
+use strapped_contract::test_helpers::*;
+use strapped_contract::{get_contract_instance, strapped_types};
 
 #[tokio::test]
 async fn place_bet__adds_bets_to_list() {

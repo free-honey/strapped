@@ -1,4 +1,15 @@
-use super::*;
+#![allow(non_snake_case)]
+use fuels::accounts::ViewOnlyAccount;
+use fuels::prelude::{AssetId, CallParameters, VariableOutputPolicy};
+use fuels::tx::ContractIdExt;
+use fuels::types::Bits256;
+
+use strapped_contract::strapped_types::{Bet, Modifier, Roll, Strap, StrapKind};
+use strapped_contract::test_helpers::*;
+use strapped_contract::{
+    get_contract_instance, separate_contract_instance, strap_to_sub_id, strapped_types,
+};
+
 #[tokio::test]
 async fn claim_rewards__adds_chips_to_wallet() {
     let ctx = TestContext::new().await;

@@ -3,10 +3,15 @@ name = "strapped-contract"
 version = "0.1.0"
 edition = "2024"
 
-[dev-dependencies]
+[lib]
+name = "strapped_contract"
+path = "src/lib.rs"
+
+[dependencies]
 fuels = "0.70.0"
-hex = "0.4.3"
 tokio = { version = "1.12", features = ["rt", "macros"] }
+
+[dev-dependencies]
 
 
 [[test]]
