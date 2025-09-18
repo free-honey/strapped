@@ -7,15 +7,18 @@ edition = "2024"
 name = "strapped_contract"
 path = "src/lib.rs"
 
+[features]
+default = []
+test-helpers = []
+
 [dependencies]
 fuels = "0.70.0"
 tokio = { version = "1.12", features = ["rt", "macros"] }
 
 [dev-dependencies]
 
-
 [[test]]
-harness = true
 name = "integration_tests"
 path = "tests/harness.rs"
+required-features = ["test-helpers"]
 

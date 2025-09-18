@@ -1,7 +1,20 @@
-use crate::strapped_types::{Modifier, Strap, StrapKind};
-use fuels::prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked};
-use fuels::types::Bytes32;
+use crate::strapped_types::{
+    Modifier,
+    Strap,
+    StrapKind,
+};
+use fuels::{
+    prelude::{
+        Contract,
+        ContractId,
+        LoadConfiguration,
+        TxPolicies,
+        WalletUnlocked,
+    },
+    types::Bytes32,
+};
 
+#[cfg(any(test, feature = "test-helpers"))]
 pub mod test_helpers;
 
 pub mod strapped_types {
