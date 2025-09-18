@@ -2,6 +2,7 @@ library;
 
 use std::storage::storage_vec::*;
 use std::hash::*;
+use std::array_conversions::b256::*;
 
 pub enum Roll {
     Two: (),
@@ -166,6 +167,44 @@ impl Hash for Bet {
                 strap.hash(state);
             }
         }
+    }
+}
+
+impl Strap {
+    pub fn into_sub_id(self) -> SubId {
+        let mut sub_id = [0; 32];
+        sub_id[0] = self.level;
+        sub_id[1] = match self.kind {
+            StrapKind::Shirt => 0_u8,
+            StrapKind::Pants => 1_u8,
+            StrapKind::Shoes => 2_u8,
+            StrapKind::Hat => 3_u8,
+            StrapKind::Glasses => 4_u8,
+            StrapKind::Watch => 5_u8,
+            StrapKind::Ring => 6_u8,
+            StrapKind::Necklace => 7_u8,
+            StrapKind::Earring => 8_u8,
+            StrapKind::Bracelet => 9_u8,
+            StrapKind::Tattoo => 10_u8,
+            StrapKind::Piercing => 11_u8,
+            StrapKind::Coat => 12_u8,
+            StrapKind::Scarf => 13_u8,
+            StrapKind::Gloves => 14_u8,
+            StrapKind::Belt => 15_u8,
+        };
+        sub_id[2] = match self.modifier {
+            Modifier::Nothing => 0_u8,
+            Modifier::Burnt => 1_u8,
+            Modifier::Lucky => 2_u8,
+            Modifier::Holy => 3_u8,
+            Modifier::Holey => 4_u8,
+            Modifier::Scotch => 5_u8,
+            Modifier::Soaked => 6_u8,
+            Modifier::Moldy => 7_u8,
+            Modifier::Starched => 8_u8,
+            Modifier::Evil => 9_u8,
+        };
+        b256::from_be_bytes(sub_id)
     }
 }
 

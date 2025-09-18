@@ -19,45 +19,63 @@ type Amount = u64;
 type RollIndex = u64;
 
 storage {
+    /// History of rolls for each game
     roll_history: StorageMap<GameId, StorageVec<Roll>> = StorageMap {},
+    /// Current roll of the active game
     roll_index: RollIndex = 0,
+    /// ID of the VRF contract to use for randomness
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
+    /// Asset ID of the chips used for betting
     chip_asset_id: AssetId = AssetId::zero(),
+    /// Current game ID
     current_game_id: GameId = 0,
+    /// Bets placed by (game_id, identity, roll) -> Vec<(bet, amount, roll_index)>
     bets: StorageMap<(GameId, Identity, Roll), StorageVec<(Bet, Amount, RollIndex)>> = StorageMap {},
+    /// Total chips in the house pot
     house_pot: u64 = 0,
+    /// Straps to be rewarded for the current game when it ends
     strap_rewards: StorageVec<(Roll, Strap)> = StorageVec {},
 
 }
 
 abi Strapped {
+    /// Roll the dice and process the results
     #[storage(read, write)]
     fn roll_dice();
 
+    /// Get the history of rolls for the current game
     #[storage(read)]
     fn roll_history() -> Vec<Roll>;
 
+    /// Set the VRF contract ID
     #[storage(write)]
     fn set_vrf_contract_id(id: b256);
 
+    /// Set the chip asset ID
     #[storage(write)]
     fn set_chip_asset_id(id: AssetId);
 
+    /// Place a bet on a specific roll with a specific bet type and amount
     #[storage(read, write), payable]
     fn place_bet(roll: Roll, bet: Bet, amount: u64);
 
+    /// Get the caller's bets for a specific roll in the current game
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, u64, RollIndex)>;
 
+    /// Get the current game ID
     #[storage(read)]
     fn current_game_id() -> GameId;
 
+    /// Claim rewards for a specific past game
     #[storage(read, write)]
     fn claim_rewards(game_id: GameId);
 
+    /// Fund the house pot with chips
     #[storage(read, write), payable]
     fn fund();
 
+    /// Get the straps to be rewarded for the current game
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap)>;
 }
@@ -140,21 +158,28 @@ impl Strapped for Contract {
         let current_game_id = storage.current_game_id.read();
         require(game_id < current_game_id, "Can only claim rewards for past games");
         let identity = msg_sender().unwrap();
-        // TODO: handle other rolls besides Six
         let rolls = storage.roll_history.get(game_id).load_vec();
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
         let mut rewards: Vec<SubId> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
+            let mut received_reward_for_roll = false;
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
                         Bet::Chip => {
-                            let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
-                            for sub_id in roll_rewards.iter() {
-                                rewards.push(sub_id);
+                            if !received_reward_for_roll {
+                                let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
+                                for sub_id in roll_rewards.iter() {
+                                    rewards.push(sub_id);
+                                    received_reward_for_roll = true;
+                                }
                             }
+                            // let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
+                            // for sub_id in roll_rewards.iter() {
+                            //     rewards.push(sub_id);
+                            // }
                             let bet_winnings = match roll {
                                 Roll::Six => six_payout(amount),
                                 Roll::Eight => eight_payout(amount),
@@ -215,21 +240,13 @@ fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
     straps
 }
 
-fn rewards_for_roll(storage: Vec<(Roll, Strap)>, roll: Roll) -> Vec<SubId> {
+fn rewards_for_roll(available_straps: Vec<(Roll, Strap)>, roll: Roll) -> Vec<SubId> {
     let mut rewards: Vec<SubId> = Vec::new();
-    for (reward_roll, strap) in storage.iter() {
+    for (reward_roll, strap) in available_straps.iter() {
         if reward_roll == roll {
-            let sub_id = strap_sub_id(strap);
+            let sub_id = strap.into_sub_id();
             rewards.push(sub_id);
         }
     }
     rewards
-}
-
-
-use std::hash::*;
-fn strap_sub_id(strap: Strap) -> SubId {
-    let mut hasher = Hasher::new();
-    strap.hash(hasher);
-    hasher.sha256()
 }
