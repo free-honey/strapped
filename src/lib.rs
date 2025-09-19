@@ -14,7 +14,6 @@ use fuels::{
     types::Bytes32,
 };
 
-#[cfg(any(test, feature = "test-helpers"))]
 pub mod test_helpers;
 
 pub mod strapped_types {

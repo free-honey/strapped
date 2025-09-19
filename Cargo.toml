@@ -9,7 +9,6 @@ path = "src/lib.rs"
 
 [features]
 default = []
-test-helpers = []
 
 [dependencies]
 fuels = "0.70.0"

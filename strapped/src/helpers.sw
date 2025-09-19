@@ -32,3 +32,11 @@ pub fn u64_to_roll(num: u64) -> Roll {
         Roll::Twelve
     }
 }
+
+pub fn saturating_succ(level: u8) -> u8 {
+    if level == 255 {
+        255
+    } else {
+        level + 1
+    }
+}
