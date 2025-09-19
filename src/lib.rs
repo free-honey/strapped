@@ -14,7 +14,6 @@ use fuels::{
     types::Bytes32,
 };
 
-#[cfg(any(test, feature = "test-helpers"))]
 pub mod test_helpers;
 
 pub mod strapped_types {
@@ -33,6 +32,15 @@ pub mod vrf_types {
         name = "VRFContract",
         abi = "vrf-contract/out/debug/vrf-contract-abi.json"
     ));
+}
+
+pub fn contract_id() -> ContractId {
+    Contract::load_from(
+        "strapped/out/debug/strapped.bin",
+        LoadConfiguration::default(),
+    )
+    .unwrap()
+    .contract_id()
 }
 
 pub async fn get_contract_instance(

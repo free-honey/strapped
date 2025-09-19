@@ -51,9 +51,9 @@ pub enum Modifier {
 }
 
 pub struct Strap {
-    level: u8,
-    kind: StrapKind,
-    modifier: Modifier,
+    pub level: u8,
+    pub kind: StrapKind,
+    pub modifier: Modifier,
 }
 
 impl Strap {

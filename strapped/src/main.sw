@@ -129,11 +129,15 @@ impl Strapped for Contract {
             Bet::Chip => {
                 let chip_asset_id = storage.chip_asset_id.read();
                 require(msg_asset_id() == chip_asset_id, "Must bet with chips");
-                require(msg_amount() == amount, "Must send the correct amount of chips");
             },
             Bet::Strap(strap) => {
+                let strap_sub_id = strap.into_sub_id();
+                let contract_id = ContractId::this();
+                let asset_id = AssetId::new(contract_id, strap_sub_id);
+                require(msg_asset_id() == asset_id, "Must bet with the correct strap");
             }
         }
+        require(msg_amount() == amount, "Must send the correct amount of chips");
         let caller = msg_sender().unwrap();
         let current_game_id = storage.current_game_id.read();
         let roll_index = storage.roll_index.read();
@@ -161,25 +165,22 @@ impl Strapped for Contract {
         let rolls = storage.roll_history.get(game_id).load_vec();
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
-        let mut rewards: Vec<SubId> = Vec::new();
+        let mut rewards: Vec<(SubId, u64)> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
-            let mut received_reward_for_roll = false;
+            let mut received_chip_reward_for_roll = false;
+            let mut bet_index = 0;
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
                         Bet::Chip => {
-                            if !received_reward_for_roll {
+                            if !received_chip_reward_for_roll {
                                 let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
                                 for sub_id in roll_rewards.iter() {
-                                    rewards.push(sub_id);
-                                    received_reward_for_roll = true;
+                                    rewards.push((sub_id, 1));
+                                    received_chip_reward_for_roll = true;
                                 }
                             }
-                            // let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
-                            // for sub_id in roll_rewards.iter() {
-                            //     rewards.push(sub_id);
-                            // }
                             let bet_winnings = match roll {
                                 Roll::Six => six_payout(amount),
                                 Roll::Eight => eight_payout(amount),
@@ -189,21 +190,31 @@ impl Strapped for Contract {
                             total_chips_winnings -= amount; 
                         },
                         Bet::Strap(strap) => {
-                            // TODO: implement strap betting
+                            let Strap { level, kind, modifier } = strap;
+                            let new_level = saturating_succ(level);
+                            let new_strap = Strap::new(new_level, kind, modifier);
+                            let strap_sub_id = new_strap.into_sub_id();
+                            let contract_id = ContractId::this();
+                            let asset_id = AssetId::new(contract_id, strap_sub_id);
+                            rewards.push((strap_sub_id, amount));
+                            //remove bet
+                            storage.bets.get((game_id, identity, roll)).remove(bet_index);
                         }
                     }
                 }
+                bet_index += 1;
             }
             storage.bets.get((game_id, identity, Roll::Six)).clear();
             index += 1;
         }
-        if total_chips_winnings > 0 {
+        if total_chips_winnings > 0 || rewards.len() > 0 {
             let chip_asset_id = storage.chip_asset_id.read();
-            transfer(identity, chip_asset_id, total_chips_winnings);
-            for sub_id in rewards.iter() {
-                mint_to(identity, sub_id, 1);
+            if total_chips_winnings > 0 {
+               transfer(identity, chip_asset_id, total_chips_winnings);
             }
-        
+            for (sub_id, amount) in rewards.iter() {
+                mint_to(identity, sub_id, amount);
+            }
         } else {
             require(false, "No winnings to claim");
         }
