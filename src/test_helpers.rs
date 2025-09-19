@@ -1,7 +1,14 @@
 use crate::vrf_types;
 use fuels::prelude::{
-    AssetConfig, AssetId, Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked,
-    WalletsConfig, launch_custom_provider_and_get_wallets,
+    AssetConfig,
+    AssetId,
+    Contract,
+    ContractId,
+    LoadConfiguration,
+    TxPolicies,
+    WalletUnlocked,
+    WalletsConfig,
+    launch_custom_provider_and_get_wallets,
 };
 
 pub async fn get_vrf_contract_instance(
@@ -28,22 +35,25 @@ pub struct TestContext {
 
 impl TestContext {
     pub async fn new() -> Self {
+        Self::new_with_extra_assets(vec![]).await
+    }
+
+    pub async fn new_with_extra_assets(extra_assets: Vec<AssetConfig>) -> Self {
+        let mut base_assets = vec![
+            AssetConfig {
+                id: AssetId::zeroed(),
+                num_coins: 1,               // Single coin (UTXO)
+                coin_amount: 1_000_000_000, // Amount per coin
+            },
+            AssetConfig {
+                id: AssetId::from([1u8; 32]),
+                num_coins: 1,               // Single coin (UTXO)
+                coin_amount: 1_000_000_000, // Amount per coin
+            },
+        ];
+        base_assets.extend(extra_assets);
         let mut wallets = launch_custom_provider_and_get_wallets(
-            WalletsConfig::new_multiple_assets(
-                3, /* Three wallets */
-                vec![
-                    AssetConfig {
-                        id: AssetId::zeroed(),
-                        num_coins: 1,               /* Single coin (UTXO) */
-                        coin_amount: 1_000_000_000, /* Amount per coin */
-                    },
-                    AssetConfig {
-                        id: AssetId::from([1u8; 32]),
-                        num_coins: 1,               /* Single coin (UTXO) */
-                        coin_amount: 1_000_000_000, /* Amount per coin */
-                    },
-                ],
-            ),
+            WalletsConfig::new_multiple_assets(3 /* Three wallets */, base_assets),
             None,
             None,
         )
@@ -67,9 +77,9 @@ pub async fn get_wallet() -> WalletUnlocked {
     // Launch a local network and deploy the contract
     let mut wallets = launch_custom_provider_and_get_wallets(
         WalletsConfig::new(
-            Some(1),             /* Single wallet */
-            Some(1),             /* Single coin (UTXO) */
-            Some(1_000_000_000), /* Amount per coin */
+            Some(1),             // Single wallet
+            Some(1),             // Single coin (UTXO)
+            Some(1_000_000_000), // Amount per coin
         ),
         None,
         None,

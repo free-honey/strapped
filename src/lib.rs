@@ -35,6 +35,15 @@ pub mod vrf_types {
     ));
 }
 
+pub fn contract_id() -> ContractId {
+    Contract::load_from(
+        "strapped/out/debug/strapped.bin",
+        LoadConfiguration::default(),
+    )
+    .unwrap()
+    .contract_id()
+}
+
 pub async fn get_contract_instance(
     wallet: WalletUnlocked,
 ) -> (strapped_types::MyContract<WalletUnlocked>, ContractId) {

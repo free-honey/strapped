@@ -129,11 +129,15 @@ impl Strapped for Contract {
             Bet::Chip => {
                 let chip_asset_id = storage.chip_asset_id.read();
                 require(msg_asset_id() == chip_asset_id, "Must bet with chips");
-                require(msg_amount() == amount, "Must send the correct amount of chips");
             },
             Bet::Strap(strap) => {
+                let strap_sub_id = strap.into_sub_id();
+                let contract_id = ContractId::this();
+                let asset_id = AssetId::new(contract_id, strap_sub_id);
+                require(msg_asset_id() == asset_id, "Must bet with the correct strap");
             }
         }
+        require(msg_amount() == amount, "Must send the correct amount of chips");
         let caller = msg_sender().unwrap();
         let current_game_id = storage.current_game_id.read();
         let roll_index = storage.roll_index.read();
