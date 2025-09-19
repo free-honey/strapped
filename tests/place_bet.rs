@@ -104,7 +104,7 @@ async fn place_bet__can_bet_strap() {
     }])
     .await;
     let alice = ctx.alice();
-    let (instance, contract_id) = get_contract_instance(alice.clone()).await;
+    let (instance, _contract_id) = get_contract_instance(alice.clone()).await;
     let call_params = CallParameters::new(bet_amount, asset_id, 1_000_000);
     instance
         .methods()
@@ -125,4 +125,34 @@ async fn place_bet__can_bet_strap() {
         .value;
     let expected = vec![(bet, bet_amount, 0)];
     assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn place_bet__fails_if_does_not_include_strap() {
+    // given
+    let roll = strapped_types::Roll::Six;
+    let ctx = TestContext::new().await;
+    let alice = ctx.alice();
+    let (instance, _contract_id) = get_contract_instance(alice.clone()).await;
+
+    let level = 1;
+    let kind = strapped_types::StrapKind::Shirt;
+    let modifier = strapped_types::Modifier::Nothing;
+    let strap = Strap {
+        level,
+        kind: kind.clone(),
+        modifier: modifier.clone(),
+    };
+    let bet_amount = 1;
+    let bet = strapped_types::Bet::Strap(strap.clone());
+
+    // when
+    let result = instance
+        .methods()
+        .place_bet(roll.clone(), bet.clone(), bet_amount)
+        .call()
+        .await;
+
+    // then
+    assert!(result.is_err());
 }
