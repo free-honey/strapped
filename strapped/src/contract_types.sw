@@ -148,6 +148,24 @@ impl Hash for Modifier {
     }
 }
 
+impl PartialEq for Modifier {
+    fn eq(self, other: Modifier) -> bool {
+        match (self, other) {
+            (Modifier::Nothing, Modifier::Nothing) => true,
+            (Modifier::Burnt, Modifier::Burnt) => true,
+            (Modifier::Lucky, Modifier::Lucky) => true,
+            (Modifier::Holy, Modifier::Holy) => true,
+            (Modifier::Holey, Modifier::Holey) => true,
+            (Modifier::Scotch, Modifier::Scotch) => true,
+            (Modifier::Soaked, Modifier::Soaked) => true,
+            (Modifier::Moldy, Modifier::Moldy) => true,
+            (Modifier::Starched, Modifier::Starched) => true,
+            (Modifier::Evil, Modifier::Evil) => true,
+            _ => false,
+        }
+    }
+}
+
 impl Hash for Strap {
     fn hash(self, ref mut state: Hasher) {
         self.level.hash(state);

@@ -41,6 +41,13 @@ storage {
     /// 3. Modifier to add
     /// 4. Whether it has been triggered this game
     modifier_triggers: StorageVec<(Roll, Roll, Modifier, bool)> = StorageVec {},
+    /// Prices for each modifier
+    /// 1. Price in chips
+    /// 2. Whether it was purchased this game
+    /// If the modifier was purchased last time it was available, the price will double next time it is available
+    modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
+    // Active modifiers for the current game
+    active_modifiers: StorageVec<(Roll, Modifier, RollIndex)> = StorageVec {},
 }
 
 abi Strapped {
@@ -87,6 +94,14 @@ abi Strapped {
     /// Get the modifier triggers
     #[storage(read)]
     fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)>;
+
+    /// Purchase a modifier that has been triggered
+    #[storage(read, write), payable]
+    fn purchase_modifier(roll: Roll, modifier: Modifier);
+
+    /// Get the active modifiers for the current game
+    #[storage(read)]
+    fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)>;
 }
 
 impl Strapped for Contract {
@@ -257,6 +272,30 @@ impl Strapped for Contract {
     #[storage(read)]
     fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)> {
         storage.modifier_triggers.load_vec()
+    }
+
+    #[storage(read, write), payable]
+    fn purchase_modifier(expected_roll: Roll, expected_modifier: Modifier) {
+        let mut is_triggered = false;
+        for (_, roll, modifier, triggered) in storage.modifier_triggers.load_vec().iter() {
+            if roll == expected_roll && modifier == expected_modifier && triggered {
+                is_triggered = true;
+                break;
+            }
+        };
+        require(is_triggered, "Modifier not available for purchase");
+        let (price, _) = storage.modifier_prices.get(expected_modifier).try_read().unwrap_or((1, false));
+        let chip_asset_id = storage.chip_asset_id.read();
+        require(msg_asset_id() == chip_asset_id, "Must purchase with chips");
+        let amount = msg_amount();
+        require(amount >= price, "Must send the correct amount of chips");
+        let roll_index = storage.roll_index.read();
+        storage.active_modifiers.push((expected_roll, expected_modifier, roll_index));
+    }
+
+    #[storage(read)]
+    fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)> {
+        storage.active_modifiers.load_vec()
     }
 }
 
