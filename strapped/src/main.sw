@@ -35,7 +35,12 @@ storage {
     house_pot: u64 = 0,
     /// Straps to be rewarded for the current game when it ends
     strap_rewards: StorageVec<(Roll, Strap)> = StorageVec {},
-
+    /// Triggers to add modifiers to shop, and whether they have been triggered this game
+    /// 1. Roll that triggers the modifier
+    /// 2. Roll that will add the modifier once purchased
+    /// 3. Modifier to add
+    /// 4. Whether it has been triggered this game
+    modifier_triggers: StorageVec<(Roll, Roll, Modifier, bool)> = StorageVec {},
 }
 
 abi Strapped {
@@ -78,6 +83,10 @@ abi Strapped {
     /// Get the straps to be rewarded for the current game
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap)>;
+
+    /// Get the modifier triggers
+    #[storage(read)]
+    fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)>;
 }
 
 impl Strapped for Contract {
@@ -98,6 +107,9 @@ impl Strapped for Contract {
                 storage.roll_index.write(0);
                 for (roll, strap) in new_straps.iter() {
                     storage.strap_rewards.push((roll, strap));
+                }
+                for (trigger_roll, modifier_roll, modifier) in modifier_triggers_for_roll(random_number).iter() {
+                    storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
                 }
             }
             _ => {
@@ -233,6 +245,11 @@ impl Strapped for Contract {
     fn strap_rewards() -> Vec<(Roll, Strap)> {
         storage.strap_rewards.load_vec()
     }
+
+    #[storage(read)]
+    fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)> {
+        storage.modifier_triggers.load_vec()
+    }
 }
 
 fn six_payout(principal: u64) -> u64 {
@@ -260,4 +277,12 @@ fn rewards_for_roll(available_straps: Vec<(Roll, Strap)>, roll: Roll) -> Vec<Sub
         }
     }
     rewards
+}
+
+fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
+    let mut triggers = Vec::new();
+    // hardcode for now
+    triggers.push((Roll::Two, Roll::Six, Modifier::Burnt));
+    triggers.push((Roll::Twelve, Roll::Eight, Modifier::Lucky));
+    triggers
 }
