@@ -114,6 +114,14 @@ impl Strapped for Contract {
             }
             _ => {
                 storage.roll_history.get(current_game_id).push(roll);
+                let modifier_triggers = storage.modifier_triggers.load_vec();
+                let mut index = 0;
+                for (trigger_roll, modifier_roll, modifier, triggered) in modifier_triggers.iter() {
+                    if !triggered && trigger_roll == roll {
+                        storage.modifier_triggers.set(index, (trigger_roll, modifier_roll, modifier, true));
+                    }
+                    index += 1;
+                }
             }
         }
     }

@@ -235,10 +235,68 @@ async fn roll_dice__if_seven_generates_new_modifier_triggers() {
         .await
         .unwrap()
         .value;
-    // triggers.push((Roll::Two, Roll::Six, Modifier::Burnt, false));
-    // triggers.push((Roll::Twelve, Roll::Eight, Modifier::Lucky, false));
     let expected = vec![
         (Roll::Two, Roll::Six, Modifier::Burnt, false),
+        (Roll::Twelve, Roll::Eight, Modifier::Lucky, false),
+    ];
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn roll_dice__if_hit_the_modifier_value_triggers_the_modifier_to_be_purchased() {
+    let ctx = TestContext::new().await;
+    let owner = ctx.owner();
+    // given
+    let (instance, _id) = get_contract_instance(owner.clone()).await;
+    let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
+    instance
+        .methods()
+        .set_vrf_contract_id(Bits256(*vrf_id))
+        .call()
+        .await
+        .unwrap();
+    // update vrf to something that will resolve to Seven
+    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
+    vrf_instance
+        .methods()
+        .set_number(seven_vrf_number)
+        .call()
+        .await
+        .unwrap();
+
+    // when
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+    let two_six_vrf_number = 0; // 0 % 36 = 0 which is Two
+    vrf_instance
+        .methods()
+        .set_number(two_six_vrf_number)
+        .call()
+        .await
+        .unwrap();
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+
+    // then
+    let actual = instance
+        .methods()
+        .modifier_triggers()
+        .call()
+        .await
+        .unwrap()
+        .value;
+    let expected = vec![
+        (Roll::Two, Roll::Six, Modifier::Burnt, true),
         (Roll::Twelve, Roll::Eight, Modifier::Lucky, false),
     ];
     assert_eq!(expected, actual);
