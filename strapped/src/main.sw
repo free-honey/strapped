@@ -47,7 +47,7 @@ storage {
     /// If the modifier was purchased last time it was available, the price will double next time it is available
     modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
     // Active modifiers for the current game
-    active_modifiers: StorageVec<(Roll, Modifier, RollIndex)> = StorageVec {},
+    active_modifiers: StorageMap<GameId, StorageVec<(Roll, Modifier, RollIndex)>> = StorageMap {},
 }
 
 abi Strapped {
@@ -81,7 +81,7 @@ abi Strapped {
 
     /// Claim rewards for a specific past game
     #[storage(read, write)]
-    fn claim_rewards(game_id: GameId);
+    fn claim_rewards(game_id: GameId, enabled_modifiers: Vec<(Roll, Modifier)>);
 
     /// Fund the house pot with chips
     #[storage(read, write), payable]
@@ -193,7 +193,7 @@ impl Strapped for Contract {
     }
 
     #[storage(read, write)]
-    fn claim_rewards(game_id: GameId) {
+    fn claim_rewards(game_id: GameId, enabled_modifiers: Vec<(Roll, Modifier)>) {
         let current_game_id = storage.current_game_id.read();
         require(game_id < current_game_id, "Can only claim rewards for past games");
         let identity = msg_sender().unwrap();
@@ -201,16 +201,10 @@ impl Strapped for Contract {
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
         let mut rewards: Vec<(SubId, u64)> = Vec::new();
-        // if game_id == 1 {
-        //     require(rolls.len() == 2, "Game 1 should have exactly 2 rolls");
-        // }
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
             let mut received_chip_reward_for_roll = false;
             let mut bet_index = 0;
-            if roll == Roll::Six {
-                require(bets.len() >= 1, "should have one bet on roll 6");
-            }
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
@@ -233,7 +227,9 @@ impl Strapped for Contract {
                         Bet::Strap(strap) => {
                             let Strap { level, kind, modifier } = strap;
                             let new_level = saturating_succ(level);
-                            let new_strap = Strap::new(new_level, kind, modifier);
+                            let active_modifiers = storage.active_modifiers.get(game_id).load_vec();
+                            let modifier_for_roll = modifier_for_roll(active_modifiers, roll, roll_index, enabled_modifiers).unwrap_or(modifier);
+                            let new_strap = Strap::new(new_level, kind, modifier_for_roll);
                             let strap_sub_id = new_strap.into_sub_id();
                             let contract_id = ContractId::this();
                             let asset_id = AssetId::new(contract_id, strap_sub_id);
@@ -296,12 +292,14 @@ impl Strapped for Contract {
         let amount = msg_amount();
         require(amount >= price, "Must send the correct amount of chips");
         let roll_index = storage.roll_index.read();
-        storage.active_modifiers.push((expected_roll, expected_modifier, roll_index));
+        let game_id = storage.current_game_id.read();
+        storage.active_modifiers.get(game_id).push((expected_roll, expected_modifier, roll_index));
     }
 
     #[storage(read)]
     fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)> {
-        storage.active_modifiers.load_vec()
+        let game_id = storage.current_game_id.read();
+        storage.active_modifiers.get(game_id).load_vec()
     }
 }
 
@@ -338,4 +336,24 @@ fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
     triggers.push((Roll::Two, Roll::Six, Modifier::Burnt));
     triggers.push((Roll::Twelve, Roll::Eight, Modifier::Lucky));
     triggers
+}
+
+fn modifier_for_roll(active_modifiers: Vec<(Roll, Modifier, RollIndex)>, roll: Roll, roll_index: RollIndex, enabled_modifiers: Vec<(Roll, Modifier)>) -> Option<Modifier> {
+    for (modifier_roll, modifier, activated_roll_index) in active_modifiers.iter() {
+        if modifier_roll == roll && activated_roll_index <= roll_index {
+            let mut contains_modifier = false;
+            for (enabled_roll, enabled_modifier) in enabled_modifiers.iter() {
+                if enabled_roll == modifier_roll && enabled_modifier == modifier {
+                    contains_modifier = true;
+                    break;
+                }
+            }
+            if !contains_modifier {
+                return None;
+            } else {
+                return Some(modifier);
+            }
+        }
+    }
+    None
 }
