@@ -35,7 +35,19 @@ storage {
     house_pot: u64 = 0,
     /// Straps to be rewarded for the current game when it ends
     strap_rewards: StorageVec<(Roll, Strap)> = StorageVec {},
-
+    /// Triggers to add modifiers to shop, and whether they have been triggered this game
+    /// 1. Roll that triggers the modifier
+    /// 2. Roll that will add the modifier once purchased
+    /// 3. Modifier to add
+    /// 4. Whether it has been triggered this game
+    modifier_triggers: StorageVec<(Roll, Roll, Modifier, bool)> = StorageVec {},
+    /// Prices for each modifier
+    /// 1. Price in chips
+    /// 2. Whether it was purchased this game
+    /// If the modifier was purchased last time it was available, the price will double next time it is available
+    modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
+    // Active modifiers for the current game
+    active_modifiers: StorageMap<GameId, StorageVec<(Roll, Modifier, RollIndex)>> = StorageMap {},
 }
 
 abi Strapped {
@@ -69,7 +81,7 @@ abi Strapped {
 
     /// Claim rewards for a specific past game
     #[storage(read, write)]
-    fn claim_rewards(game_id: GameId);
+    fn claim_rewards(game_id: GameId, enabled_modifiers: Vec<(Roll, Modifier)>);
 
     /// Fund the house pot with chips
     #[storage(read, write), payable]
@@ -78,6 +90,18 @@ abi Strapped {
     /// Get the straps to be rewarded for the current game
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap)>;
+
+    /// Get the modifier triggers
+    #[storage(read)]
+    fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)>;
+
+    /// Purchase a modifier that has been triggered
+    #[storage(read, write), payable]
+    fn purchase_modifier(roll: Roll, modifier: Modifier);
+
+    /// Get the active modifiers for the current game
+    #[storage(read)]
+    fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)>;
 }
 
 impl Strapped for Contract {
@@ -99,9 +123,20 @@ impl Strapped for Contract {
                 for (roll, strap) in new_straps.iter() {
                     storage.strap_rewards.push((roll, strap));
                 }
+                for (trigger_roll, modifier_roll, modifier) in modifier_triggers_for_roll(random_number).iter() {
+                    storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
+                }
             }
             _ => {
                 storage.roll_history.get(current_game_id).push(roll);
+                let modifier_triggers = storage.modifier_triggers.load_vec();
+                let mut index = 0;
+                for (trigger_roll, modifier_roll, modifier, triggered) in modifier_triggers.iter() {
+                    if !triggered && trigger_roll == roll {
+                        storage.modifier_triggers.set(index, (trigger_roll, modifier_roll, modifier, true));
+                    }
+                    index += 1;
+                }
             }
         }
     }
@@ -158,7 +193,7 @@ impl Strapped for Contract {
     }
 
     #[storage(read, write)]
-    fn claim_rewards(game_id: GameId) {
+    fn claim_rewards(game_id: GameId, enabled_modifiers: Vec<(Roll, Modifier)>) {
         let current_game_id = storage.current_game_id.read();
         require(game_id < current_game_id, "Can only claim rewards for past games");
         let identity = msg_sender().unwrap();
@@ -192,7 +227,9 @@ impl Strapped for Contract {
                         Bet::Strap(strap) => {
                             let Strap { level, kind, modifier } = strap;
                             let new_level = saturating_succ(level);
-                            let new_strap = Strap::new(new_level, kind, modifier);
+                            let active_modifiers = storage.active_modifiers.get(game_id).load_vec();
+                            let modifier_for_roll = modifier_for_roll(active_modifiers, roll, roll_index, enabled_modifiers).unwrap_or(modifier);
+                            let new_strap = Strap::new(new_level, kind, modifier_for_roll);
                             let strap_sub_id = new_strap.into_sub_id();
                             let contract_id = ContractId::this();
                             let asset_id = AssetId::new(contract_id, strap_sub_id);
@@ -204,7 +241,7 @@ impl Strapped for Contract {
                 }
                 bet_index += 1;
             }
-            storage.bets.get((game_id, identity, Roll::Six)).clear();
+            storage.bets.get((game_id, identity, roll)).clear();
             index += 1;
         }
         if total_chips_winnings > 0 || rewards.len() > 0 {
@@ -233,6 +270,37 @@ impl Strapped for Contract {
     fn strap_rewards() -> Vec<(Roll, Strap)> {
         storage.strap_rewards.load_vec()
     }
+
+    #[storage(read)]
+    fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)> {
+        storage.modifier_triggers.load_vec()
+    }
+
+    #[storage(read, write), payable]
+    fn purchase_modifier(expected_roll: Roll, expected_modifier: Modifier) {
+        let mut is_triggered = false;
+        for (_, roll, modifier, triggered) in storage.modifier_triggers.load_vec().iter() {
+            if roll == expected_roll && modifier == expected_modifier && triggered {
+                is_triggered = true;
+                break;
+            }
+        };
+        require(is_triggered, "Modifier not available for purchase");
+        let (price, _) = storage.modifier_prices.get(expected_modifier).try_read().unwrap_or((1, false));
+        let chip_asset_id = storage.chip_asset_id.read();
+        require(msg_asset_id() == chip_asset_id, "Must purchase with chips");
+        let amount = msg_amount();
+        require(amount >= price, "Must send the correct amount of chips");
+        let roll_index = storage.roll_index.read();
+        let game_id = storage.current_game_id.read();
+        storage.active_modifiers.get(game_id).push((expected_roll, expected_modifier, roll_index));
+    }
+
+    #[storage(read)]
+    fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)> {
+        let game_id = storage.current_game_id.read();
+        storage.active_modifiers.get(game_id).load_vec()
+    }
 }
 
 fn six_payout(principal: u64) -> u64 {
@@ -260,4 +328,32 @@ fn rewards_for_roll(available_straps: Vec<(Roll, Strap)>, roll: Roll) -> Vec<Sub
         }
     }
     rewards
+}
+
+fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
+    let mut triggers = Vec::new();
+    // hardcode for now
+    triggers.push((Roll::Two, Roll::Six, Modifier::Burnt));
+    triggers.push((Roll::Twelve, Roll::Eight, Modifier::Lucky));
+    triggers
+}
+
+fn modifier_for_roll(active_modifiers: Vec<(Roll, Modifier, RollIndex)>, roll: Roll, roll_index: RollIndex, enabled_modifiers: Vec<(Roll, Modifier)>) -> Option<Modifier> {
+    for (modifier_roll, modifier, activated_roll_index) in active_modifiers.iter() {
+        if modifier_roll == roll && activated_roll_index <= roll_index {
+            let mut contains_modifier = false;
+            for (enabled_roll, enabled_modifier) in enabled_modifiers.iter() {
+                if enabled_roll == modifier_roll && enabled_modifier == modifier {
+                    contains_modifier = true;
+                    break;
+                }
+            }
+            if !contains_modifier {
+                return None;
+            } else {
+                return Some(modifier);
+            }
+        }
+    }
+    None
 }
