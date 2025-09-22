@@ -201,10 +201,16 @@ impl Strapped for Contract {
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
         let mut rewards: Vec<(SubId, u64)> = Vec::new();
+        // if game_id == 1 {
+        //     require(rolls.len() == 2, "Game 1 should have exactly 2 rolls");
+        // }
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
             let mut received_chip_reward_for_roll = false;
             let mut bet_index = 0;
+            if roll == Roll::Six {
+                require(bets.len() >= 1, "should have one bet on roll 6");
+            }
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
@@ -239,7 +245,7 @@ impl Strapped for Contract {
                 }
                 bet_index += 1;
             }
-            storage.bets.get((game_id, identity, Roll::Six)).clear();
+            storage.bets.get((game_id, identity, roll)).clear();
             index += 1;
         }
         if total_chips_winnings > 0 || rewards.len() > 0 {

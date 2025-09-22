@@ -96,3 +96,5 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
     let expected_active_modifier = vec![(Roll::Six, Modifier::Burnt, 1u64)];
     assert_eq!(expected_active_modifier, actual_active_modifier);
 }
+
+// TODO: test where try to purchase not existing modifier && untriggered modifier
