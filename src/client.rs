@@ -1,20 +1,39 @@
-use strapped_contract::strapped_types as strapped;
-use strapped_contract::vrf_types as vrf;
-use strapped_contract::strap_to_sub_id;
 use crate::ui;
-use crate::ui::UserEvent;
-use color_eyre::eyre::{eyre, Result};
-use fuels::prelude::{
-    launch_custom_provider_and_get_wallets, AssetConfig, AssetId, Bech32ContractId, CallParameters,
-    Contract, ContractId, LoadConfiguration, Provider, TxPolicies, WalletUnlocked, WalletsConfig, VariableOutputPolicy,
+use color_eyre::eyre::{
+    Result,
+    eyre,
 };
-use fuels::accounts::ViewOnlyAccount;
-use fuels::tx::ContractIdExt;
-use fuels::types::{Bits256, Bytes32};
-use itertools::Itertools;
-use std::time::{Duration, Instant};
-use std::collections::{HashSet, HashMap};
-use tokio::sync::mpsc;
+use fuels::{
+    accounts::ViewOnlyAccount,
+    prelude::{
+        AssetConfig,
+        AssetId,
+        Bech32ContractId,
+        CallParameters,
+        Contract,
+        ContractId,
+        LoadConfiguration,
+        Provider,
+        TxPolicies,
+        VariableOutputPolicy,
+        WalletUnlocked,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
+    },
+    tx::ContractIdExt,
+    types::Bits256,
+};
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    time::Duration,
+};
+use strapped_contract::{
+    strapped_types as strapped,
+    vrf_types as vrf,
+};
 use tokio::time;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -25,21 +44,21 @@ pub enum WalletKind {
 
 #[derive(Clone, Debug, Default)]
 pub struct BetsSummary {
-    pub by_roll: Vec<(strapped::Roll, u64 /*total amount*/)> ,
+    pub _by_roll: Vec<(strapped::Roll, u64 /* total amount */)>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AppSnapshot {
-    pub now: Instant,
     pub wallet: WalletKind,
     pub current_game_id: u64,
     pub roll_history: Vec<strapped::Roll>,
-    pub strap_rewards: Vec<(strapped::Roll, strapped::Strap)>,
-    pub modifier_triggers: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
-    pub active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u64 /*roll_index*/ )>,
-    pub my_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    pub chip_balance: u64,
-    pub strap_balance: u64,
+    pub modifier_triggers:
+        Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
+    pub active_modifiers: Vec<(
+        strapped::Roll,
+        strapped::Modifier,
+        u64, // roll_index
+    )>,
     pub owned_straps: Vec<(strapped::Strap, u64)>,
     pub pot_balance: u64,
     pub selected_roll: strapped::Roll,
@@ -115,11 +134,7 @@ pub async fn init_local() -> Result<Clients> {
         .await?;
 
     // Initialize VRF to a known value so first roll matches the UI
-    vrf_instance
-        .methods()
-        .set_number(19)
-        .call()
-        .await?;
+    vrf_instance.methods().set_number(19).call().await?;
 
     // Set chip asset id on contract
     owner_instance
@@ -146,7 +161,11 @@ pub async fn init_local() -> Result<Clients> {
     })
 }
 
-async fn get_contract_asset_balance(provider: &Provider, cid: &ContractId, aid: &AssetId) -> Result<u64> {
+async fn get_contract_asset_balance(
+    provider: &Provider,
+    cid: &ContractId,
+    aid: &AssetId,
+) -> Result<u64> {
     let bech: Bech32ContractId = (*cid).into();
     let bal = provider.get_contract_asset_balance(&bech, *aid).await?;
     Ok(bal)
@@ -173,7 +192,10 @@ pub struct AppController {
 }
 
 impl AppController {
-    async fn fetch_bets_for(&self, who: WalletKind) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+    async fn fetch_bets_for(
+        &self,
+        who: WalletKind,
+    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
         let me = self.clients.instance(who);
         let rolls = all_rolls();
         let mut out = Vec::with_capacity(rolls.len());
@@ -209,7 +231,11 @@ impl AppController {
     pub async fn snapshot(&mut self) -> Result<AppSnapshot> {
         let who = self.wallet;
         let me = self.clients.instance(who);
-        let provider = me.account().provider().ok_or_else(|| eyre!("no provider"))?.clone();
+        let provider = me
+            .account()
+            .provider()
+            .ok_or_else(|| eyre!("no provider"))?
+            .clone();
 
         let current_game_id = me.methods().current_game_id().call().await?.value;
         let roll_history = me.methods().roll_history().call().await?.value;
@@ -230,16 +256,28 @@ impl AppController {
         let new_alice_bets = self.fetch_bets_for(WalletKind::Alice).await?;
 
         // Remember strap rewards for this current game (for later claim delta display)
-        self.strap_rewards_by_game.entry(current_game_id).or_insert_with(|| strap_rewards.clone());
+        self.strap_rewards_by_game
+            .entry(current_game_id)
+            .or_insert_with(|| strap_rewards.clone());
 
         // detect rollover using the active wallet's last seen id (avoid holding mutable borrow across await)
-        let last_seen_opt = match self.wallet { WalletKind::Owner => self.last_seen_game_id_owner, WalletKind::Alice => self.last_seen_game_id_alice };
+        let last_seen_opt = match self.wallet {
+            WalletKind::Owner => self.last_seen_game_id_owner,
+            WalletKind::Alice => self.last_seen_game_id_alice,
+        };
         if let Some(prev) = last_seen_opt {
             if current_game_id > prev {
                 // Build shared game entry and bets for both users so rolls persist and bets differ
                 let owner_bets = self.prev_owner_bets.clone();
                 let alice_bets = self.prev_alice_bets.clone();
-                self.shared_prev_games.insert(0, SharedGame { game_id: prev, rolls: self.shared_last_roll_history.clone(), modifiers: active_modifiers.clone() });
+                self.shared_prev_games.insert(
+                    0,
+                    SharedGame {
+                        game_id: prev,
+                        rolls: self.shared_last_roll_history.clone(),
+                        modifiers: active_modifiers.clone(),
+                    },
+                );
                 self.owner_bets_hist.insert(prev, owner_bets);
                 self.alice_bets_hist.insert(prev, alice_bets);
                 // Reset both last seen ids to current so we won't insert twice on switch
@@ -247,12 +285,14 @@ impl AppController {
                 self.last_seen_game_id_alice = Some(current_game_id);
             }
         }
-        match self.wallet { WalletKind::Owner => self.last_seen_game_id_owner = Some(current_game_id), WalletKind::Alice => self.last_seen_game_id_alice = Some(current_game_id) };
+        match self.wallet {
+            WalletKind::Owner => self.last_seen_game_id_owner = Some(current_game_id),
+            WalletKind::Alice => self.last_seen_game_id_alice = Some(current_game_id),
+        };
         // Update cached prev bets for next rollover detection
         self.prev_owner_bets = new_owner_bets;
         self.prev_alice_bets = new_alice_bets;
 
-        let chip_balance = me.account().get_asset_balance(&self.clients.chip_asset_id).await?;
         let pot_balance = get_contract_asset_balance(
             &provider,
             &self.clients.contract_id,
@@ -270,38 +310,56 @@ impl AppController {
         for (r, bets) in &my_bets {
             let chip_total: u64 = bets
                 .iter()
-                .filter_map(|(b, amt, _)| match b { strapped::Bet::Chip => Some(*amt), _ => None })
+                .filter_map(|(b, amt, _)| match b {
+                    strapped::Bet::Chip => Some(*amt),
+                    _ => None,
+                })
                 .sum();
             // Aggregate strap bets per unique strap without requiring Hash
             let mut straps: Vec<(strapped::Strap, u64)> = Vec::new();
             for (b, amt, _) in bets {
                 if let strapped::Bet::Strap(s) = b {
-                    if let Some((_es, total)) = straps.iter_mut().find(|(es, _)| es == s) {
+                    if let Some((_es, total)) = straps.iter_mut().find(|(es, _)| es == s)
+                    {
                         *total += *amt;
                     } else {
                         straps.push((s.clone(), *amt));
                     }
-                    if !unique_straps.iter().any(|es| *es == *s) { unique_straps.push(s.clone()); }
+                    if !unique_straps.iter().any(|es| *es == *s) {
+                        unique_straps.push(s.clone());
+                    }
                 }
             }
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
             // rewards for this roll (count available rewards, not wallet balance)
             let mut rewards: Vec<(strapped::Strap, u64)> = Vec::new();
             for (_rr, s) in strap_rewards.iter().filter(|(rr, _)| rr == r) {
-                if let Some((es, cnt)) = rewards.iter_mut().find(|(es, _)| es == s) {
+                if let Some((_es, cnt)) = rewards.iter_mut().find(|(es, _)| es == s) {
                     *cnt += 1;
                 } else {
                     rewards.push((s.clone(), 1));
                 }
-                if !unique_straps.iter().any(|es| *es == *s) { unique_straps.push(s.clone()); }
+                if !unique_straps.iter().any(|es| *es == *s) {
+                    unique_straps.push(s.clone());
+                }
             }
-            cells.push(RollCell { roll: r.clone(), chip_total, strap_total, straps, rewards });
+            cells.push(RollCell {
+                roll: r.clone(),
+                chip_total,
+                strap_total,
+                straps,
+                rewards,
+            });
         }
 
         // Sum owned straps for known strap variants (from current bets/rewards + all known rewards by game)
         let mut unique_straps = unique_straps;
         for (_gid, list) in &self.strap_rewards_by_game {
-            for (_r, s) in list { if !unique_straps.iter().any(|es| *es == *s) { unique_straps.push(s.clone()); } }
+            for (_r, s) in list {
+                if !unique_straps.iter().any(|es| *es == *s) {
+                    unique_straps.push(s.clone());
+                }
+            }
         }
 
         let mut strap_balance: u64 = 0;
@@ -311,40 +369,78 @@ impl AppController {
             let aid = self.clients.contract_id.asset_id(&sub);
             let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
             strap_balance = strap_balance.saturating_add(bal);
-            if bal > 0 { owned_straps.push((s, bal)); }
+            if bal > 0 {
+                owned_straps.push((s, bal));
+            }
         }
 
         // Build previous games by merging shared games with current user's stored bets
         let mut summaries: Vec<PreviousGameSummary> = Vec::new();
         for sg in &self.shared_prev_games {
             let bets = match self.wallet {
-                WalletKind::Owner => self.owner_bets_hist.get(&sg.game_id).cloned().unwrap_or_default(),
-                WalletKind::Alice => self.alice_bets_hist.get(&sg.game_id).cloned().unwrap_or_default(),
+                WalletKind::Owner => self
+                    .owner_bets_hist
+                    .get(&sg.game_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                WalletKind::Alice => self
+                    .alice_bets_hist
+                    .get(&sg.game_id)
+                    .cloned()
+                    .unwrap_or_default(),
             };
             // Build cells from bets
             let mut cells = Vec::new();
             for r in &all_rolls {
-                let bets_for = bets.iter().find(|(rr, _)| rr==r).map(|(_, b)| b).cloned().unwrap_or_default();
-                let chip_total: u64 = bets_for.iter().filter_map(|(b, amt, _)| match b { strapped::Bet::Chip => Some(*amt), _ => None }).sum();
-                let strap_total: u64 = bets_for.iter().filter_map(|(b, amt, _)| match b { strapped::Bet::Strap(_) => Some(*amt), _ => None }).sum();
-                cells.push(RollCell { roll: r.clone(), chip_total, strap_total, straps: Vec::new(), rewards: Vec::new() });
+                let bets_for = bets
+                    .iter()
+                    .find(|(rr, _)| rr == r)
+                    .map(|(_, b)| b)
+                    .cloned()
+                    .unwrap_or_default();
+                let chip_total: u64 = bets_for
+                    .iter()
+                    .filter_map(|(b, amt, _)| match b {
+                        strapped::Bet::Chip => Some(*amt),
+                        _ => None,
+                    })
+                    .sum();
+                let strap_total: u64 = bets_for
+                    .iter()
+                    .filter_map(|(b, amt, _)| match b {
+                        strapped::Bet::Strap(_) => Some(*amt),
+                        _ => None,
+                    })
+                    .sum();
+                cells.push(RollCell {
+                    roll: r.clone(),
+                    chip_total,
+                    strap_total,
+                    straps: Vec::new(),
+                    rewards: Vec::new(),
+                });
             }
-            let claimed = match self.wallet { WalletKind::Owner => self.owner_claimed.contains(&sg.game_id), WalletKind::Alice => self.alice_claimed.contains(&sg.game_id) };
-            summaries.push(PreviousGameSummary { game_id: sg.game_id, cells, modifiers: sg.modifiers.clone(), rolls: sg.rolls.clone(), bets_by_roll: bets, claimed });
+            let claimed = match self.wallet {
+                WalletKind::Owner => self.owner_claimed.contains(&sg.game_id),
+                WalletKind::Alice => self.alice_claimed.contains(&sg.game_id),
+            };
+            summaries.push(PreviousGameSummary {
+                game_id: sg.game_id,
+                cells,
+                modifiers: sg.modifiers.clone(),
+                rolls: sg.rolls.clone(),
+                bets_by_roll: bets,
+                claimed,
+            });
         }
         let previous_games = summaries;
 
         Ok(AppSnapshot {
-            now: Instant::now(),
             wallet: self.wallet,
             current_game_id,
             roll_history,
-            strap_rewards,
             modifier_triggers,
             active_modifiers,
-            my_bets,
-            chip_balance,
-            strap_balance,
             owned_straps,
             pot_balance,
             selected_roll: self.selected_roll.clone(),
@@ -356,11 +452,21 @@ impl AppController {
         })
     }
 
-    pub fn set_wallet(&mut self, w: WalletKind) { self.wallet = w; }
-    pub fn select_next_roll(&mut self) { self.selected_roll = next_roll(self.selected_roll.clone()); }
-    pub fn select_prev_roll(&mut self) { self.selected_roll = prev_roll(self.selected_roll.clone()); }
-    pub fn inc_vrf(&mut self) { self.vrf_number = self.vrf_number.wrapping_add(1); }
-    pub fn dec_vrf(&mut self) { self.vrf_number = self.vrf_number.wrapping_sub(1); }
+    pub fn set_wallet(&mut self, w: WalletKind) {
+        self.wallet = w;
+    }
+    pub fn select_next_roll(&mut self) {
+        self.selected_roll = next_roll(self.selected_roll.clone());
+    }
+    pub fn select_prev_roll(&mut self) {
+        self.selected_roll = prev_roll(self.selected_roll.clone());
+    }
+    pub fn inc_vrf(&mut self) {
+        self.vrf_number = self.vrf_number.wrapping_add(1);
+    }
+    pub fn dec_vrf(&mut self) {
+        self.vrf_number = self.vrf_number.wrapping_sub(1);
+    }
 
     pub async fn place_chip_bet(&mut self, amount: u64) -> Result<()> {
         let me = self.clients.instance(self.wallet);
@@ -374,17 +480,30 @@ impl AppController {
         Ok(())
     }
 
-    pub async fn place_strap_bet(&mut self, strap: strapped::Strap, amount: u64) -> Result<()> {
+    pub async fn place_strap_bet(
+        &mut self,
+        strap: strapped::Strap,
+        amount: u64,
+    ) -> Result<()> {
         let me = self.clients.instance(self.wallet);
         let sub = strapped_contract::strap_to_sub_id(&strap);
         let asset_id = self.clients.contract_id.asset_id(&sub);
         let call = CallParameters::new(amount, asset_id, 1_000_000);
         me.methods()
-            .place_bet(self.selected_roll.clone(), strapped::Bet::Strap(strap.clone()), amount)
+            .place_bet(
+                self.selected_roll.clone(),
+                strapped::Bet::Strap(strap.clone()),
+                amount,
+            )
             .call_params(call)?
             .call()
             .await?;
-        self.status = format!("Placed {} of {} on {:?}", amount, super_compact_strap(&strap), self.selected_roll);
+        self.status = format!(
+            "Placed {} of {} on {:?}",
+            amount,
+            super_compact_strap(&strap),
+            self.selected_roll
+        );
         Ok(())
     }
 
@@ -411,12 +530,7 @@ impl AppController {
 
     pub async fn set_vrf_number(&mut self, n: u64) -> Result<()> {
         // Only owner wallet holds the VRF instance (same provider though).
-        self.clients
-            .vrf
-            .methods()
-            .set_number(n)
-            .call()
-            .await?;
+        self.clients.vrf.methods().set_number(n).call().await?;
         self.vrf_number = n;
         self.status = format!("VRF set to {}", n);
         Ok(())
@@ -435,86 +549,24 @@ impl AppController {
         Ok(())
     }
 
-    pub async fn claim_previous_game(&mut self) -> Result<()> {
-        // Naive: claim for previous game id with no modifiers enabled.
-        let me = self.clients.instance(self.wallet);
-        let mut errs: Vec<String> = Vec::new();
-        let cur = me.methods().current_game_id().call().await?.value;
-        if cur == 0 { self.status = String::from("No previous game"); return Ok(()); }
-        let prev = cur - 1;
-        // pre-claim balances
-        let pre_chip = me.account().get_asset_balance(&self.clients.chip_asset_id).await.unwrap_or(0);
-        let strap_list = self.strap_rewards_by_game.get(&prev).cloned().unwrap_or_default();
-        let mut pre_straps: Vec<(strapped::Strap, u64)> = Vec::new();
-        for (_roll, s) in &strap_list {
-            let sub = strapped_contract::strap_to_sub_id(s);
-            let aid = self.clients.contract_id.asset_id(&sub);
-            let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            pre_straps.push((s.clone(), bal));
-        }
-
-        let outputs = self.expected_claim_outputs(prev, self.wallet);
-        if outputs == 0 { self.status = format!("No winnings to claim for game {}", prev); return Ok(()); }
-        let res_primary = me
-            .methods()
-            .claim_rewards(prev, Vec::new())
-            .with_variable_output_policy(VariableOutputPolicy::Exactly(outputs))
-            .call()
-            .await;
-        let mut claimed_ok = match res_primary {
-            Ok(_) => true,
-            Err(e) => { errs.push(format!("claim(prev={}) primary: {}", prev, e)); false }
-        };
-        // Fallbacks with slightly different counts
-        if !claimed_ok && outputs > 1 {
-            let res_fb1 = me
-                .methods()
-                .claim_rewards(prev, Vec::new())
-                .with_variable_output_policy(VariableOutputPolicy::Exactly(outputs - 1))
-                .call()
-                .await;
-            claimed_ok = match res_fb1 {
-                Ok(_) => true,
-                Err(e) => { errs.push(format!("claim(prev={}) fallback-1: {}", prev, e)); false }
-            };
-        }
-        if !claimed_ok {
-            let res_fb2 = me
-                .methods()
-                .claim_rewards(prev, Vec::new())
-                .with_variable_output_policy(VariableOutputPolicy::Exactly(outputs + 1))
-                .call()
-                .await;
-            claimed_ok = match res_fb2 {
-                Ok(_) => true,
-                Err(e) => { errs.push(format!("claim(prev={}) fallback+1: {}", prev, e)); false }
-            };
-        }
-        if !claimed_ok { self.status = format!("Claim failed for game {}", prev); self.push_errors(errs); return Ok(()); }
-        match self.wallet { WalletKind::Owner => { self.owner_claimed.insert(prev); }, WalletKind::Alice => { self.alice_claimed.insert(prev); } }
-        // post-claim deltas
-        let post_chip = me.account().get_asset_balance(&self.clients.chip_asset_id).await.unwrap_or(0);
-        let chip_delta = post_chip.saturating_sub(pre_chip);
-        let mut strap_deltas: Vec<String> = Vec::new();
-        for (s, pre) in pre_straps {
-            let sub = strapped_contract::strap_to_sub_id(&s);
-            let aid = self.clients.contract_id.asset_id(&sub);
-            let post = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            let d = post.saturating_sub(pre);
-            if d > 0 { strap_deltas.push(format!("{} x{}", super_compact_strap(&s), d)); }
-        }
-        let strap_part = if strap_deltas.is_empty() { String::from("") } else { format!(" | Straps: {}", strap_deltas.join(" ")) };
-        self.status = format!("Claimed game {} | Chips +{}{}", prev, chip_delta, strap_part);
-        self.push_errors(errs);
-        Ok(())
-    }
-
-    pub async fn claim_game(&mut self, game_id: u64, enabled: Vec<(strapped::Roll, strapped::Modifier)>) -> Result<()> {
+    pub async fn claim_game(
+        &mut self,
+        game_id: u64,
+        enabled: Vec<(strapped::Roll, strapped::Modifier)>,
+    ) -> Result<()> {
         let me = self.clients.instance(self.wallet);
         let mut errs: Vec<String> = Vec::new();
         // pre-claim balances
-        let pre_chip = me.account().get_asset_balance(&self.clients.chip_asset_id).await.unwrap_or(0);
-        let strap_list = self.strap_rewards_by_game.get(&game_id).cloned().unwrap_or_default();
+        let pre_chip = me
+            .account()
+            .get_asset_balance(&self.clients.chip_asset_id)
+            .await
+            .unwrap_or(0);
+        let strap_list = self
+            .strap_rewards_by_game
+            .get(&game_id)
+            .cloned()
+            .unwrap_or_default();
         let mut pre_straps: Vec<(strapped::Strap, u64)> = Vec::new();
         for (_roll, s) in &strap_list {
             let sub = strapped_contract::strap_to_sub_id(s);
@@ -524,7 +576,10 @@ impl AppController {
         }
 
         let outputs = self.expected_claim_outputs(game_id, self.wallet);
-        if outputs == 0 { self.status = format!("No winnings to claim for game {}", game_id); return Ok(()); }
+        if outputs == 0 {
+            self.status = format!("No winnings to claim for game {}", game_id);
+            return Ok(());
+        }
         let res_primary = me
             .methods()
             .claim_rewards(game_id, enabled.clone())
@@ -533,7 +588,10 @@ impl AppController {
             .await;
         let mut claimed_ok = match res_primary {
             Ok(_) => true,
-            Err(e) => { errs.push(format!("claim(game_id={}) primary: {}", game_id, e)); false }
+            Err(e) => {
+                errs.push(format!("claim(game_id={}) primary: {}", game_id, e));
+                false
+            }
         };
         if !claimed_ok && outputs > 1 {
             let res_fb1 = me
@@ -544,7 +602,10 @@ impl AppController {
                 .await;
             claimed_ok = match res_fb1 {
                 Ok(_) => true,
-                Err(e) => { errs.push(format!("claim(game_id={}) fallback-1: {}", game_id, e)); false }
+                Err(e) => {
+                    errs.push(format!("claim(game_id={}) fallback-1: {}", game_id, e));
+                    false
+                }
             };
         }
         if !claimed_ok {
@@ -556,17 +617,32 @@ impl AppController {
                 .await;
             claimed_ok = match res_fb2 {
                 Ok(_) => true,
-                Err(e) => { errs.push(format!("claim(game_id={}) fallback+1: {}", game_id, e)); false }
+                Err(e) => {
+                    errs.push(format!("claim(game_id={}) fallback+1: {}", game_id, e));
+                    false
+                }
             };
         }
-        if !claimed_ok { self.status = format!("Claim failed for game {}", game_id); self.push_errors(errs); return Ok(()); }
+        if !claimed_ok {
+            self.status = format!("Claim failed for game {}", game_id);
+            self.push_errors(errs);
+            return Ok(());
+        }
         // mark as claimed in local cache for the current user
         match self.wallet {
-            WalletKind::Owner => { self.owner_claimed.insert(game_id); },
-            WalletKind::Alice => { self.alice_claimed.insert(game_id); },
+            WalletKind::Owner => {
+                self.owner_claimed.insert(game_id);
+            }
+            WalletKind::Alice => {
+                self.alice_claimed.insert(game_id);
+            }
         }
         // post-claim deltas
-        let post_chip = me.account().get_asset_balance(&self.clients.chip_asset_id).await.unwrap_or(0);
+        let post_chip = me
+            .account()
+            .get_asset_balance(&self.clients.chip_asset_id)
+            .await
+            .unwrap_or(0);
         let chip_delta = post_chip.saturating_sub(pre_chip);
         let mut strap_deltas: Vec<String> = Vec::new();
         for (s, pre) in pre_straps {
@@ -574,15 +650,29 @@ impl AppController {
             let aid = self.clients.contract_id.asset_id(&sub);
             let post = me.account().get_asset_balance(&aid).await.unwrap_or(0);
             let d = post.saturating_sub(pre);
-            if d > 0 { strap_deltas.push(format!("{} x{}", super_compact_strap(&s), d)); }
+            if d > 0 {
+                strap_deltas.push(format!("{} x{}", super_compact_strap(&s), d));
+            }
         }
-        let strap_part = if strap_deltas.is_empty() { String::from("") } else { format!(" | Straps: {}", strap_deltas.join(" ")) };
-        self.status = format!("Claimed game {} | Chips +{}{}", game_id, chip_delta, strap_part);
+        let strap_part = if strap_deltas.is_empty() {
+            String::from("")
+        } else {
+            format!(" | Straps: {}", strap_deltas.join(" "))
+        };
+        self.status = format!(
+            "Claimed game {} | Chips +{}{}",
+            game_id, chip_delta, strap_part
+        );
         self.push_errors(errs);
         Ok(())
     }
 
-    pub async fn purchase_modifier_for(&mut self, target: strapped::Roll, modifier: strapped::Modifier, cost: u64) -> Result<()> {
+    pub async fn purchase_modifier_for(
+        &mut self,
+        target: strapped::Roll,
+        modifier: strapped::Modifier,
+        cost: u64,
+    ) -> Result<()> {
         let me = self.clients.instance(self.wallet);
         let call = CallParameters::new(cost, self.clients.chip_asset_id, 1_000_000);
         me.methods()
@@ -598,13 +688,22 @@ impl AppController {
 impl AppController {
     fn expected_claim_outputs(&self, game_id: u64, who: WalletKind) -> usize {
         // Returns number of variable outputs required: 1 (chips if any), plus one per strap mint/level-up
-        let shared = match self.shared_prev_games.iter().find(|g| g.game_id == game_id) { Some(g)=>g, None=> return 0 };
+        let shared = match self.shared_prev_games.iter().find(|g| g.game_id == game_id) {
+            Some(g) => g,
+            None => return 0,
+        };
         let bets_by_roll = match who {
             WalletKind::Owner => self.owner_bets_hist.get(&game_id),
             WalletKind::Alice => self.alice_bets_hist.get(&game_id),
         };
-        let Some(bets_by_roll) = bets_by_roll else { return 0; };
-        let strap_rewards = self.strap_rewards_by_game.get(&game_id).cloned().unwrap_or_default();
+        let Some(bets_by_roll) = bets_by_roll else {
+            return 0;
+        };
+        let strap_rewards = self
+            .strap_rewards_by_game
+            .get(&game_id)
+            .cloned()
+            .unwrap_or_default();
 
         let mut strap_outputs = 0usize;
         let mut chip_output = 0usize;
@@ -618,18 +717,28 @@ impl AppController {
                         match bet {
                             strapped::Bet::Chip => {
                                 eligible_chip = true;
-                                match r { strapped::Roll::Six | strapped::Roll::Eight => winning_chip = true, _ => {} }
+                                match r {
+                                    strapped::Roll::Six | strapped::Roll::Eight => {
+                                        winning_chip = true
+                                    }
+                                    _ => {}
+                                }
                             }
-                            strapped::Bet::Strap(_) => { strap_bet_count += 1; }
+                            strapped::Bet::Strap(_) => {
+                                strap_bet_count += 1;
+                            }
                         }
                     }
                 }
                 if eligible_chip {
-                    let rewards_for_this_roll = strap_rewards.iter().filter(|(rr, _)| rr == r).count();
+                    let rewards_for_this_roll =
+                        strap_rewards.iter().filter(|(rr, _)| rr == r).count();
                     strap_outputs += rewards_for_this_roll;
                 }
                 strap_outputs += strap_bet_count;
-                if winning_chip && eligible_chip { chip_output = 1; }
+                if winning_chip && eligible_chip {
+                    chip_output = 1;
+                }
             }
         }
         chip_output + strap_outputs
@@ -672,7 +781,9 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
 
 impl AppController {
     fn push_errors(&mut self, mut items: Vec<String>) {
-        if items.is_empty() { return; }
+        if items.is_empty() {
+            return;
+        }
         self.errors.append(&mut items);
         if self.errors.len() > 50 {
             let drain = self.errors.len() - 50;
@@ -683,7 +794,9 @@ impl AppController {
 
 pub fn all_rolls() -> Vec<strapped::Roll> {
     use strapped::Roll::*;
-    vec![Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Eleven, Twelve]
+    vec![
+        Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Eleven, Twelve,
+    ]
 }
 
 fn next_roll(r: strapped::Roll) -> strapped::Roll {
@@ -708,15 +821,6 @@ pub struct RollCell {
 }
 
 #[derive(Clone, Debug)]
-pub struct PreviousGame {
-    pub game_id: u64,
-    pub bets_by_roll: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    pub active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
-    pub rolls: Vec<strapped::Roll>,
-    pub claimed: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct PreviousGameSummary {
     pub game_id: u64,
     pub cells: Vec<RollCell>,
@@ -726,12 +830,6 @@ pub struct PreviousGameSummary {
     pub claimed: bool,
 }
 
-impl PreviousGame {
-    pub fn to_summary(&self) -> PreviousGameSummary {
-        unreachable!("legacy path not used; summaries built from shared games")
-    }
-}
-
 #[derive(Clone, Debug)]
 struct SharedGame {
     game_id: u64,
@@ -739,7 +837,7 @@ struct SharedGame {
     modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
 }
 
-    pub async fn run_app() -> Result<()> {
+pub async fn run_app() -> Result<()> {
     let mut controller = AppController::new_local().await?;
     let mut ui_state = ui::UiState::default();
 
@@ -750,7 +848,10 @@ struct SharedGame {
     res
 }
 
-async fn run_loop(controller: &mut AppController, ui_state: &mut ui::UiState) -> Result<()> {
+async fn run_loop(
+    controller: &mut AppController,
+    ui_state: &mut ui::UiState,
+) -> Result<()> {
     let mut ticker = time::interval(Duration::from_millis(1000));
     let mut last_snapshot = controller.snapshot().await?;
     loop {
@@ -767,7 +868,6 @@ async fn run_loop(controller: &mut AppController, ui_state: &mut ui::UiState) ->
                     ui::UserEvent::PrevRoll => controller.select_prev_roll(),
                     ui::UserEvent::Owner => controller.set_wallet(WalletKind::Owner),
                     ui::UserEvent::Alice => controller.set_wallet(WalletKind::Alice),
-                    ui::UserEvent::PlaceBet => { let _ = controller.place_chip_bet(1).await; },
                     ui::UserEvent::PlaceBetAmount(amount) => { let _ = controller.place_chip_bet(amount).await; },
                     ui::UserEvent::Purchase => { let _ = controller.purchase_triggered_modifier(1).await; },
                     ui::UserEvent::ConfirmStrapBet { strap, amount } => { let _ = controller.place_strap_bet(strap, amount).await; },
@@ -775,7 +875,6 @@ async fn run_loop(controller: &mut AppController, ui_state: &mut ui::UiState) ->
                     ui::UserEvent::VRFInc => { controller.inc_vrf(); let _ = controller.set_vrf_number(controller.vrf_number).await; },
                     ui::UserEvent::VRFDec => { controller.dec_vrf(); let _ = controller.set_vrf_number(controller.vrf_number).await; },
                     ui::UserEvent::SetVrf(n) => { let _ = controller.set_vrf_number(n).await; },
-                    ui::UserEvent::Claim => { let _ = controller.claim_previous_game().await; },
                     ui::UserEvent::ConfirmClaim { game_id, enabled } => { let _ = controller.claim_game(game_id, enabled).await; },
                     ui::UserEvent::OpenShop => { ui::draw(ui_state, &last_snapshot)?; continue; },
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => { let _ = controller.purchase_modifier_for(roll, modifier, 1).await; },

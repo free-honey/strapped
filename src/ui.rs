@@ -1,11 +1,26 @@
-use crate::client::{all_rolls, AppSnapshot, PreviousGameSummary, RollCell};
-use strapped_contract::strapped_types as strapped;
+use crate::client::{
+    AppSnapshot,
+    PreviousGameSummary,
+};
 use color_eyre::eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use ratatui::prelude::*;
-use ratatui::widgets::*;
+use crossterm::{
+    event::{
+        self,
+        Event,
+        KeyCode,
+        KeyEventKind,
+    },
+    terminal::{
+        disable_raw_mode,
+        enable_raw_mode,
+    },
+};
+use ratatui::{
+    prelude::*,
+    widgets::*,
+};
 use std::io::stdout;
+use strapped_contract::strapped_types as strapped;
 
 pub enum UserEvent {
     Quit,
@@ -13,23 +28,30 @@ pub enum UserEvent {
     PrevRoll,
     Owner,
     Alice,
-    PlaceBet,
     PlaceBetAmount(u64),
     Purchase,
     Roll,
     VRFInc,
     VRFDec,
     SetVrf(u64),
-    Claim,
     OpenBetModal,
     OpenClaimModal,
     OpenVrfModal,
     Redraw,
     OpenShop,
-    ConfirmShopPurchase { roll: strapped::Roll, modifier: strapped::Modifier },
+    ConfirmShopPurchase {
+        roll: strapped::Roll,
+        modifier: strapped::Modifier,
+    },
     OpenStrapBet,
-    ConfirmStrapBet { strap: strapped::Strap, amount: u64 },
-    ConfirmClaim { game_id: u64, enabled: Vec<(strapped::Roll, strapped::Modifier)> },
+    ConfirmStrapBet {
+        strap: strapped::Strap,
+        amount: u64,
+    },
+    ConfirmClaim {
+        game_id: u64,
+        enabled: Vec<(strapped::Roll, strapped::Modifier)>,
+    },
 }
 
 #[derive(Debug)]
@@ -70,9 +92,15 @@ enum Mode {
 }
 
 #[derive(Clone, Debug)]
-struct BetState { amount: u64 }
+struct BetState {
+    amount: u64,
+}
 
-impl Default for BetState { fn default() -> Self { BetState { amount: 0 } } }
+impl Default for BetState {
+    fn default() -> Self {
+        BetState { amount: 0 }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct ClaimState {
@@ -81,7 +109,15 @@ struct ClaimState {
     selected: Vec<(strapped::Roll, strapped::Modifier)>,
 }
 
-impl Default for ClaimState { fn default() -> Self { ClaimState { game_idx: 0, mod_idx: 0, selected: Vec::new() } } }
+impl Default for ClaimState {
+    fn default() -> Self {
+        ClaimState {
+            game_idx: 0,
+            mod_idx: 0,
+            selected: Vec::new(),
+        }
+    }
+}
 
 pub fn terminal_enter(state: &mut UiState) -> Result<()> {
     enable_raw_mode()?;
@@ -112,12 +148,16 @@ pub fn draw(state: &mut UiState, snap: &AppSnapshot) -> Result<()> {
     state.prev_games = snap.previous_games.clone();
     state.current_vrf = snap.vrf_number;
     // If game changed, reset shop selection and update items
-    let game_changed = state.last_game_id.map_or(true, |g| g != snap.current_game_id);
+    let game_changed = state
+        .last_game_id
+        .map_or(true, |g| g != snap.current_game_id);
     state.shop_items = snap.modifier_triggers.clone();
     state.owned_straps = snap.owned_straps.clone();
     if game_changed {
         // reset selection index if currently in shop
-        if let Mode::ShopModal(ref mut ss) = state.mode { ss.idx = 0; }
+        if let Mode::ShopModal(ref mut ss) = state.mode {
+            ss.idx = 0;
+        }
         state.last_game_id = Some(snap.current_game_id);
     }
     if let Some(mut term) = state.terminal.take() {
@@ -130,108 +170,246 @@ pub fn draw(state: &mut UiState, snap: &AppSnapshot) -> Result<()> {
 pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
     loop {
         if let Event::Key(k) = event::read()? {
-            if k.kind != KeyEventKind::Press { continue; }
+            if k.kind != KeyEventKind::Press {
+                continue;
+            }
             // Modal handling
             match &mut state.mode {
-                Mode::BetModal(bs) => {
-                    match k.code {
-                        KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
-                        KeyCode::Enter => { let amt = bs.amount; state.mode = Mode::Normal; return Ok(UserEvent::PlaceBetAmount(amt)); }
-                        KeyCode::Up | KeyCode::Char('+') => { bs.amount = bs.amount.saturating_add(1); return Ok(UserEvent::Redraw); }
-                        KeyCode::Down | KeyCode::Char('-') => { bs.amount = bs.amount.saturating_sub(1); return Ok(UserEvent::Redraw); }
-                        KeyCode::Backspace => { bs.amount /= 10; return Ok(UserEvent::Redraw); }
-                        KeyCode::Char(c) if c.is_ascii_digit() => { let d = c.to_digit(10).unwrap() as u64; bs.amount = (bs.amount.saturating_mul(10)).saturating_add(d); return Ok(UserEvent::Redraw); }
-                        _ => {}
+                Mode::BetModal(bs) => match k.code {
+                    KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
                     }
-                }
-                Mode::ClaimModal(cs) => {
-                    match k.code {
-                        KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
-                        KeyCode::Left => { if cs.game_idx>0 { cs.game_idx-=1; } return Ok(UserEvent::Redraw); }
-                        KeyCode::Right => { let len = state.prev_games.len(); if len>0 { cs.game_idx=(cs.game_idx+1).min(len-1);} return Ok(UserEvent::Redraw); }
-                        KeyCode::Up => { if cs.mod_idx>0 { cs.mod_idx-=1; } return Ok(UserEvent::Redraw); }
-                        KeyCode::Down => { if let Some(g)=state.prev_games.get(cs.game_idx){ if !g.modifiers.is_empty(){ cs.mod_idx=(cs.mod_idx+1).min(g.modifiers.len()-1);} } return Ok(UserEvent::Redraw); }
-                        KeyCode::Char(' ') => {
-                            if let Some(g)=state.prev_games.get(cs.game_idx){ if let Some((r,m,_idx))=g.modifiers.get(cs.mod_idx){ if let Some(pos)=cs.selected.iter().position(|(rr,mm)| rr==r && mm==m){ cs.selected.remove(pos);} else { cs.selected.push((r.clone(), m.clone())); } } }
+                    KeyCode::Enter => {
+                        let amt = bs.amount;
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::PlaceBetAmount(amt));
+                    }
+                    KeyCode::Up | KeyCode::Char('+') => {
+                        bs.amount = bs.amount.saturating_add(1);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Down | KeyCode::Char('-') => {
+                        bs.amount = bs.amount.saturating_sub(1);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Backspace => {
+                        bs.amount /= 10;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        let d = c.to_digit(10).unwrap() as u64;
+                        bs.amount = (bs.amount.saturating_mul(10)).saturating_add(d);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    _ => {}
+                },
+                Mode::ClaimModal(cs) => match k.code {
+                    KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Left => {
+                        if cs.game_idx > 0 {
+                            cs.game_idx -= 1;
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Right => {
+                        let len = state.prev_games.len();
+                        if len > 0 {
+                            cs.game_idx = (cs.game_idx + 1).min(len - 1);
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Up => {
+                        if cs.mod_idx > 0 {
+                            cs.mod_idx -= 1;
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Down => {
+                        if let Some(g) = state.prev_games.get(cs.game_idx) {
+                            if !g.modifiers.is_empty() {
+                                cs.mod_idx = (cs.mod_idx + 1).min(g.modifiers.len() - 1);
+                            }
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Char(' ') => {
+                        if let Some(g) = state.prev_games.get(cs.game_idx) {
+                            if let Some((r, m, _idx)) = g.modifiers.get(cs.mod_idx) {
+                                if let Some(pos) = cs
+                                    .selected
+                                    .iter()
+                                    .position(|(rr, mm)| rr == r && mm == m)
+                                {
+                                    cs.selected.remove(pos);
+                                } else {
+                                    cs.selected.push((r.clone(), m.clone()));
+                                }
+                            }
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Enter => {
+                        if let Some(g) = state.prev_games.get(cs.game_idx) {
+                            let enabled = cs.selected.clone();
+                            let game_id = g.game_id;
+                            state.mode = Mode::Normal;
+                            return Ok(UserEvent::ConfirmClaim { game_id, enabled });
+                        }
+                        continue;
+                    }
+                    _ => {}
+                },
+                Mode::VrfModal(vs) => match k.code {
+                    KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Up | KeyCode::Char('+') => {
+                        vs.value = vs.value.saturating_add(1);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Down | KeyCode::Char('-') => {
+                        vs.value = vs.value.saturating_sub(1);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Backspace => {
+                        vs.value /= 10;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        let d = c.to_digit(10).unwrap() as u64;
+                        vs.value = vs.value.saturating_mul(10).saturating_add(d);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Enter => {
+                        let n = vs.value;
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::SetVrf(n));
+                    }
+                    _ => {}
+                },
+                Mode::ShopModal(ss) => match k.code {
+                    KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Up => {
+                        if ss.idx > 0 {
+                            ss.idx -= 1;
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Down => {
+                        let max = state.shop_items.len().saturating_sub(1);
+                        ss.idx = (ss.idx + 1).min(max);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Enter => {
+                        if let Some((_from, to, m, on)) =
+                            state.shop_items.get(ss.idx).cloned()
+                        {
+                            if on {
+                                state.mode = Mode::Normal;
+                                return Ok(UserEvent::ConfirmShopPurchase {
+                                    roll: to,
+                                    modifier: m,
+                                });
+                            } else {
+                                return Ok(UserEvent::Redraw);
+                            }
+                        } else {
                             return Ok(UserEvent::Redraw);
                         }
-                        KeyCode::Enter => {
-                            if let Some(g)=state.prev_games.get(cs.game_idx){ let enabled=cs.selected.clone(); let game_id=g.game_id; state.mode=Mode::Normal; return Ok(UserEvent::ConfirmClaim{ game_id, enabled }); }
-                            continue;
+                    }
+                    _ => {}
+                },
+                Mode::StrapBet(sb) => match k.code {
+                    KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Up => {
+                        if sb.idx > 0 {
+                            sb.idx -= 1;
                         }
-                        _ => {}
+                        return Ok(UserEvent::Redraw);
                     }
-                }
-                Mode::VrfModal(vs) => {
-                    match k.code {
-                        KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
-                        KeyCode::Up | KeyCode::Char('+') => { vs.value = vs.value.saturating_add(1); return Ok(UserEvent::Redraw); }
-                        KeyCode::Down | KeyCode::Char('-') => { vs.value = vs.value.saturating_sub(1); return Ok(UserEvent::Redraw); }
-                        KeyCode::Backspace => { vs.value /= 10; return Ok(UserEvent::Redraw); }
-                        KeyCode::Char(c) if c.is_ascii_digit() => { let d = c.to_digit(10).unwrap() as u64; vs.value = vs.value.saturating_mul(10).saturating_add(d); return Ok(UserEvent::Redraw); }
-                        KeyCode::Enter => { let n = vs.value; state.mode = Mode::Normal; return Ok(UserEvent::SetVrf(n)); }
-                        _ => {}
+                    KeyCode::Down => {
+                        let max = state.owned_straps.len().saturating_sub(1);
+                        sb.idx = (sb.idx + 1).min(max);
+                        return Ok(UserEvent::Redraw);
                     }
-                }
-                Mode::ShopModal(ss) => {
-                    match k.code {
-                        KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
-                        KeyCode::Up => { if ss.idx>0 { ss.idx-=1; } return Ok(UserEvent::Redraw); }
-                        KeyCode::Down => { let max = state.shop_items.len().saturating_sub(1); ss.idx = (ss.idx+1).min(max); return Ok(UserEvent::Redraw); }
-                        KeyCode::Enter => {
-                            if let Some((from, to, m, on)) = state.shop_items.get(ss.idx).cloned() {
-                                if on {
-                                    state.mode = Mode::Normal;
-                                    return Ok(UserEvent::ConfirmShopPurchase { roll: to, modifier: m });
-                                } else {
-                                    return Ok(UserEvent::Redraw);
-                                }
-                            } else { return Ok(UserEvent::Redraw); }
+                    KeyCode::Char('+') | KeyCode::Right => {
+                        sb.amount = sb.amount.saturating_add(1);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Char('-') | KeyCode::Left => {
+                        sb.amount = sb.amount.saturating_sub(1).max(1);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Enter => {
+                        if let Some((s, bal)) = state.owned_straps.get(sb.idx).cloned() {
+                            let amt = sb.amount.min(bal);
+                            state.mode = Mode::Normal;
+                            return Ok(UserEvent::ConfirmStrapBet {
+                                strap: s,
+                                amount: amt,
+                            });
+                        } else {
+                            return Ok(UserEvent::Redraw);
                         }
-                        _ => {}
                     }
-                }
-                Mode::StrapBet(sb) => {
-                    match k.code {
-                        KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
-                        KeyCode::Up => { if sb.idx>0 { sb.idx-=1; } return Ok(UserEvent::Redraw); }
-                        KeyCode::Down => { let max = state.owned_straps.len().saturating_sub(1); sb.idx = (sb.idx+1).min(max); return Ok(UserEvent::Redraw); }
-                        KeyCode::Char('+') | KeyCode::Right => { sb.amount = sb.amount.saturating_add(1); return Ok(UserEvent::Redraw); }
-                        KeyCode::Char('-') | KeyCode::Left => { sb.amount = sb.amount.saturating_sub(1).max(1); return Ok(UserEvent::Redraw); }
-                        KeyCode::Enter => {
-                            if let Some((s, bal)) = state.owned_straps.get(sb.idx).cloned() {
-                                let amt = sb.amount.min(bal);
-                                state.mode = Mode::Normal;
-                                return Ok(UserEvent::ConfirmStrapBet { strap: s, amount: amt });
-                            } else { return Ok(UserEvent::Redraw); }
-                        }
-                        _ => {}
+                    _ => {}
+                },
+                Mode::QuitModal => match k.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        return Ok(UserEvent::Quit);
                     }
-                }
-                Mode::QuitModal => {
-                    match k.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') => { return Ok(UserEvent::Quit); }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
-                        _ => {}
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
                     }
-                }
+                    _ => {}
+                },
                 Mode::Normal => {}
             }
             return Ok(match k.code {
-                KeyCode::Char('q') | KeyCode::Esc => { state.mode = Mode::QuitModal; UserEvent::Redraw },
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    state.mode = Mode::QuitModal;
+                    UserEvent::Redraw
+                }
                 KeyCode::Right => UserEvent::NextRoll,
                 KeyCode::Left => UserEvent::PrevRoll,
                 KeyCode::Char('o') => UserEvent::Owner,
                 KeyCode::Char('a') => UserEvent::Alice,
-                KeyCode::Char('b') => { state.mode = Mode::BetModal(BetState::default()); UserEvent::OpenBetModal },
-                KeyCode::Char('t') => { state.mode = Mode::StrapBet(StrapBetState::default()); UserEvent::OpenStrapBet },
+                KeyCode::Char('b') => {
+                    state.mode = Mode::BetModal(BetState::default());
+                    UserEvent::OpenBetModal
+                }
+                KeyCode::Char('t') => {
+                    state.mode = Mode::StrapBet(StrapBetState::default());
+                    UserEvent::OpenStrapBet
+                }
                 KeyCode::Char('m') => UserEvent::Purchase,
                 KeyCode::Char('r') => UserEvent::Roll,
                 KeyCode::Char(']') => UserEvent::VRFInc,
                 KeyCode::Char('[') => UserEvent::VRFDec,
-                KeyCode::Char('/') => { state.mode = Mode::VrfModal(VrfState::default()); UserEvent::OpenVrfModal },
-                KeyCode::Char('s') => { state.mode = Mode::ShopModal(ShopState::default()); UserEvent::OpenShop },
-                KeyCode::Char('c') => { state.mode = Mode::ClaimModal(ClaimState::default()); UserEvent::OpenClaimModal },
+                KeyCode::Char('/') => {
+                    state.mode = Mode::VrfModal(VrfState::default());
+                    UserEvent::OpenVrfModal
+                }
+                KeyCode::Char('s') => {
+                    state.mode = Mode::ShopModal(ShopState::default());
+                    UserEvent::OpenShop
+                }
+                KeyCode::Char('c') => {
+                    state.mode = Mode::ClaimModal(ClaimState::default());
+                    UserEvent::OpenClaimModal
+                }
                 _ => continue,
             });
         }
@@ -264,20 +442,33 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
 }
 
 fn draw_top(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
-    let wallet = match snap.wallet { crate::client::WalletKind::Owner => "Owner", _ => "Alice" };
+    let wallet = match snap.wallet {
+        crate::client::WalletKind::Owner => "Owner",
+        _ => "Alice",
+    };
     let vrf_roll = vrf_to_roll(snap.vrf_number);
     // Build compact strap list
     let mut strap_items: Vec<String> = Vec::new();
     for (s, bal) in &snap.owned_straps {
         strap_items.push(format!("{} x{}", render_reward_compact(s), bal));
     }
-    let straps_line = if strap_items.is_empty() { String::from("none") } else { strap_items.join(" ") };
+    let straps_line = if strap_items.is_empty() {
+        String::from("none")
+    } else {
+        strap_items.join(" ")
+    };
     let gauge = Paragraph::new(format!(
-        "Wallet: {} | Chips: {} | Straps: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
-        wallet, snap.chip_balance, straps_line, snap.pot_balance, snap.current_game_id, snap.vrf_number, vrf_roll, snap.status
+        "Wallet: {} | Straps: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
+        wallet,
+        straps_line,
+        snap.pot_balance,
+        snap.current_game_id,
+        snap.vrf_number,
+        vrf_roll,
+        snap.status
     ))
-        .style(Style::default())
-        .block(Block::default().borders(Borders::ALL).title("Status"));
+    .style(Style::default())
+    .block(Block::default().borders(Borders::ALL).title("Status"));
     f.render_widget(gauge, area);
 }
 
@@ -285,21 +476,31 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     // Draw rolls 2..12 with 7 included
     let rolls = &snap.cells; // already ordered: [Two..Twelve], Seven in middle
     let cols = rolls.len() as u16; // 11
-    let col_w = if cols > 0 { area.width / cols } else { area.width };
+    let col_w = if cols > 0 {
+        area.width / cols
+    } else {
+        area.width
+    };
     for (i, cell) in rolls.iter().enumerate() {
         let c = i as u16;
         let rect = Rect::new(area.x + c * col_w, area.y, col_w, area.height);
         let selected = cell.roll == snap.selected_roll;
-        let mut lines = vec![ Line::from(format!("Chips: {}", cell.chip_total)) ];
+        let mut lines = vec![Line::from(format!("Chips: {}", cell.chip_total))];
         lines.push(Line::from("Straps:"));
-        for (strap, amt) in &cell.straps { lines.push(render_strap_line(strap, *amt)); }
+        for (strap, amt) in &cell.straps {
+            lines.push(render_strap_line(strap, *amt));
+        }
         // Rewards list
         lines.push(Line::from("Rewards:"));
         if cell.rewards.is_empty() {
             lines.push(Line::from("  None"));
         } else {
             for (s, bal) in &cell.rewards {
-                lines.push(Line::from(format!("  {} x{}", render_reward_compact(s), bal)));
+                lines.push(Line::from(format!(
+                    "  {} x{}",
+                    render_reward_compact(s),
+                    bal
+                )));
             }
         }
         let label = Paragraph::new(lines);
@@ -308,13 +509,21 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
             strapped::Roll::Seven => String::from("Seven (RESET)"),
             _ => format!("{:?}", cell.roll),
         };
-        let title = if mods.is_empty() { base } else { format!("{} {}", base, mods) };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(Span::styled(
-                title,
-                if selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default() },
-            ));
+        let title = if mods.is_empty() {
+            base
+        } else {
+            format!("{} {}", base, mods)
+        };
+        let block = Block::default().borders(Borders::ALL).title(Span::styled(
+            title,
+            if selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        ));
         f.render_widget(&block, rect);
         let inner = block.inner(rect);
         f.render_widget(label, inner);
@@ -326,10 +535,15 @@ fn draw_roll_history(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     if snap.roll_history.is_empty() {
         rh.push(Line::styled("None", Style::default().fg(Color::DarkGray)));
     } else {
-        let items: Vec<String> = snap.roll_history.iter().map(|r| format!("{:?}", r)).collect();
+        let items: Vec<String> = snap
+            .roll_history
+            .iter()
+            .map(|r| format!("{:?}", r))
+            .collect();
         rh.push(Line::from(items.join(" ")));
     }
-    let roll_hist = Paragraph::new(rh).block(Block::default().borders(Borders::ALL).title("Roll History"));
+    let roll_hist = Paragraph::new(rh)
+        .block(Block::default().borders(Borders::ALL).title("Roll History"));
     f.render_widget(roll_hist, area);
 }
 
@@ -350,7 +564,12 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
             let text = if *on {
                 format!("{:?} {}", to, modifier_emoji(modifier))
             } else {
-                format!("{:?} {} (Unlock by rolling {:?})", to, modifier_emoji(modifier), from)
+                format!(
+                    "{:?} {} (Unlock by rolling {:?})",
+                    to,
+                    modifier_emoji(modifier),
+                    from
+                )
             };
             if *on {
                 shop_lines.push(Line::from(text));
@@ -359,7 +578,8 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
             }
         }
     }
-    let shop = Paragraph::new(shop_lines).block(Block::default().borders(Borders::ALL).title("Shop"));
+    let shop = Paragraph::new(shop_lines)
+        .block(Block::default().borders(Borders::ALL).title("Shop"));
     f.render_widget(shop, lower[0]);
 
     // Previous games on the right (latest at top)
@@ -368,7 +588,11 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
         prev_lines.push(Line::from("None"));
     } else {
         for g in &snap.previous_games {
-            let claimed = if g.claimed { "[claimed]" } else { "[unclaimed]" };
+            let claimed = if g.claimed {
+                "[claimed]"
+            } else {
+                "[unclaimed]"
+            };
             prev_lines.push(Line::from(format!("Game {} {}", g.game_id, claimed)));
             // Rolls line
             if g.rolls.is_empty() {
@@ -381,10 +605,16 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
                     for (mr, mm, mi) in &g.modifiers {
                         if mr == r && (*mi as usize) <= idx {
                             let e = modifier_emoji(mm);
-                            if !e.is_empty() { emo.push_str(e); }
+                            if !e.is_empty() {
+                                emo.push_str(e);
+                            }
                         }
                     }
-                    items.push(if emo.is_empty() { format!("{:?}", r) } else { format!("{:?}{}", r, emo) });
+                    items.push(if emo.is_empty() {
+                        format!("{:?}", r)
+                    } else {
+                        format!("{:?}{}", r, emo)
+                    });
                 }
                 prev_lines.push(Line::from(format!("  Rolls: {}", items.join(" "))));
             }
@@ -395,15 +625,30 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
                 for (bet, amt, idx) in bets {
                     any_bets = true;
                     match bet {
-                        strapped::Bet::Chip => prev_lines.push(Line::from(format!("    {:?}: Chip x{} @{}", roll, amt, idx))),
-                        strapped::Bet::Strap(s) => prev_lines.push(Line::from(format!("    {:?}: {} x{} @{}", roll, render_reward_compact(s), amt, idx))),
+                        strapped::Bet::Chip => prev_lines.push(Line::from(format!(
+                            "    {:?}: Chip x{} @{}",
+                            roll, amt, idx
+                        ))),
+                        strapped::Bet::Strap(s) => prev_lines.push(Line::from(format!(
+                            "    {:?}: {} x{} @{}",
+                            roll,
+                            render_reward_compact(s),
+                            amt,
+                            idx
+                        ))),
                     }
                 }
             }
-            if !any_bets { prev_lines.push(Line::from("    None")); }
+            if !any_bets {
+                prev_lines.push(Line::from("    None"));
+            }
         }
     }
-    let prev = Paragraph::new(prev_lines).block(Block::default().borders(Borders::ALL).title("Previous Games"));
+    let prev = Paragraph::new(prev_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Previous Games"),
+    );
     f.render_widget(prev, lower[1]);
 }
 
@@ -418,14 +663,20 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     if snap.errors.is_empty() {
         lines.push(Line::from("No errors"));
     } else {
-        for e in &snap.errors { lines.push(Line::from(e.clone())); }
+        for e in &snap.errors {
+            lines.push(Line::from(e.clone()));
+        }
     }
     let errors = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title("Errors"));
     let color = if snap.roll_history.is_empty() && snap.previous_games.is_empty() {
         // No activity yet — keep neutral
         Color::DarkGray
-    } else if snap.errors.is_empty() { Color::Green } else { Color::Red };
+    } else if snap.errors.is_empty() {
+        Color::Green
+    } else {
+        Color::Red
+    };
     f.render_widget(errors.style(Style::default().fg(color)), chunks[0]);
 
     // Help
@@ -441,14 +692,19 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
         Mode::BetModal(bs) => {
             let area = centered_rect(40, 30, f.area());
             let block = Block::default().borders(Borders::ALL).title("Place Bet");
-            let p = Paragraph::new(format!("Amount: {}\nEnter=confirm Esc=cancel +/- or digits to edit", bs.amount));
+            let p = Paragraph::new(format!(
+                "Amount: {}\nEnter=confirm Esc=cancel +/- or digits to edit",
+                bs.amount
+            ));
             f.render_widget(Clear, area);
             f.render_widget(block.clone(), area);
             f.render_widget(p, block.inner(area));
         }
         Mode::ClaimModal(cs) => {
             let area = centered_rect(60, 60, f.area());
-            let block = Block::default().borders(Borders::ALL).title("Claim Rewards");
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Claim Rewards");
             let mut lines = Vec::new();
             if snap.previous_games.is_empty() {
                 lines.push(Line::from("No previous games"));
@@ -457,21 +713,41 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                 lines.push(Line::from("Games:"));
                 for (i, g) in snap.previous_games.iter().enumerate() {
                     let cur = if i == cs.game_idx { ">" } else { " " };
-                    let claimed = if g.claimed { "[claimed]" } else { "[unclaimed]" };
-                    lines.push(Line::from(format!("{} Game {} {}", cur, g.game_id, claimed)));
+                    let claimed = if g.claimed {
+                        "[claimed]"
+                    } else {
+                        "[unclaimed]"
+                    };
+                    lines.push(Line::from(format!(
+                        "{} Game {} {}",
+                        cur, g.game_id, claimed
+                    )));
                 }
                 // Details for selected game
-                let idx = cs.game_idx.min(snap.previous_games.len()-1);
+                let idx = cs.game_idx.min(snap.previous_games.len() - 1);
                 let g = &snap.previous_games[idx];
                 lines.push(Line::from(""));
                 lines.push(Line::from(format!("Details for Game {}", g.game_id)));
                 lines.push(Line::from("Bets:"));
-                for cell in &g.cells { if cell.chip_total>0 || cell.strap_total>0 { lines.push(Line::from(format!("  {:?}: chip {} strap {}", cell.roll, cell.chip_total, cell.strap_total))); } }
+                for cell in &g.cells {
+                    if cell.chip_total > 0 || cell.strap_total > 0 {
+                        lines.push(Line::from(format!(
+                            "  {:?}: chip {} strap {}",
+                            cell.roll, cell.chip_total, cell.strap_total
+                        )));
+                    }
+                }
                 lines.push(Line::from("Modifiers (space to toggle):"));
-                for (i,(r,m,_idx)) in g.modifiers.iter().enumerate() {
-                    let sel = cs.selected.iter().any(|(rr,mm)| rr==r && mm==m);
-                    let cur = if i==cs.mod_idx { ">" } else { " " };
-                    lines.push(Line::from(format!("{} [{}] {:?} {:?}", cur, if sel {"x"} else {" "}, r, m)));
+                for (i, (r, m, _idx)) in g.modifiers.iter().enumerate() {
+                    let sel = cs.selected.iter().any(|(rr, mm)| rr == r && mm == m);
+                    let cur = if i == cs.mod_idx { ">" } else { " " };
+                    lines.push(Line::from(format!(
+                        "{} [{}] {:?} {:?}",
+                        cur,
+                        if sel { "x" } else { " " },
+                        r,
+                        m
+                    )));
                 }
                 lines.push(Line::from("Enter=claim Esc=cancel ←/→ game ↑/↓ select"));
             }
@@ -482,15 +758,22 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
         }
         Mode::VrfModal(vs) => {
             let area = centered_rect(50, 30, f.area());
-            let block = Block::default().borders(Borders::ALL).title("Set VRF Number");
-            let p = Paragraph::new(format!("VRF: {}\nEnter=confirm Esc=cancel +/- or digits to edit", vs.value));
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Set VRF Number");
+            let p = Paragraph::new(format!(
+                "VRF: {}\nEnter=confirm Esc=cancel +/- or digits to edit",
+                vs.value
+            ));
             f.render_widget(Clear, area);
             f.render_widget(block.clone(), area);
             f.render_widget(p, block.inner(area));
         }
         Mode::ShopModal(ss) => {
             let area = centered_rect(60, 60, f.area());
-            let block = Block::default().borders(Borders::ALL).title("Modifier Shop (price: 1 chip)");
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Modifier Shop (price: 1 chip)");
             let mut lines = Vec::new();
             if state.shop_items.is_empty() {
                 lines.push(Line::from("No modifiers available"));
@@ -500,12 +783,21 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                     let text = if *on {
                         format!("{} {:?} {}", cur, to, modifier_emoji(modifier))
                     } else {
-                        format!("{} {:?} {} (Unlock by rolling {:?})", cur, to, modifier_emoji(modifier), from)
+                        format!(
+                            "{} {:?} {} (Unlock by rolling {:?})",
+                            cur,
+                            to,
+                            modifier_emoji(modifier),
+                            from
+                        )
                     };
                     if *on {
                         lines.push(Line::from(text));
                     } else {
-                        lines.push(Line::styled(text, Style::default().fg(Color::DarkGray)));
+                        lines.push(Line::styled(
+                            text,
+                            Style::default().fg(Color::DarkGray),
+                        ));
                     }
                 }
                 lines.push(Line::from("Enter=buy Esc=close ↑/↓ move"));
@@ -516,16 +808,26 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
         }
         Mode::StrapBet(sb) => {
             let area = centered_rect(60, 50, f.area());
-            let block = Block::default().borders(Borders::ALL).title("Place Strap Bet");
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Place Strap Bet");
             let mut lines = Vec::new();
             if state.owned_straps.is_empty() {
                 lines.push(Line::from("No straps owned"));
             } else {
                 for (i, (s, bal)) in state.owned_straps.iter().enumerate() {
                     let cur = if i == sb.idx { ">" } else { " " };
-                    lines.push(Line::from(format!("{} {} x{}", cur, render_reward_compact(s), bal)));
+                    lines.push(Line::from(format!(
+                        "{} {} x{}",
+                        cur,
+                        render_reward_compact(s),
+                        bal
+                    )));
                 }
-                lines.push(Line::from(format!("Amount: {} (Enter=confirm, Esc=cancel, +/- change)", sb.amount)));
+                lines.push(Line::from(format!(
+                    "Amount: {} (Enter=confirm, Esc=cancel, +/- change)",
+                    sb.amount
+                )));
             }
             f.render_widget(Clear, area);
             f.render_widget(block.clone(), area);
@@ -544,15 +846,30 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
 }
 
 #[derive(Clone, Debug)]
-struct VrfState { value: u64 }
+struct VrfState {
+    value: u64,
+}
 
-impl Default for VrfState { fn default() -> Self { VrfState { value: 0 } } }
+impl Default for VrfState {
+    fn default() -> Self {
+        VrfState { value: 0 }
+    }
+}
 
 #[derive(Clone, Debug, Default)]
-struct ShopState { idx: usize }
+struct ShopState {
+    idx: usize,
+}
 #[derive(Clone, Debug)]
-struct StrapBetState { idx: usize, amount: u64 }
-impl Default for StrapBetState { fn default() -> Self { StrapBetState { idx: 0, amount: 1 } } }
+struct StrapBetState {
+    idx: usize,
+    amount: u64,
+}
+impl Default for StrapBetState {
+    fn default() -> Self {
+        StrapBetState { idx: 0, amount: 1 }
+    }
+}
 
 fn centered_rect(w_percent: u16, h_percent: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -576,13 +893,18 @@ fn centered_rect(w_percent: u16, h_percent: u16, r: Rect) -> Rect {
     vertical[1]
 }
 
-fn active_mods_emojis(roll: &strapped::Roll, active: &Vec<(strapped::Roll, strapped::Modifier, u64)>) -> String {
+fn active_mods_emojis(
+    roll: &strapped::Roll,
+    active: &Vec<(strapped::Roll, strapped::Modifier, u64)>,
+) -> String {
     let mut s = String::new();
     for (r, m, _) in active {
         if r == roll {
             let e = modifier_emoji(m);
             if !e.is_empty() {
-                if !s.is_empty() { s.push(' '); }
+                if !s.is_empty() {
+                    s.push(' ');
+                }
                 s.push_str(e);
             }
         }
