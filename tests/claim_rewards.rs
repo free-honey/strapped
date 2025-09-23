@@ -130,7 +130,133 @@ async fn claim_rewards__adds_chips_to_wallet() {
     // then
 
     // Six pays 2:1 for each roll
-    let expected = wallet_balance + bet_amount * 2 - bet_amount;
+    let expected = wallet_balance + bet_amount * 2;
+    let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
+    let ctx = TestContext::new().await;
+    let owner = ctx.owner();
+    let chip_asset_id = AssetId::new([1; 32]);
+
+    // given
+    // init contracts
+    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
+    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
+    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
+    instance
+        .methods()
+        .set_vrf_contract_id(Bits256(*vrf_contract_id))
+        .call()
+        .await
+        .unwrap();
+    instance
+        .methods()
+        .set_chip_asset_id(chip_asset_id)
+        .call()
+        .await
+        .unwrap();
+
+    // fund contract with chips
+    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
+    instance
+        .methods()
+        .fund()
+        .call_params(call_params)
+        .unwrap()
+        .call()
+        .await
+        .unwrap();
+
+    // place bet
+    let bet_amount = 100;
+    let bet = strapped_types::Bet::Chip;
+    let roll = Roll::Six;
+    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
+    alice_instance
+        .methods()
+        .place_bet(roll.clone(), bet.clone(), bet_amount)
+        .call_params(call_params)
+        .unwrap()
+        .call()
+        .await
+        .unwrap();
+
+    let bet_game_id = alice_instance
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    // roll the correct number
+    let first_number = 10; // 10 % 36 = 10 which is Six
+    vrf_instance
+        .methods()
+        .set_number(first_number)
+        .call()
+        .await
+        .unwrap();
+    // hit once
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+    // hit twice
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+    // hit thrice
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+
+    // roll seven
+    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
+    vrf_instance
+        .methods()
+        .set_number(seven_vrf_number)
+        .call()
+        .await
+        .unwrap();
+    instance
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&vrf_instance])
+        .call()
+        .await
+        .unwrap();
+
+    // when
+
+    // claim reward
+    let wallet_balance = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    alice_instance
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    // then
+
+    // Six pays 2:1 for each roll
+    let expected = wallet_balance + bet_amount * 2 + bet_amount * 2 + bet_amount * 2;
     let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
     assert_eq!(expected, actual);
 }

@@ -27,6 +27,8 @@ pub enum UserEvent {
     Redraw,
     OpenShop,
     ConfirmShopPurchase { roll: strapped::Roll, modifier: strapped::Modifier },
+    OpenStrapBet,
+    ConfirmStrapBet { strap: strapped::Strap, amount: u64 },
     ConfirmClaim { game_id: u64, enabled: Vec<(strapped::Roll, strapped::Modifier)> },
 }
 
@@ -38,6 +40,7 @@ pub struct UiState {
     terminal: Option<Terminal<CrosstermBackend<std::io::Stdout>>>,
     shop_items: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
     last_game_id: Option<u64>,
+    owned_straps: Vec<(strapped::Strap, u64)>,
 }
 
 impl Default for UiState {
@@ -49,6 +52,7 @@ impl Default for UiState {
             terminal: None,
             shop_items: Vec::new(),
             last_game_id: None,
+            owned_straps: Vec::new(),
         }
     }
 }
@@ -62,6 +66,7 @@ enum Mode {
     VrfModal(VrfState),
     ShopModal(ShopState),
     QuitModal,
+    StrapBet(StrapBetState),
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +114,7 @@ pub fn draw(state: &mut UiState, snap: &AppSnapshot) -> Result<()> {
     // If game changed, reset shop selection and update items
     let game_changed = state.last_game_id.map_or(true, |g| g != snap.current_game_id);
     state.shop_items = snap.modifier_triggers.clone();
+    state.owned_straps = snap.owned_straps.clone();
     if game_changed {
         // reset selection index if currently in shop
         if let Mode::ShopModal(ref mut ss) = state.mode { ss.idx = 0; }
@@ -185,6 +191,23 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         _ => {}
                     }
                 }
+                Mode::StrapBet(sb) => {
+                    match k.code {
+                        KeyCode::Esc => { state.mode = Mode::Normal; return Ok(UserEvent::Redraw); }
+                        KeyCode::Up => { if sb.idx>0 { sb.idx-=1; } return Ok(UserEvent::Redraw); }
+                        KeyCode::Down => { let max = state.owned_straps.len().saturating_sub(1); sb.idx = (sb.idx+1).min(max); return Ok(UserEvent::Redraw); }
+                        KeyCode::Char('+') | KeyCode::Right => { sb.amount = sb.amount.saturating_add(1); return Ok(UserEvent::Redraw); }
+                        KeyCode::Char('-') | KeyCode::Left => { sb.amount = sb.amount.saturating_sub(1).max(1); return Ok(UserEvent::Redraw); }
+                        KeyCode::Enter => {
+                            if let Some((s, bal)) = state.owned_straps.get(sb.idx).cloned() {
+                                let amt = sb.amount.min(bal);
+                                state.mode = Mode::Normal;
+                                return Ok(UserEvent::ConfirmStrapBet { strap: s, amount: amt });
+                            } else { return Ok(UserEvent::Redraw); }
+                        }
+                        _ => {}
+                    }
+                }
                 Mode::QuitModal => {
                     match k.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => { return Ok(UserEvent::Quit); }
@@ -201,6 +224,7 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                 KeyCode::Char('o') => UserEvent::Owner,
                 KeyCode::Char('a') => UserEvent::Alice,
                 KeyCode::Char('b') => { state.mode = Mode::BetModal(BetState::default()); UserEvent::OpenBetModal },
+                KeyCode::Char('t') => { state.mode = Mode::StrapBet(StrapBetState::default()); UserEvent::OpenStrapBet },
                 KeyCode::Char('m') => UserEvent::Purchase,
                 KeyCode::Char('r') => UserEvent::Roll,
                 KeyCode::Char(']') => UserEvent::VRFInc,
@@ -224,7 +248,7 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             Constraint::Length(3),  // roll history
             Constraint::Length(17), // horizontal grid (even taller cells)
             Constraint::Length(16), // shop + previous games (about 4x taller)
-            Constraint::Length(3),  // help
+            Constraint::Length(6),  // errors + help
         ])
         .split(f.area());
 
@@ -242,9 +266,15 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
 fn draw_top(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let wallet = match snap.wallet { crate::client::WalletKind::Owner => "Owner", _ => "Alice" };
     let vrf_roll = vrf_to_roll(snap.vrf_number);
+    // Build compact strap list
+    let mut strap_items: Vec<String> = Vec::new();
+    for (s, bal) in &snap.owned_straps {
+        strap_items.push(format!("{} x{}", render_reward_compact(s), bal));
+    }
+    let straps_line = if strap_items.is_empty() { String::from("none") } else { strap_items.join(" ") };
     let gauge = Paragraph::new(format!(
-        "Wallet: {} | Chips: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
-        wallet, snap.chip_balance, snap.pot_balance, snap.current_game_id, snap.vrf_number, vrf_roll, snap.status
+        "Wallet: {} | Chips: {} | Straps: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
+        wallet, snap.chip_balance, straps_line, snap.pot_balance, snap.current_game_id, snap.vrf_number, vrf_roll, snap.status
     ))
         .style(Style::default())
         .block(Block::default().borders(Borders::ALL).title("Status"));
@@ -274,7 +304,11 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         }
         let label = Paragraph::new(lines);
         let mods = active_mods_emojis(&cell.roll, &snap.active_modifiers);
-        let title = if mods.is_empty() { format!("{:?}", cell.roll) } else { format!("{:?} {}", cell.roll, mods) };
+        let base = match cell.roll {
+            strapped::Roll::Seven => String::from("Seven (RESET)"),
+            _ => format!("{:?}", cell.roll),
+        };
+        let title = if mods.is_empty() { base } else { format!("{} {}", base, mods) };
         let block = Block::default()
             .borders(Borders::ALL)
             .title(Span::styled(
@@ -290,7 +324,7 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 fn draw_roll_history(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let mut rh = vec![];
     if snap.roll_history.is_empty() {
-        rh.push(Line::from("None"));
+        rh.push(Line::styled("None", Style::default().fg(Color::DarkGray)));
     } else {
         let items: Vec<String> = snap.roll_history.iter().map(|r| format!("{:?}", r)).collect();
         rh.push(Line::from(items.join(" ")));
@@ -373,12 +407,33 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
     f.render_widget(prev, lower[1]);
 }
 
-fn draw_bottom(f: &mut Frame, area: Rect, _snap: &AppSnapshot) {
+fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Length(3)])
+        .split(area);
+
+    // Errors/logs
+    let mut lines: Vec<Line> = Vec::new();
+    if snap.errors.is_empty() {
+        lines.push(Line::from("No errors"));
+    } else {
+        for e in &snap.errors { lines.push(Line::from(e.clone())); }
+    }
+    let errors = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Errors"));
+    let color = if snap.roll_history.is_empty() && snap.previous_games.is_empty() {
+        // No activity yet — keep neutral
+        Color::DarkGray
+    } else if snap.errors.is_empty() { Color::Green } else { Color::Red };
+    f.render_widget(errors.style(Style::default().fg(color)), chunks[0]);
+
+    // Help
     let help = Paragraph::new(
-        "←/→ select | a Alice | o Owner | b bet | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
+        "←/→ select | a Alice | o Owner | b chip bet | t strap bet | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
     )
     .block(Block::default().borders(Borders::ALL).title("Help"));
-    f.render_widget(help, area);
+    f.render_widget(help, chunks[1]);
 }
 
 fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
@@ -459,6 +514,23 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             f.render_widget(block.clone(), area);
             f.render_widget(Paragraph::new(lines), block.inner(area));
         }
+        Mode::StrapBet(sb) => {
+            let area = centered_rect(60, 50, f.area());
+            let block = Block::default().borders(Borders::ALL).title("Place Strap Bet");
+            let mut lines = Vec::new();
+            if state.owned_straps.is_empty() {
+                lines.push(Line::from("No straps owned"));
+            } else {
+                for (i, (s, bal)) in state.owned_straps.iter().enumerate() {
+                    let cur = if i == sb.idx { ">" } else { " " };
+                    lines.push(Line::from(format!("{} {} x{}", cur, render_reward_compact(s), bal)));
+                }
+                lines.push(Line::from(format!("Amount: {} (Enter=confirm, Esc=cancel, +/- change)", sb.amount)));
+            }
+            f.render_widget(Clear, area);
+            f.render_widget(block.clone(), area);
+            f.render_widget(Paragraph::new(lines), block.inner(area));
+        }
         Mode::QuitModal => {
             let area = centered_rect(40, 20, f.area());
             let block = Block::default().borders(Borders::ALL).title("Confirm Quit");
@@ -478,6 +550,9 @@ impl Default for VrfState { fn default() -> Self { VrfState { value: 0 } } }
 
 #[derive(Clone, Debug, Default)]
 struct ShopState { idx: usize }
+#[derive(Clone, Debug)]
+struct StrapBetState { idx: usize, amount: u64 }
+impl Default for StrapBetState { fn default() -> Self { StrapBetState { idx: 0, amount: 1 } } }
 
 fn centered_rect(w_percent: u16, h_percent: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()

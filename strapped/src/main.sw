@@ -223,7 +223,6 @@ impl Strapped for Contract {
                                 _ => 0,
                             };
                             total_chips_winnings += bet_winnings; 
-                            total_chips_winnings -= amount; 
                         },
                         Bet::Strap(strap) => {
                             let Strap { level, kind, modifier } = strap;
@@ -242,9 +241,22 @@ impl Strapped for Contract {
                 }
                 bet_index += 1;
             }
-            storage.bets.get((game_id, identity, roll)).clear();
+            // storage.bets.get((game_id, identity, roll)).clear();
             index += 1;
         }
+        // clear all bets for this game
+        storage.bets.get((game_id, identity, Roll::Two)).clear();
+        storage.bets.get((game_id, identity, Roll::Three)).clear();
+        storage.bets.get((game_id, identity, Roll::Four)).clear();
+        storage.bets.get((game_id, identity, Roll::Five)).clear();
+        storage.bets.get((game_id, identity, Roll::Six)).clear();
+        storage.bets.get((game_id, identity, Roll::Seven)).clear();
+        storage.bets.get((game_id, identity, Roll::Eight)).clear();
+        storage.bets.get((game_id, identity, Roll::Nine)).clear();
+        storage.bets.get((game_id, identity, Roll::Ten)).clear();
+        storage.bets.get((game_id, identity, Roll::Eleven)).clear();
+        storage.bets.get((game_id, identity, Roll::Twelve)).clear();
+
         if total_chips_winnings > 0 || rewards.len() > 0 {
             let chip_asset_id = storage.chip_asset_id.read();
             if total_chips_winnings > 0 {
