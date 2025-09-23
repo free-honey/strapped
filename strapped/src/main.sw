@@ -120,6 +120,7 @@ impl Strapped for Contract {
                 let new_straps = generate_straps(random_number);
                 storage.strap_rewards.clear();
                 storage.roll_index.write(0);
+                storage.modifier_triggers.clear();
                 for (roll, strap) in new_straps.iter() {
                     storage.strap_rewards.push((roll, strap));
                 }
