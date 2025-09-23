@@ -13,11 +13,11 @@ use fuels::tx::ContractIdExt;
 use fuels::types::{Bits256, Bytes32};
 use itertools::Itertools;
 use std::time::{Duration, Instant};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use tokio::sync::mpsc;
 use tokio::time;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum WalletKind {
     Owner,
     Alice,
@@ -146,14 +146,29 @@ pub struct AppController {
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub status: String,
-    last_seen_game_id: Option<u64>,
-    last_bets_by_roll: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    last_active_mods: Vec<(strapped::Roll, strapped::Modifier, u64)>,
-    last_roll_history: Vec<strapped::Roll>,
-    previous_games: Vec<PreviousGame>,
+    last_seen_game_id_owner: Option<u64>,
+    last_seen_game_id_alice: Option<u64>,
+    shared_last_roll_history: Vec<strapped::Roll>,
+    shared_prev_games: Vec<SharedGame>,
+    owner_bets_hist: HashMap<u64, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>>,
+    alice_bets_hist: HashMap<u64, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>>,
+    owner_claimed: HashSet<u64>,
+    alice_claimed: HashSet<u64>,
+    prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
+    prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
 }
 
 impl AppController {
+    async fn fetch_bets_for(&self, who: WalletKind) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+        let me = self.clients.instance(who);
+        let rolls = all_rolls();
+        let mut out = Vec::with_capacity(rolls.len());
+        for r in &rolls {
+            let bets = me.methods().get_my_bets(r.clone()).call().await?.value;
+            out.push((r.clone(), bets));
+        }
+        Ok(out)
+    }
     pub async fn new_local() -> Result<Self> {
         let clients = init_local().await?;
         Ok(Self {
@@ -162,11 +177,16 @@ impl AppController {
             selected_roll: strapped::Roll::Six,
             vrf_number: 19,
             status: String::from("Ready"),
-            last_seen_game_id: None,
-            last_bets_by_roll: Vec::new(),
-            last_active_mods: Vec::new(),
-            last_roll_history: Vec::new(),
-            previous_games: Vec::new(),
+            last_seen_game_id_owner: None,
+            last_seen_game_id_alice: None,
+            shared_last_roll_history: Vec::new(),
+            shared_prev_games: Vec::new(),
+            owner_bets_hist: HashMap::new(),
+            alice_bets_hist: HashMap::new(),
+            owner_claimed: HashSet::new(),
+            alice_claimed: HashSet::new(),
+            prev_owner_bets: Vec::new(),
+            prev_alice_bets: Vec::new(),
         })
     }
 
@@ -189,19 +209,29 @@ impl AppController {
             my_bets.push((r.clone(), bets));
         }
 
-        // detect rollover
-        if let Some(prev) = self.last_seen_game_id {
+        // Refresh current bets for both users on each tick so rollover can snapshot both reliably
+        let new_owner_bets = self.fetch_bets_for(WalletKind::Owner).await?;
+        let new_alice_bets = self.fetch_bets_for(WalletKind::Alice).await?;
+
+        // detect rollover using the active wallet's last seen id (avoid holding mutable borrow across await)
+        let last_seen_opt = match self.wallet { WalletKind::Owner => self.last_seen_game_id_owner, WalletKind::Alice => self.last_seen_game_id_alice };
+        if let Some(prev) = last_seen_opt {
             if current_game_id > prev {
-                self.previous_games.insert(0, PreviousGame {
-                    game_id: prev,
-                    bets_by_roll: self.last_bets_by_roll.clone(),
-                    active_modifiers: self.last_active_mods.clone(),
-                    rolls: self.last_roll_history.clone(),
-                    claimed: false,
-                });
+                // Build shared game entry and bets for both users so rolls persist and bets differ
+                let owner_bets = self.prev_owner_bets.clone();
+                let alice_bets = self.prev_alice_bets.clone();
+                self.shared_prev_games.insert(0, SharedGame { game_id: prev, rolls: self.shared_last_roll_history.clone(), modifiers: active_modifiers.clone() });
+                self.owner_bets_hist.insert(prev, owner_bets);
+                self.alice_bets_hist.insert(prev, alice_bets);
+                // Reset both last seen ids to current so we won't insert twice on switch
+                self.last_seen_game_id_owner = Some(current_game_id);
+                self.last_seen_game_id_alice = Some(current_game_id);
             }
         }
-        self.last_seen_game_id = Some(current_game_id);
+        match self.wallet { WalletKind::Owner => self.last_seen_game_id_owner = Some(current_game_id), WalletKind::Alice => self.last_seen_game_id_alice = Some(current_game_id) };
+        // Update cached prev bets for next rollover detection
+        self.prev_owner_bets = new_owner_bets;
+        self.prev_alice_bets = new_alice_bets;
 
         let chip_balance = me.account().get_asset_balance(&self.clients.chip_asset_id).await?;
         let pot_balance = get_contract_asset_balance(
@@ -211,10 +241,9 @@ impl AppController {
         )
         .await?;
 
-        // update last tracking
-        self.last_bets_by_roll = my_bets.clone();
-        self.last_active_mods = active_modifiers.clone();
-        self.last_roll_history = roll_history.clone();
+        // update shared rolls (one game globally)
+        // update shared rolls (one game globally)
+        self.shared_last_roll_history = roll_history.clone();
 
         // build cells for UI
         let mut cells = Vec::new();
@@ -247,7 +276,25 @@ impl AppController {
             cells.push(RollCell { roll: r.clone(), chip_total, strap_total, straps, rewards });
         }
 
-        let previous_games = self.previous_games.iter().map(|g| g.to_summary()).collect();
+        // Build previous games by merging shared games with current user's stored bets
+        let mut summaries: Vec<PreviousGameSummary> = Vec::new();
+        for sg in &self.shared_prev_games {
+            let bets = match self.wallet {
+                WalletKind::Owner => self.owner_bets_hist.get(&sg.game_id).cloned().unwrap_or_default(),
+                WalletKind::Alice => self.alice_bets_hist.get(&sg.game_id).cloned().unwrap_or_default(),
+            };
+            // Build cells from bets
+            let mut cells = Vec::new();
+            for r in &all_rolls {
+                let bets_for = bets.iter().find(|(rr, _)| rr==r).map(|(_, b)| b).cloned().unwrap_or_default();
+                let chip_total: u64 = bets_for.iter().filter_map(|(b, amt, _)| match b { strapped::Bet::Chip => Some(*amt), _ => None }).sum();
+                let strap_total: u64 = bets_for.iter().filter_map(|(b, amt, _)| match b { strapped::Bet::Strap(_) => Some(*amt), _ => None }).sum();
+                cells.push(RollCell { roll: r.clone(), chip_total, strap_total, straps: Vec::new(), rewards: Vec::new() });
+            }
+            let claimed = match self.wallet { WalletKind::Owner => self.owner_claimed.contains(&sg.game_id), WalletKind::Alice => self.alice_claimed.contains(&sg.game_id) };
+            summaries.push(PreviousGameSummary { game_id: sg.game_id, cells, modifiers: sg.modifiers.clone(), rolls: sg.rolls.clone(), bets_by_roll: bets, claimed });
+        }
+        let previous_games = summaries;
 
         Ok(AppSnapshot {
             now: Instant::now(),
@@ -268,15 +315,7 @@ impl AppController {
         })
     }
 
-    pub fn set_wallet(&mut self, w: WalletKind) {
-        self.wallet = w;
-        // Reset cached previous games for new user context
-        self.previous_games.clear();
-        self.last_seen_game_id = None;
-        self.last_bets_by_roll.clear();
-        self.last_active_mods.clear();
-        self.last_roll_history.clear();
-    }
+    pub fn set_wallet(&mut self, w: WalletKind) { self.wallet = w; }
     pub fn select_next_roll(&mut self) { self.selected_roll = next_roll(self.selected_roll.clone()); }
     pub fn select_prev_roll(&mut self) { self.selected_roll = prev_roll(self.selected_roll.clone()); }
     pub fn inc_vrf(&mut self) { self.vrf_number = self.vrf_number.wrapping_add(1); }
@@ -361,9 +400,10 @@ impl AppController {
             .claim_rewards(game_id, enabled)
             .call()
             .await?;
-        // mark as claimed in local cache
-        if let Some(g) = self.previous_games.iter_mut().find(|g| g.game_id == game_id) {
-            g.claimed = true;
+        // mark as claimed in local cache for the current user
+        match self.wallet {
+            WalletKind::Owner => { self.owner_claimed.insert(game_id); },
+            WalletKind::Alice => { self.alice_claimed.insert(game_id); },
         }
         self.status = format!("Claimed rewards for game {}", game_id);
         Ok(())
@@ -429,41 +469,15 @@ pub struct PreviousGameSummary {
 
 impl PreviousGame {
     pub fn to_summary(&self) -> PreviousGameSummary {
-        let rolls = all_rolls();
-        let mut cells = Vec::new();
-        for r in &rolls {
-            let bets = self
-                .bets_by_roll
-                .iter()
-                .find(|(rr, _)| rr == r)
-                .map(|(_, b)| b)
-                .cloned()
-                .unwrap_or_default();
-            let chip_total: u64 = bets
-                .iter()
-                .filter_map(|(b, amt, _)| match b {
-                    strapped::Bet::Chip => Some(*amt),
-                    _ => None,
-                })
-                .sum();
-            let strap_total: u64 = bets
-                .iter()
-                .filter_map(|(b, amt, _)| match b {
-                    strapped::Bet::Strap(_) => Some(*amt),
-                    _ => None,
-                })
-                .sum();
-            cells.push(RollCell {
-                roll: r.clone(),
-                chip_total,
-                strap_total,
-                straps: Vec::new(),
-                rewards: Vec::new(),
-            });
-        }
-        let modifiers = self.active_modifiers.clone();
-        PreviousGameSummary { game_id: self.game_id, cells, modifiers, rolls: self.rolls.clone(), bets_by_roll: self.bets_by_roll.clone(), claimed: self.claimed }
+        unreachable!("legacy path not used; summaries built from shared games")
     }
+}
+
+#[derive(Clone, Debug)]
+struct SharedGame {
+    game_id: u64,
+    rolls: Vec<strapped::Roll>,
+    modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
 }
 
 pub async fn run_app() -> Result<()> {
