@@ -16,6 +16,8 @@ Many values in the Sway contract are currently hard-coded to enable simpler test
 
 To get the best experience, place bets on Six and Eight only.
 
+To populate the game and the shop, roll a seven. This should just require pressing `r` after starting up.
+
 Use `/` to modify the VRF number. 
 `0` -> `Two`
 `10` -> `Six`
