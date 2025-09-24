@@ -854,6 +854,7 @@ async fn run_loop(
 ) -> Result<()> {
     let mut ticker = time::interval(Duration::from_millis(1000));
     let mut last_snapshot = controller.snapshot().await?;
+    ui::draw(ui_state, &last_snapshot)?;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { break; }
