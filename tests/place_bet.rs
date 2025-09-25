@@ -1,19 +1,11 @@
 #![allow(non_snake_case)]
 use fuels::{
-    prelude::{
-        AssetConfig,
-        AssetId,
-        CallParameters,
-    },
+    prelude::{AssetConfig, AssetId, CallParameters},
     tx::ContractIdExt,
 };
 use strapped_contract::{
-    contract_id,
-    get_contract_instance,
-    strap_to_sub_id,
-    strapped_types,
-    strapped_types::Strap,
-    test_helpers::TestContext,
+    contract_id, get_contract_instance, strap_to_sub_id, strapped_types,
+    strapped_types::Strap, test_helpers::TestContext,
 };
 
 #[tokio::test]

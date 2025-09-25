@@ -12,6 +12,7 @@ use fuels::{
         CallParameters,
         Contract,
         ContractId,
+        Execution,
         LoadConfiguration,
         Provider,
         TxPolicies,
@@ -35,6 +36,7 @@ use strapped_contract::{
     vrf_types as vrf,
 };
 use tokio::time;
+use tracing::error;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum WalletKind {
@@ -61,6 +63,7 @@ pub struct AppSnapshot {
     )>,
     pub owned_straps: Vec<(strapped::Strap, u64)>,
     pub pot_balance: u64,
+    pub chip_balance: u64,
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub status: String,
@@ -200,7 +203,7 @@ impl AppController {
         let rolls = all_rolls();
         let mut out = Vec::with_capacity(rolls.len());
         for r in &rolls {
-            let bets = me.methods().get_my_bets(r.clone()).call().await?.value;
+            let bets = me.methods().get_my_bets(r.clone()).simulate(Execution::Realistic).await?.value;
             out.push((r.clone(), bets));
         }
         Ok(out)
@@ -237,17 +240,42 @@ impl AppController {
             .ok_or_else(|| eyre!("no provider"))?
             .clone();
 
-        let current_game_id = me.methods().current_game_id().call().await?.value;
-        let roll_history = me.methods().roll_history().call().await?.value;
-        let strap_rewards = me.methods().strap_rewards().call().await?.value;
-        let modifier_triggers = me.methods().modifier_triggers().call().await?.value;
-        let active_modifiers = me.methods().active_modifiers().call().await?.value;
+        let current_game_id = me
+            .methods()
+            .current_game_id()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let roll_history = me
+            .methods()
+            .roll_history()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let strap_rewards = me
+            .methods()
+            .strap_rewards()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let modifier_triggers = me
+            .methods()
+            .modifier_triggers()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let active_modifiers = me
+            .methods()
+            .active_modifiers()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
 
         // My bets by roll
         let all_rolls = all_rolls();
         let mut my_bets = Vec::with_capacity(all_rolls.len());
         for r in &all_rolls {
-            let bets = me.methods().get_my_bets(r.clone()).call().await?.value;
+            let bets = me.methods().get_my_bets(r.clone()).simulate(Execution::Realistic).await?.value;
             my_bets.push((r.clone(), bets));
         }
 
@@ -299,6 +327,11 @@ impl AppController {
             &self.clients.chip_asset_id,
         )
         .await?;
+
+        let chip_balance = me
+            .account()
+            .get_asset_balance(&self.clients.chip_asset_id)
+            .await?;
 
         // update shared rolls (one game globally)
         // update shared rolls (one game globally)
@@ -443,6 +476,7 @@ impl AppController {
             active_modifiers,
             owned_straps,
             pot_balance,
+            chip_balance,
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
             status: self.status.clone(),
@@ -510,7 +544,12 @@ impl AppController {
     pub async fn purchase_triggered_modifier(&mut self, cost: u64) -> Result<()> {
         // Find a triggered modifier that targets the selected roll
         let me = self.clients.instance(self.wallet);
-        let triggers = me.methods().modifier_triggers().call().await?.value;
+        let triggers = me
+            .methods()
+            .modifier_triggers()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
         if let Some((_, target, modifier, _triggered)) = triggers
             .into_iter()
             .find(|(_, target, _, triggered)| *target == self.selected_roll && *triggered)
@@ -575,53 +614,29 @@ impl AppController {
             pre_straps.push((s.clone(), bal));
         }
 
-        let outputs = self.expected_claim_outputs(game_id, self.wallet);
-        if outputs == 0 {
-            self.status = format!("No winnings to claim for game {}", game_id);
-            return Ok(());
-        }
-        let res_primary = me
+       
+        let mut claimed_ok = false;
+        match me
             .methods()
             .claim_rewards(game_id, enabled.clone())
-            .with_variable_output_policy(VariableOutputPolicy::Exactly(outputs))
+            .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call()
-            .await;
-        let mut claimed_ok = match res_primary {
-            Ok(_) => true,
-            Err(e) => {
-                errs.push(format!("claim(game_id={}) primary: {}", game_id, e));
-                false
+            .await
+        {
+            Ok(_) => {
+                claimed_ok = true;
             }
-        };
-        if !claimed_ok && outputs > 1 {
-            let res_fb1 = me
-                .methods()
-                .claim_rewards(game_id, enabled.clone())
-                .with_variable_output_policy(VariableOutputPolicy::Exactly(outputs - 1))
-                .call()
-                .await;
-            claimed_ok = match res_fb1 {
-                Ok(_) => true,
-                Err(e) => {
-                    errs.push(format!("claim(game_id={}) fallback-1: {}", game_id, e));
-                    false
-                }
-            };
-        }
-        if !claimed_ok {
-            let res_fb2 = me
-                .methods()
-                .claim_rewards(game_id, enabled)
-                .with_variable_output_policy(VariableOutputPolicy::Exactly(outputs + 1))
-                .call()
-                .await;
-            claimed_ok = match res_fb2 {
-                Ok(_) => true,
-                Err(e) => {
-                    errs.push(format!("claim(game_id={}) fallback+1: {}", game_id, e));
-                    false
-                }
-            };
+            Err(e) => {
+                error!(
+                    %game_id,
+                    error = %e,
+                    "claim_rewards call failed"
+                );
+                errs.push(format!(
+                    "claim(game_id={}) error: {}",
+                    game_id, e
+                ));
+            }
         }
         if !claimed_ok {
             self.status = format!("Claim failed for game {}", game_id);
@@ -685,65 +700,6 @@ impl AppController {
     }
 }
 
-impl AppController {
-    fn expected_claim_outputs(&self, game_id: u64, who: WalletKind) -> usize {
-        // Returns number of variable outputs required: 1 (chips if any), plus one per strap mint/level-up
-        let shared = match self.shared_prev_games.iter().find(|g| g.game_id == game_id) {
-            Some(g) => g,
-            None => return 0,
-        };
-        let bets_by_roll = match who {
-            WalletKind::Owner => self.owner_bets_hist.get(&game_id),
-            WalletKind::Alice => self.alice_bets_hist.get(&game_id),
-        };
-        let Some(bets_by_roll) = bets_by_roll else {
-            return 0;
-        };
-        let strap_rewards = self
-            .strap_rewards_by_game
-            .get(&game_id)
-            .cloned()
-            .unwrap_or_default();
-
-        let mut strap_outputs = 0usize;
-        let mut chip_output = 0usize;
-        for (idx, r) in shared.rolls.iter().enumerate() {
-            if let Some((_, bets)) = bets_by_roll.iter().find(|(rr, _)| rr == r) {
-                let mut eligible_chip = false;
-                let mut winning_chip = false;
-                let mut strap_bet_count = 0usize;
-                for (bet, _amt, roll_index) in bets.iter() {
-                    if (*roll_index as usize) <= idx {
-                        match bet {
-                            strapped::Bet::Chip => {
-                                eligible_chip = true;
-                                match r {
-                                    strapped::Roll::Six | strapped::Roll::Eight => {
-                                        winning_chip = true
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            strapped::Bet::Strap(_) => {
-                                strap_bet_count += 1;
-                            }
-                        }
-                    }
-                }
-                if eligible_chip {
-                    let rewards_for_this_roll =
-                        strap_rewards.iter().filter(|(rr, _)| rr == r).count();
-                    strap_outputs += rewards_for_this_roll;
-                }
-                strap_outputs += strap_bet_count;
-                if winning_chip && eligible_chip {
-                    chip_output = 1;
-                }
-            }
-        }
-        chip_output + strap_outputs
-    }
-}
 
 fn super_compact_strap(s: &strapped::Strap) -> String {
     let mod_emoji = match s.modifier {
@@ -783,6 +739,9 @@ impl AppController {
     fn push_errors(&mut self, mut items: Vec<String>) {
         if items.is_empty() {
             return;
+        }
+        for item in &items {
+            error!("{}", item);
         }
         self.errors.append(&mut items);
         if self.errors.len() > 50 {

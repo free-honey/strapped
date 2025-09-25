@@ -2,22 +2,12 @@
 
 use fuels::{
     prelude::CallParameters,
-    types::{
-        AssetId,
-        Bits256,
-    },
+    types::{AssetId, Bits256},
 };
 use strapped_contract::{
-    get_contract_instance,
-    separate_contract_instance,
-    strapped_types::{
-        Modifier,
-        Roll,
-    },
-    test_helpers::{
-        TestContext,
-        get_vrf_contract_instance,
-    },
+    get_contract_instance, separate_contract_instance,
+    strapped_types::{Modifier, Roll},
+    test_helpers::{TestContext, get_vrf_contract_instance},
 };
 
 #[tokio::test]

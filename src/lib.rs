@@ -1,16 +1,6 @@
-use crate::strapped_types::{
-    Modifier,
-    Strap,
-    StrapKind,
-};
+use crate::strapped_types::{Modifier, Strap, StrapKind};
 use fuels::{
-    prelude::{
-        Contract,
-        ContractId,
-        LoadConfiguration,
-        TxPolicies,
-        WalletUnlocked,
-    },
+    prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked},
     types::Bytes32,
 };
 
