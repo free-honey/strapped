@@ -203,7 +203,7 @@ impl AppController {
         let rolls = all_rolls();
         let mut out = Vec::with_capacity(rolls.len());
         for r in &rolls {
-            let bets = me.methods().get_my_bets(r.clone()).call().await?.value;
+            let bets = me.methods().get_my_bets(r.clone()).simulate(Execution::Realistic).await?.value;
             out.push((r.clone(), bets));
         }
         Ok(out)
@@ -275,7 +275,7 @@ impl AppController {
         let all_rolls = all_rolls();
         let mut my_bets = Vec::with_capacity(all_rolls.len());
         for r in &all_rolls {
-            let bets = me.methods().get_my_bets(r.clone()).call().await?.value;
+            let bets = me.methods().get_my_bets(r.clone()).simulate(Execution::Realistic).await?.value;
             my_bets.push((r.clone(), bets));
         }
 
