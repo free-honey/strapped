@@ -1,24 +1,10 @@
-use crate::client::{
-    AppSnapshot,
-    PreviousGameSummary,
-};
+use crate::client::{AppSnapshot, PreviousGameSummary};
 use color_eyre::eyre::Result;
 use crossterm::{
-    event::{
-        self,
-        Event,
-        KeyCode,
-        KeyEventKind,
-    },
-    terminal::{
-        disable_raw_mode,
-        enable_raw_mode,
-    },
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{
-    prelude::*,
-    widgets::*,
-};
+use ratatui::{prelude::*, widgets::*};
 use std::io::stdout;
 use strapped_contract::strapped_types as strapped;
 

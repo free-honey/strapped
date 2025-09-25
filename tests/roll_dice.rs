@@ -2,27 +2,13 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{
-        AssetConfig,
-        AssetId,
-        CallParameters,
-        VariableOutputPolicy,
-    },
+    prelude::{AssetConfig, AssetId, CallParameters, VariableOutputPolicy},
     tx::ContractIdExt,
     types::Bits256,
 };
 use strapped_contract::{
-    contract_id,
-    get_contract_instance,
-    separate_contract_instance,
-    strap_to_sub_id,
-    strapped_types::{
-        Bet,
-        Modifier,
-        Roll,
-        Strap,
-        StrapKind,
-    },
+    contract_id, get_contract_instance, separate_contract_instance, strap_to_sub_id,
+    strapped_types::{Bet, Modifier, Roll, Strap, StrapKind},
     test_helpers::*,
 };
 

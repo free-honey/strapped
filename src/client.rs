@@ -12,6 +12,7 @@ use fuels::{
         CallParameters,
         Contract,
         ContractId,
+        Execution,
         LoadConfiguration,
         Provider,
         TxPolicies,
@@ -237,11 +238,36 @@ impl AppController {
             .ok_or_else(|| eyre!("no provider"))?
             .clone();
 
-        let current_game_id = me.methods().current_game_id().call().await?.value;
-        let roll_history = me.methods().roll_history().call().await?.value;
-        let strap_rewards = me.methods().strap_rewards().call().await?.value;
-        let modifier_triggers = me.methods().modifier_triggers().call().await?.value;
-        let active_modifiers = me.methods().active_modifiers().call().await?.value;
+        let current_game_id = me
+            .methods()
+            .current_game_id()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let roll_history = me
+            .methods()
+            .roll_history()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let strap_rewards = me
+            .methods()
+            .strap_rewards()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let modifier_triggers = me
+            .methods()
+            .modifier_triggers()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
+        let active_modifiers = me
+            .methods()
+            .active_modifiers()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
 
         // My bets by roll
         let all_rolls = all_rolls();
@@ -510,7 +536,12 @@ impl AppController {
     pub async fn purchase_triggered_modifier(&mut self, cost: u64) -> Result<()> {
         // Find a triggered modifier that targets the selected roll
         let me = self.clients.instance(self.wallet);
-        let triggers = me.methods().modifier_triggers().call().await?.value;
+        let triggers = me
+            .methods()
+            .modifier_triggers()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
         if let Some((_, target, modifier, _triggered)) = triggers
             .into_iter()
             .find(|(_, target, _, triggered)| *target == self.selected_roll && *triggered)

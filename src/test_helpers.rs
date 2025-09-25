@@ -1,14 +1,7 @@
 use crate::vrf_types;
 use fuels::prelude::{
-    AssetConfig,
-    AssetId,
-    Contract,
-    ContractId,
-    LoadConfiguration,
-    TxPolicies,
-    WalletUnlocked,
-    WalletsConfig,
-    launch_custom_provider_and_get_wallets,
+    AssetConfig, AssetId, Contract, ContractId, LoadConfiguration, TxPolicies,
+    WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
 };
 
 pub async fn get_vrf_contract_instance(
