@@ -1,40 +1,20 @@
 use crate::ui;
-use color_eyre::eyre::{
-    Result,
-    eyre,
-};
+use color_eyre::eyre::{Result, eyre};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig,
-        AssetId,
-        Bech32ContractId,
-        CallParameters,
-        Contract,
-        ContractId,
-        Execution,
-        LoadConfiguration,
-        Provider,
-        TxPolicies,
-        VariableOutputPolicy,
-        WalletUnlocked,
-        WalletsConfig,
-        launch_custom_provider_and_get_wallets,
+        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
+        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
+        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
     },
     tx::ContractIdExt,
     types::Bits256,
 };
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::{HashMap, HashSet},
     time::Duration,
 };
-use strapped_contract::{
-    strapped_types as strapped,
-    vrf_types as vrf,
-};
+use strapped_contract::{strapped_types as strapped, vrf_types as vrf};
 use tokio::time;
 use tracing::error;
 
@@ -203,7 +183,12 @@ impl AppController {
         let rolls = all_rolls();
         let mut out = Vec::with_capacity(rolls.len());
         for r in &rolls {
-            let bets = me.methods().get_my_bets(r.clone()).simulate(Execution::Realistic).await?.value;
+            let bets = me
+                .methods()
+                .get_my_bets(r.clone())
+                .simulate(Execution::Realistic)
+                .await?
+                .value;
             out.push((r.clone(), bets));
         }
         Ok(out)
@@ -275,7 +260,12 @@ impl AppController {
         let all_rolls = all_rolls();
         let mut my_bets = Vec::with_capacity(all_rolls.len());
         for r in &all_rolls {
-            let bets = me.methods().get_my_bets(r.clone()).simulate(Execution::Realistic).await?.value;
+            let bets = me
+                .methods()
+                .get_my_bets(r.clone())
+                .simulate(Execution::Realistic)
+                .await?
+                .value;
             my_bets.push((r.clone(), bets));
         }
 
@@ -614,7 +604,6 @@ impl AppController {
             pre_straps.push((s.clone(), bal));
         }
 
-       
         let mut claimed_ok = false;
         match me
             .methods()
@@ -632,10 +621,7 @@ impl AppController {
                     error = %e,
                     "claim_rewards call failed"
                 );
-                errs.push(format!(
-                    "claim(game_id={}) error: {}",
-                    game_id, e
-                ));
+                errs.push(format!("claim(game_id={}) error: {}", game_id, e));
             }
         }
         if !claimed_ok {
@@ -699,7 +685,6 @@ impl AppController {
         Ok(())
     }
 }
-
 
 fn super_compact_strap(s: &strapped::Strap) -> String {
     let mod_emoji = match s.modifier {
