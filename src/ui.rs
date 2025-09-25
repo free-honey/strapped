@@ -171,11 +171,11 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::PlaceBetAmount(amt));
                     }
-                    KeyCode::Up | KeyCode::Char('+') => {
+                    KeyCode::Up | KeyCode::Char('k')| KeyCode::Char('+') => {
                         bs.amount = bs.amount.saturating_add(1);
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down | KeyCode::Char('-') => {
+                    KeyCode::Down | KeyCode::Char('j')| KeyCode::Char('-') => {
                         bs.amount = bs.amount.saturating_sub(1);
                         return Ok(UserEvent::Redraw);
                     }
@@ -195,26 +195,26 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Left => {
+                    KeyCode::Left | KeyCode::Char('h') => {
                         if cs.game_idx > 0 {
                             cs.game_idx -= 1;
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Right => {
+                    KeyCode::Right | KeyCode::Char('l') => {
                         let len = state.prev_games.len();
                         if len > 0 {
                             cs.game_idx = (cs.game_idx + 1).min(len - 1);
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         if cs.mod_idx > 0 {
                             cs.mod_idx -= 1;
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         if let Some(g) = state.prev_games.get(cs.game_idx) {
                             if !g.modifiers.is_empty() {
                                 cs.mod_idx = (cs.mod_idx + 1).min(g.modifiers.len() - 1);
@@ -254,11 +254,11 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up | KeyCode::Char('+') => {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
                         vs.value = vs.value.saturating_add(1);
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down | KeyCode::Char('-') => {
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
                         vs.value = vs.value.saturating_sub(1);
                         return Ok(UserEvent::Redraw);
                     }
@@ -283,13 +283,13 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         if ss.idx > 0 {
                             ss.idx -= 1;
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         let max = state.shop_items.len().saturating_sub(1);
                         ss.idx = (ss.idx + 1).min(max);
                         return Ok(UserEvent::Redraw);
@@ -318,13 +318,13 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         if sb.idx > 0 {
                             sb.idx -= 1;
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         let max = state.owned_straps.len().saturating_sub(1);
                         sb.idx = (sb.idx + 1).min(max);
                         return Ok(UserEvent::Redraw);
@@ -368,8 +368,8 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                     state.mode = Mode::QuitModal;
                     UserEvent::Redraw
                 }
-                KeyCode::Right => UserEvent::NextRoll,
-                KeyCode::Left => UserEvent::PrevRoll,
+                KeyCode::Right | KeyCode::Char('l') => UserEvent::NextRoll,
+                KeyCode::Left | KeyCode::Char('h') => UserEvent::PrevRoll,
                 KeyCode::Char('o') => UserEvent::Owner,
                 KeyCode::Char('a') => UserEvent::Alice,
                 KeyCode::Char('b') => {
