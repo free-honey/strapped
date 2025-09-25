@@ -93,6 +93,7 @@ struct ClaimState {
     game_idx: usize,
     mod_idx: usize,
     selected: Vec<(strapped::Roll, strapped::Modifier)>,
+    focus: ClaimFocus,
 }
 
 impl Default for ClaimState {
@@ -101,7 +102,26 @@ impl Default for ClaimState {
             game_idx: 0,
             mod_idx: 0,
             selected: Vec::new(),
+            focus: ClaimFocus::default(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum ClaimFocus {
+    #[default]
+    Games,
+    Modifiers,
+}
+
+fn prune_selected(cs: &mut ClaimState, g: &PreviousGameSummary) {
+    cs.selected
+        .retain(|(rr, mm)| g.modifiers.iter().any(|(gr, gm, _)| gr == rr && gm == mm));
+    if g.modifiers.is_empty() {
+        cs.focus = ClaimFocus::Games;
+        cs.mod_idx = 0;
+    } else {
+        cs.mod_idx = cs.mod_idx.min(g.modifiers.len() - 1);
     }
 }
 
@@ -171,11 +191,11 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::PlaceBetAmount(amt));
                     }
-                    KeyCode::Up | KeyCode::Char('+') => {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
                         bs.amount = bs.amount.saturating_add(1);
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down | KeyCode::Char('-') => {
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
                         bs.amount = bs.amount.saturating_sub(1);
                         return Ok(UserEvent::Redraw);
                     }
@@ -195,34 +215,72 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Left => {
-                        if cs.game_idx > 0 {
-                            cs.game_idx -= 1;
-                        }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        cs.focus = ClaimFocus::Games;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Right => {
-                        let len = state.prev_games.len();
-                        if len > 0 {
-                            cs.game_idx = (cs.game_idx + 1).min(len - 1);
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Up => {
-                        if cs.mod_idx > 0 {
-                            cs.mod_idx -= 1;
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down => {
+                    KeyCode::Right | KeyCode::Char('l') => {
                         if let Some(g) = state.prev_games.get(cs.game_idx) {
                             if !g.modifiers.is_empty() {
-                                cs.mod_idx = (cs.mod_idx + 1).min(g.modifiers.len() - 1);
+                                cs.focus = ClaimFocus::Modifiers;
+                                cs.mod_idx =
+                                    cs.mod_idx.min(g.modifiers.len().saturating_sub(1));
+                            }
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        match cs.focus {
+                            ClaimFocus::Games => {
+                                if cs.game_idx > 0 {
+                                    cs.game_idx -= 1;
+                                    cs.mod_idx = 0;
+                                    if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                        prune_selected(cs, g);
+                                    }
+                                }
+                            }
+                            ClaimFocus::Modifiers => {
+                                if cs.mod_idx > 0 {
+                                    cs.mod_idx -= 1;
+                                }
+                            }
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        match cs.focus {
+                            ClaimFocus::Games => {
+                                let len = state.prev_games.len();
+                                if len > 0 && cs.game_idx + 1 < len {
+                                    cs.game_idx += 1;
+                                    cs.mod_idx = 0;
+                                    if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                        prune_selected(cs, g);
+                                    }
+                                }
+                            }
+                            ClaimFocus::Modifiers => {
+                                if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                    if !g.modifiers.is_empty() {
+                                        cs.mod_idx =
+                                            (cs.mod_idx + 1).min(g.modifiers.len() - 1);
+                                    }
+                                }
                             }
                         }
                         return Ok(UserEvent::Redraw);
                     }
                     KeyCode::Char(' ') => {
+                        if cs.focus != ClaimFocus::Modifiers {
+                            if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                if !g.modifiers.is_empty() {
+                                    cs.focus = ClaimFocus::Modifiers;
+                                } else {
+                                    return Ok(UserEvent::Redraw);
+                                }
+                            }
+                        }
                         if let Some(g) = state.prev_games.get(cs.game_idx) {
                             if let Some((r, m, _idx)) = g.modifiers.get(cs.mod_idx) {
                                 if let Some(pos) = cs
@@ -254,11 +312,11 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up | KeyCode::Char('+') => {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
                         vs.value = vs.value.saturating_add(1);
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down | KeyCode::Char('-') => {
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
                         vs.value = vs.value.saturating_sub(1);
                         return Ok(UserEvent::Redraw);
                     }
@@ -283,13 +341,13 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         if ss.idx > 0 {
                             ss.idx -= 1;
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         let max = state.shop_items.len().saturating_sub(1);
                         ss.idx = (ss.idx + 1).min(max);
                         return Ok(UserEvent::Redraw);
@@ -318,13 +376,13 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         state.mode = Mode::Normal;
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         if sb.idx > 0 {
                             sb.idx -= 1;
                         }
                         return Ok(UserEvent::Redraw);
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         let max = state.owned_straps.len().saturating_sub(1);
                         sb.idx = (sb.idx + 1).min(max);
                         return Ok(UserEvent::Redraw);
@@ -368,8 +426,8 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                     state.mode = Mode::QuitModal;
                     UserEvent::Redraw
                 }
-                KeyCode::Right => UserEvent::NextRoll,
-                KeyCode::Left => UserEvent::PrevRoll,
+                KeyCode::Right | KeyCode::Char('l') => UserEvent::NextRoll,
+                KeyCode::Left | KeyCode::Char('h') => UserEvent::PrevRoll,
                 KeyCode::Char('o') => UserEvent::Owner,
                 KeyCode::Char('a') => UserEvent::Alice,
                 KeyCode::Char('b') => {
@@ -737,7 +795,14 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                         m
                     )));
                 }
-                lines.push(Line::from("Enter=claim Esc=cancel ←/→ game ↑/↓ select"));
+                let focus_hint = match cs.focus {
+                    ClaimFocus::Games => "(focus: games)",
+                    ClaimFocus::Modifiers => "(focus: modifiers)",
+                };
+                lines.push(Line::from(format!(
+                    "Enter=claim Esc=cancel ←/→ focus ↑/↓ move Space toggle {}",
+                    focus_hint
+                )));
             }
             let p = Paragraph::new(lines);
             f.render_widget(Clear, area);
