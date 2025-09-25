@@ -411,8 +411,8 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             Constraint::Length(3),  // status
             Constraint::Length(3),  // roll history
             Constraint::Length(17), // horizontal grid (even taller cells)
-            Constraint::Length(16), // shop + previous games (about 4x taller)
-            Constraint::Length(6),  // errors + help
+            Constraint::Length(14), // shop + previous games (about 4x taller)
+            Constraint::Length(40), // errors + help
         ])
         .split(f.area());
 
@@ -444,8 +444,9 @@ fn draw_top(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         strap_items.join(" ")
     };
     let gauge = Paragraph::new(format!(
-        "Wallet: {} | Straps: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
+        "Wallet: {} | Balance: {} | Straps: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
         wallet,
+        snap.chip_balance,
         straps_line,
         snap.pot_balance,
         snap.current_game_id,
@@ -641,7 +642,7 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
 fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(3)])
+        .constraints([Constraint::Length(10), Constraint::Length(3)])
         .split(area);
 
     // Errors/logs
@@ -654,6 +655,7 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         }
     }
     let errors = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL).title("Errors"));
     let color = if snap.roll_history.is_empty() && snap.previous_games.is_empty() {
         // No activity yet — keep neutral
