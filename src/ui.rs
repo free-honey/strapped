@@ -491,18 +491,9 @@ fn draw_top(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         _ => "Alice",
     };
     let vrf_roll = vrf_to_roll(snap.vrf_number);
-    // Build compact strap list
-    let mut strap_items: Vec<String> = Vec::new();
-    for (s, bal) in &snap.owned_straps {
-        strap_items.push(format!("{} x{}", render_reward_compact(s), bal));
-    }
-    let straps_line = if strap_items.is_empty() {
-        String::from("none")
-    } else {
-        strap_items.join(" ")
-    };
+    let straps_line = format_owned_strap_summary(&snap.owned_straps);
     let gauge = Paragraph::new(format!(
-        "Wallet: {} | Balance: {} | Straps: {} | Pot: {} | Game: {} | VRF: {} ({:?})\n{}",
+        "Balance {}: {} | Straps: {} | Pot: {} (Game {}) | VRF: {} ({:?}) | Status: {}",
         wallet,
         snap.chip_balance,
         straps_line,
@@ -1036,6 +1027,78 @@ fn render_reward_compact(s: &strapped::Strap) -> String {
         format!("{}{}", kind_emoji, s.level)
     } else {
         format!("{}{}{}", mod_emoji, kind_emoji, s.level)
+    }
+}
+
+fn format_owned_strap_summary(owned: &[(strapped::Strap, u64)]) -> String {
+    if owned.is_empty() {
+        return String::from("none");
+    }
+
+    let mut aggregated: Vec<(strapped::Strap, u64)> = Vec::new();
+    for (strap, amount) in owned {
+        if let Some((_, total)) = aggregated
+            .iter_mut()
+            .find(|(existing, _)| existing == strap)
+        {
+            *total = total.saturating_add(*amount);
+        } else {
+            aggregated.push((strap.clone(), *amount));
+        }
+    }
+
+    aggregated.sort_by(|(a, _), (b, _)| {
+        a.level
+            .cmp(&b.level)
+            .then_with(|| {
+                strap_kind_order_value(&a.kind).cmp(&strap_kind_order_value(&b.kind))
+            })
+            .then_with(|| {
+                modifier_order_value(&a.modifier).cmp(&modifier_order_value(&b.modifier))
+            })
+    });
+
+    let parts: Vec<String> = aggregated
+        .into_iter()
+        .map(|(strap, amount)| format!("{}x{}", render_reward_compact(&strap), amount))
+        .collect();
+
+    parts.join(", ")
+}
+
+fn strap_kind_order_value(kind: &strapped::StrapKind) -> u8 {
+    match kind {
+        strapped::StrapKind::Shirt => 0,
+        strapped::StrapKind::Pants => 1,
+        strapped::StrapKind::Shoes => 2,
+        strapped::StrapKind::Hat => 3,
+        strapped::StrapKind::Glasses => 4,
+        strapped::StrapKind::Watch => 5,
+        strapped::StrapKind::Ring => 6,
+        strapped::StrapKind::Necklace => 7,
+        strapped::StrapKind::Earring => 8,
+        strapped::StrapKind::Bracelet => 9,
+        strapped::StrapKind::Tattoo => 10,
+        strapped::StrapKind::Piercing => 11,
+        strapped::StrapKind::Coat => 12,
+        strapped::StrapKind::Scarf => 13,
+        strapped::StrapKind::Gloves => 14,
+        strapped::StrapKind::Belt => 15,
+    }
+}
+
+fn modifier_order_value(modifier: &strapped::Modifier) -> u8 {
+    match modifier {
+        strapped::Modifier::Nothing => 0,
+        strapped::Modifier::Burnt => 1,
+        strapped::Modifier::Lucky => 2,
+        strapped::Modifier::Holy => 3,
+        strapped::Modifier::Holey => 4,
+        strapped::Modifier::Scotch => 5,
+        strapped::Modifier::Soaked => 6,
+        strapped::Modifier::Moldy => 7,
+        strapped::Modifier::Starched => 8,
+        strapped::Modifier::Evil => 9,
     }
 }
 
