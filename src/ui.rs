@@ -629,10 +629,9 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
             } else {
                 "[unclaimed]"
             };
-            prev_lines.push(Line::from(format!("Game {} {}", g.game_id, claimed)));
             // Rolls line
             if g.rolls.is_empty() {
-                prev_lines.push(Line::from("  Rolls: None"));
+                prev_lines.push(Line::from(format!("Game {} {} | Rolls: None", g.game_id, claimed)));
             } else {
                 let mut items: Vec<String> = Vec::new();
                 for (idx, r) in g.rolls.iter().enumerate() {
@@ -652,7 +651,7 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
                         format!("{:?}{}", r, emo)
                     });
                 }
-                prev_lines.push(Line::from(format!("  Rolls: {}", items.join(" "))));
+                prev_lines.push(Line::from(format!("Game {} {} | Rolls: {}", g.game_id, claimed, items.join(" "))));
             }
             // Bets list with indices
             prev_lines.push(Line::from("  Bets:"));
