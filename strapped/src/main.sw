@@ -18,6 +18,43 @@ type GameId = u64;
 type Amount = u64;
 type RollIndex = u64;
 
+
+pub struct PayoutConfig {
+    two_payout_multiplier: u64,
+    three_payout_multiplier: u64,
+    four_payout_multiplier: u64,
+    five_payout_multiplier: u64,
+    six_payout_multiplier: u64,
+    seven_payout_multiplier: u64,
+    eight_payout_multiplier: u64,
+    nine_payout_multiplier: u64,
+    ten_payout_multiplier: u64,
+    eleven_payout_multiplier: u64,
+    twelve_payout_multiplier: u64,
+}
+
+impl PayoutConfig {
+    pub fn calculate_payout(self, principal: u64, roll: Roll) -> u64 {
+        principal * self.multiplier_for_roll(roll)
+    }
+
+    fn multiplier_for_roll(self, roll: Roll) -> u64 {
+        match roll {
+            Roll::Two => self.two_payout_multiplier,
+            Roll::Three => self.three_payout_multiplier,
+            Roll::Four => self.four_payout_multiplier,
+            Roll::Five => self.five_payout_multiplier,
+            Roll::Six => self.six_payout_multiplier,
+            Roll::Seven => self.seven_payout_multiplier,
+            Roll::Eight => self.eight_payout_multiplier,
+            Roll::Nine => self.nine_payout_multiplier,
+            Roll::Ten => self.ten_payout_multiplier,
+            Roll::Eleven => self.eleven_payout_multiplier,
+            Roll::Twelve => self.twelve_payout_multiplier,
+        }
+    }
+}
+
 storage {
     /// History of rolls for each game
     roll_history: StorageMap<GameId, StorageVec<Roll>> = StorageMap {},
@@ -31,8 +68,6 @@ storage {
     current_game_id: GameId = 0,
     /// Bets placed by (game_id, identity, roll) -> Vec<(bet, amount, roll_index)>
     bets: StorageMap<(GameId, Identity, Roll), StorageVec<(Bet, Amount, RollIndex)>> = StorageMap {},
-    /// Total chips in the house pot
-    house_pot: u64 = 0,
     /// Straps to be rewarded for the current game when it ends
     strap_rewards: StorageVec<(Roll, Strap)> = StorageVec {},
     /// Triggers to add modifiers to shop, and whether they have been triggered this game
@@ -48,6 +83,29 @@ storage {
     modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
     // Active modifiers for the current game
     active_modifiers: StorageMap<GameId, StorageVec<(Roll, Modifier, RollIndex)>> = StorageMap {},
+
+
+    /// Total chips in the house pot
+    house_pot: u64 = 0,
+    /// Total chips owed to players (to ensure solvency)
+    chips_owed: u64 = 0,
+    /// Max owed percentage
+    max_owed_percentage: u64 = 90,
+
+    // Payout configuration
+    payouts: PayoutConfig = PayoutConfig {
+        two_payout_multiplier: 6,
+        three_payout_multiplier: 5,
+        four_payout_multiplier: 4,
+        five_payout_multiplier: 3,
+        six_payout_multiplier: 2,
+        seven_payout_multiplier: 0,
+        eight_payout_multiplier: 2,
+        nine_payout_multiplier: 3,
+        ten_payout_multiplier: 4,
+        eleven_payout_multiplier: 5,
+        twelve_payout_multiplier: 6,
+    },
 }
 
 abi Strapped {
@@ -102,6 +160,10 @@ abi Strapped {
     /// Get the active modifiers for the current game
     #[storage(read)]
     fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)>;
+
+    /// Get payout configuration
+    #[storage(read)]
+    fn payouts() -> PayoutConfig;
 }
 
 impl Strapped for Contract {
@@ -217,11 +279,7 @@ impl Strapped for Contract {
                                     received_chip_reward_for_roll = true;
                                 }
                             }
-                            let bet_winnings = match roll {
-                                Roll::Six => six_payout(amount),
-                                Roll::Eight => eight_payout(amount),
-                                _ => 0,
-                            };
+                            let bet_winnings = storage.payouts.read().calculate_payout(amount, roll);
                             total_chips_winnings += bet_winnings; 
                         },
                         Bet::Strap(strap) => {
@@ -313,6 +371,11 @@ impl Strapped for Contract {
     fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)> {
         let game_id = storage.current_game_id.read();
         storage.active_modifiers.get(game_id).load_vec()
+    }
+
+    #[storage(read)]
+    fn payouts() -> PayoutConfig {
+        storage.payouts.read()
     }
 }
 

@@ -1,24 +1,10 @@
-use crate::client::{
-    AppSnapshot,
-    PreviousGameSummary,
-};
+use crate::client::{AppSnapshot, PreviousGameSummary};
 use color_eyre::eyre::Result;
 use crossterm::{
-    event::{
-        self,
-        Event,
-        KeyCode,
-        KeyEventKind,
-    },
-    terminal::{
-        disable_raw_mode,
-        enable_raw_mode,
-    },
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{
-    prelude::*,
-    widgets::*,
-};
+use ratatui::{prelude::*, widgets::*};
 use std::io::stdout;
 use strapped_contract::strapped_types as strapped;
 
@@ -631,7 +617,10 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
             };
             // Rolls line
             if g.rolls.is_empty() {
-                prev_lines.push(Line::from(format!("Game {} {} | Rolls: None", g.game_id, claimed)));
+                prev_lines.push(Line::from(format!(
+                    "Game {} {} | Rolls: None",
+                    g.game_id, claimed
+                )));
             } else {
                 let mut items: Vec<String> = Vec::new();
                 for (idx, r) in g.rolls.iter().enumerate() {
@@ -651,7 +640,12 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
                         format!("{:?}{}", r, emo)
                     });
                 }
-                prev_lines.push(Line::from(format!("Game {} {} | Rolls: {}", g.game_id, claimed, items.join(" "))));
+                prev_lines.push(Line::from(format!(
+                    "Game {} {} | Rolls: {}",
+                    g.game_id,
+                    claimed,
+                    items.join(" ")
+                )));
             }
             // Bets list with indices
             prev_lines.push(Line::from("  Bets:"));
