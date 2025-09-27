@@ -1,10 +1,24 @@
-use crate::client::{AppSnapshot, PreviousGameSummary};
+use crate::client::{
+    AppSnapshot,
+    PreviousGameSummary,
+};
 use color_eyre::eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode},
+    event::{
+        self,
+        Event,
+        KeyCode,
+        KeyEventKind,
+    },
+    terminal::{
+        disable_raw_mode,
+        enable_raw_mode,
+    },
 };
-use ratatui::{prelude::*, widgets::*};
+use ratatui::{
+    prelude::*,
+    widgets::*,
+};
 use std::io::stdout;
 use strapped_contract::strapped_types as strapped;
 
@@ -466,11 +480,11 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // status
-            Constraint::Length(3),  // roll history
+            Constraint::Length(8),  // wallet + overview
+            Constraint::Length(4),  // roll history
             Constraint::Length(17), // horizontal grid (even taller cells)
             Constraint::Length(14), // shop + previous games (about 4x taller)
-            Constraint::Length(40), // errors + help
+            Constraint::Length(7),  // status/errors + help
         ])
         .split(f.area());
 
@@ -486,26 +500,12 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
 }
 
 fn draw_top(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
-    let wallet = match snap.wallet {
-        crate::client::WalletKind::Owner => "Owner",
-        _ => "Alice",
-    };
-    let vrf_roll = vrf_to_roll(snap.vrf_number);
-    let straps_line = format_owned_strap_summary(&snap.owned_straps);
-    let gauge = Paragraph::new(format!(
-        "Balance {}: {} | Straps: {} | Pot: {} (Game {}) | VRF: {} ({:?}) | Status: {}",
-        wallet,
-        snap.chip_balance,
-        straps_line,
-        snap.pot_balance,
-        snap.current_game_id,
-        snap.vrf_number,
-        vrf_roll,
-        snap.status
-    ))
-    .style(Style::default())
-    .block(Block::default().borders(Borders::ALL).title("Status"));
-    f.render_widget(gauge, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Length(4)])
+        .split(area);
+    draw_wallet_panel(f, rows[0], snap);
+    draw_overview_panel(f, rows[1], snap);
 }
 
 fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
@@ -691,30 +691,33 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
 fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Length(3)])
+        .constraints([Constraint::Length(4), Constraint::Length(3)])
         .split(area);
 
-    // Errors/logs
-    let mut lines: Vec<Line> = Vec::new();
-    if snap.errors.is_empty() {
-        lines.push(Line::from("No errors"));
+    let status_widget = if snap.errors.is_empty() {
+        let mut lines: Vec<Line> = Vec::new();
+        if snap.status.trim().is_empty() {
+            lines.push(Line::from("Ready"));
+        } else {
+            for line in snap.status.lines() {
+                lines.push(Line::from(line.to_string()));
+            }
+        }
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title("Status"))
+            .style(Style::default().fg(Color::Green))
     } else {
+        let mut lines: Vec<Line> = Vec::new();
         for e in &snap.errors {
             lines.push(Line::from(e.clone()));
         }
-    }
-    let errors = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title("Errors"));
-    let color = if snap.roll_history.is_empty() && snap.previous_games.is_empty() {
-        // No activity yet — keep neutral
-        Color::DarkGray
-    } else if snap.errors.is_empty() {
-        Color::Green
-    } else {
-        Color::Red
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title("Errors"))
+            .style(Style::default().fg(Color::Red))
     };
-    f.render_widget(errors.style(Style::default().fg(color)), chunks[0]);
+    f.render_widget(status_widget, chunks[0]);
 
     // Help
     let help = Paragraph::new(
@@ -722,6 +725,32 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     )
     .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(help, chunks[1]);
+}
+
+fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
+    let wallet = match snap.wallet {
+        crate::client::WalletKind::Owner => "Owner",
+        _ => "Alice",
+    };
+    let straps_line = format_owned_strap_summary(&snap.owned_straps);
+    let text = format!(
+        "Wallet: {} | Chips: {} | Straps: {}",
+        wallet, snap.chip_balance, straps_line
+    );
+    let widget = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title("Wallet"));
+    f.render_widget(widget, area);
+}
+
+fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
+    let vrf_roll = vrf_to_roll(snap.vrf_number);
+    let text = format!(
+        "Game: {} | Pot: {} | VRF: {} ({:?})",
+        snap.current_game_id, snap.pot_balance, snap.vrf_number, vrf_roll
+    );
+    let widget =
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Game"));
+    f.render_widget(widget, area);
 }
 
 fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
