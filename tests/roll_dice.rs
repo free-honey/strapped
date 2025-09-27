@@ -2,13 +2,27 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{AssetConfig, AssetId, CallParameters, VariableOutputPolicy},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        VariableOutputPolicy,
+    },
     tx::ContractIdExt,
     types::Bits256,
 };
 use strapped_contract::{
-    contract_id, get_contract_instance, separate_contract_instance, strap_to_sub_id,
-    strapped_types::{Bet, Modifier, Roll, Strap, StrapKind},
+    contract_id,
+    get_contract_instance,
+    separate_contract_instance,
+    strap_to_sub_id,
+    strapped_types::{
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
     test_helpers::*,
 };
 
@@ -21,9 +35,17 @@ async fn roll_dice__adds_roll_to_roll_history() {
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
     let first_number = 10;
     let second_number = 34;
+    let chip_asset_id = AssetId::new([1u8; 32]);
+    //    #[storage(write)]
+    //     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
     instance
         .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
+        // .set_vrf_contract_id(Bits256(*vrf_id))
+        .initialize(
+            Bits256(*vrf_id),
+            chip_asset_id,
+            10, // roll frequency
+        )
         .call()
         .await
         .unwrap();
@@ -84,9 +106,15 @@ async fn roll_dice__if_seven_rolled_move_to_next_game() {
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
     let first_number = 10;
     let second_number = 34;
+    // instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_id))
+    //     .call()
+    //     .await
+    //     .unwrap();
     instance
         .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
+        .initialize(Bits256(*vrf_id), AssetId::new([1u8; 32]), 10)
         .call()
         .await
         .unwrap();
@@ -155,9 +183,15 @@ async fn roll_dice__if_seven_adds_new_strap_reward() {
     // given
     let (instance, _id) = get_contract_instance(owner.clone()).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
+    // instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_id))
+    //     .call()
+    //     .await
+    //     .unwrap();
     instance
         .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
+        .initialize(Bits256(*vrf_id), AssetId::new([1u8; 32]), 10)
         .call()
         .await
         .unwrap();
@@ -204,9 +238,15 @@ async fn roll_dice__if_seven_generates_new_modifier_triggers() {
     // given
     let (instance, _id) = get_contract_instance(owner.clone()).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
+    // instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_id))
+    //     .call()
+    //     .await
+    //     .unwrap();
     instance
         .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
+        .initialize(Bits256(*vrf_id), AssetId::new([1u8; 32]), 10)
         .call()
         .await
         .unwrap();
@@ -250,9 +290,15 @@ async fn roll_dice__if_hit_the_modifier_value_triggers_the_modifier_to_be_purcha
     // given
     let (instance, _id) = get_contract_instance(owner.clone()).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
+    // instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_id))
+    //     .call()
+    //     .await
+    //     .unwrap();
     instance
         .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
+        .initialize(Bits256(*vrf_id), AssetId::new([1u8; 32]), 10)
         .call()
         .await
         .unwrap();
@@ -322,19 +368,25 @@ async fn roll_dice__resets_active_modifiers_and_triggers() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, alice).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
-        .call()
-        .await
-        .unwrap();
+    // instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_id))
+    //     .call()
+    //     .await
+    //     .unwrap();
     let chip_asset_id = AssetId::new([1u8; 32]);
     instance
         .methods()
-        .set_chip_asset_id(chip_asset_id)
+        .initialize(Bits256(*vrf_id), chip_asset_id, 10)
         .call()
         .await
         .unwrap();
+    // instance
+    //     .methods()
+    //     .set_chip_asset_id(chip_asset_id)
+    //     .call()
+    //     .await
+    //     .unwrap();
     // update vrf to something that will resolve to Seven
     let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
     vrf_instance

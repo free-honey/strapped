@@ -8,7 +8,7 @@ storage {
 
 impl VRF for Contract {
     #[storage(read)]
-    fn get_random() -> u64 {
+    fn get_random(_block_height: u32) -> u64 {
         storage.number.read()
     }
 

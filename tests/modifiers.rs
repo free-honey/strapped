@@ -2,12 +2,22 @@
 
 use fuels::{
     prelude::CallParameters,
-    types::{AssetId, Bits256},
+    types::{
+        AssetId,
+        Bits256,
+    },
 };
 use strapped_contract::{
-    get_contract_instance, separate_contract_instance,
-    strapped_types::{Modifier, Roll},
-    test_helpers::{TestContext, get_vrf_contract_instance},
+    get_contract_instance,
+    separate_contract_instance,
+    strapped_types::{
+        Modifier,
+        Roll,
+    },
+    test_helpers::{
+        TestContext,
+        get_vrf_contract_instance,
+    },
 };
 
 #[tokio::test]
@@ -19,16 +29,22 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, alice).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .set_vrf_contract_id(Bits256(*vrf_id))
-        .call()
-        .await
-        .unwrap();
+    // instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_id))
+    //     .call()
+    //     .await
+    //     .unwrap();
     let chip_asset_id = AssetId::new([1u8; 32]);
+    // instance
+    //     .methods()
+    //     .set_chip_asset_id(chip_asset_id)
+    //     .call()
+    //     .await
+    //     .unwrap();
     instance
         .methods()
-        .set_chip_asset_id(chip_asset_id)
+        .initialize(Bits256(*vrf_id), chip_asset_id, 10)
         .call()
         .await
         .unwrap();

@@ -1,11 +1,23 @@
 #![allow(non_snake_case)]
 use fuels::{
-    prelude::{AssetConfig, AssetId, CallParameters},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+    },
     tx::ContractIdExt,
+    types::Bits256,
 };
 use strapped_contract::{
-    contract_id, get_contract_instance, strap_to_sub_id, strapped_types,
-    strapped_types::Strap, test_helpers::TestContext,
+    contract_id,
+    get_contract_instance,
+    strap_to_sub_id,
+    strapped_types,
+    strapped_types::Strap,
+    test_helpers::{
+        TestContext,
+        get_vrf_contract_instance,
+    },
 };
 
 #[tokio::test]
@@ -13,14 +25,24 @@ async fn place_bet__adds_bets_to_list() {
     let asset_id = AssetId::new([1; 32]);
     let ctx = TestContext::new().await;
     let alice = ctx.alice();
+    let owner = ctx.owner();
+    let (_, vrf_id) = get_vrf_contract_instance(owner).await;
     // given
     let (instance, _id) = get_contract_instance(alice.clone()).await;
     let bet_amount = 100;
     let bet = strapped_types::Bet::Chip;
     let roll = strapped_types::Roll::Six;
+    //     #[storage(write)]
+    //     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
+    // instance
+    //     .methods()
+    //     .set_chip_asset_id(asset_id)
+    //     .call()
+    //     .await
+    //     .unwrap();
     instance
         .methods()
-        .set_chip_asset_id(asset_id)
+        .initialize(Bits256(*vrf_id), asset_id, 10)
         .call()
         .await
         .unwrap();

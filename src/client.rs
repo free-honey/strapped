@@ -1,20 +1,40 @@
 use crate::ui;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{
+    Result,
+    eyre,
+};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
-        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
-        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
+        AssetConfig,
+        AssetId,
+        Bech32ContractId,
+        CallParameters,
+        Contract,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        Provider,
+        TxPolicies,
+        VariableOutputPolicy,
+        WalletUnlocked,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
     },
     tx::ContractIdExt,
     types::Bits256,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{
+        HashMap,
+        HashSet,
+    },
     time::Duration,
 };
-use strapped_contract::{strapped_types as strapped, vrf_types as vrf};
+use strapped_contract::{
+    strapped_types as strapped,
+    vrf_types as vrf,
+};
 use tokio::time;
 use tracing::error;
 
@@ -110,19 +130,30 @@ pub async fn init_local() -> Result<Clients> {
     let vrf_instance = vrf::VRFContract::new(vrf_id.clone(), owner.clone());
 
     let vrf_contract_id: ContractId = vrf_id.clone().into();
-    owner_instance
-        .methods()
-        .set_vrf_contract_id(Bits256(*vrf_contract_id))
-        .call()
-        .await?;
+    // owner_instance
+    //     .methods()
+    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
+    //     .call()
+    //     .await?;
 
     // Initialize VRF to a known value so first roll matches the UI
     vrf_instance.methods().set_number(19).call().await?;
 
-    // Set chip asset id on contract
+    // // Set chip asset id on contract
+    // owner_instance
+    //     .methods()
+    //     .set_chip_asset_id(chip_asset_id)
+    //     .call()
+    //     .await?;
+    //     #[storage(write)]
+    //     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
     owner_instance
         .methods()
-        .set_chip_asset_id(chip_asset_id)
+        .initialize(
+            Bits256(*vrf_contract_id),
+            chip_asset_id,
+            10, // roll every 10 seconds
+        )
         .call()
         .await?;
 
