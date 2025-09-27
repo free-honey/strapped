@@ -8,6 +8,7 @@ use std::call_frames::msg_asset_id;
 use std::context::msg_amount;
 use std::asset::transfer;
 use std::asset::mint_to;
+use std::block::height;
 
 use vrf_abi::VRF;
 
@@ -60,6 +61,11 @@ storage {
     roll_history: StorageMap<GameId, StorageVec<Roll>> = StorageMap {},
     /// Current roll of the active game
     roll_index: RollIndex = 0,
+    /// next roll block height
+    next_roll_block_height: Option<u32> = None,
+    /// Number of blocks between rolls
+    roll_frequency: u32 = 1,
+
     /// ID of the VRF contract to use for randomness
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
     /// Asset ID of the chips used for betting
@@ -109,6 +115,10 @@ storage {
 }
 
 abi Strapped {
+    /// Initialize the contract with the VRF contract ID, chip asset ID, and roll frequency
+    #[storage(write)]
+    fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
+
     /// Roll the dice and process the results
     #[storage(read, write)]
     fn roll_dice();
@@ -117,13 +127,13 @@ abi Strapped {
     #[storage(read)]
     fn roll_history() -> Vec<Roll>;
 
-    /// Set the VRF contract ID
-    #[storage(write)]
-    fn set_vrf_contract_id(id: b256);
+    // /// Set the VRF contract ID
+    // #[storage(write)]
+    // fn set_vrf_contract_id(id: b256);
 
-    /// Set the chip asset ID
-    #[storage(write)]
-    fn set_chip_asset_id(id: AssetId);
+    // /// Set the chip asset ID
+    // #[storage(write)]
+    // fn set_chip_asset_id(id: AssetId);
 
     /// Place a bet on a specific roll with a specific bet type and amount
     #[storage(read, write), payable]
@@ -167,11 +177,37 @@ abi Strapped {
 }
 
 impl Strapped for Contract {
+    // #[storage(write)]
+    // fn set_vrf_contract_id(id: b256) {
+    //     storage.vrf_contract_id.write(id);
+    // }
+
+    // #[storage(write)]
+    // fn set_chip_asset_id(id: AssetId) {
+    //     storage.chip_asset_id.write(id);
+    // }
+    #[storage(write)]
+    fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32) {
+        storage.vrf_contract_id.write(vrf_contract_id);
+        storage.chip_asset_id.write(chip_asset_id);
+        storage.roll_frequency.write(roll_frequency);
+        let current_height = height();
+        storage.next_roll_block_height.write(Some(current_height + roll_frequency));
+    }
+
     #[storage(read, write)]
     fn roll_dice() {
+        let roll_height = if let Some(h) = storage.next_roll_block_height.read() {
+            let current_height = height();
+            require(current_height >= h, "Too early to roll the dice");
+            h
+        } else {
+            require(false, "must initialize contract before rolling");
+            0
+        };
         let rng_contract_id = storage.vrf_contract_id.read();
         let rng_abi = abi(VRF, rng_contract_id);
-        let random_number = rng_abi.get_random();
+        let random_number = rng_abi.get_random(roll_height);
         let roll = u64_to_roll(random_number);
         let current_game_id = storage.current_game_id.read();
         let old_roll_index = storage.roll_index.read();
@@ -202,22 +238,16 @@ impl Strapped for Contract {
                 }
             }
         }
+        // set next roll block height to 10 blocks in the future
+        let frequency = storage.roll_frequency.read();
+        let next_height = roll_height + frequency;
+        storage.next_roll_block_height.write(Some(next_height));
     }
 
     #[storage(read)]
     fn roll_history() -> Vec<Roll> {
         let current_game_id = storage.current_game_id.read();
         storage.roll_history.get(current_game_id).load_vec()
-    }
-
-    #[storage(write)]
-    fn set_vrf_contract_id(id: b256) {
-        storage.vrf_contract_id.write(id);
-    }
-
-    #[storage(write)]
-    fn set_chip_asset_id(id: AssetId) {
-        storage.chip_asset_id.write(id);
     }
 
     #[storage(read, write), payable]
