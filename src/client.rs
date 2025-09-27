@@ -171,6 +171,8 @@ pub struct AppController {
     prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
     prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
     strap_rewards_by_game: HashMap<u64, Vec<(strapped::Roll, strapped::Strap)>>,
+    active_modifiers_by_game:
+        HashMap<u64, Vec<(strapped::Roll, strapped::Modifier, u64)>>,
     errors: Vec<String>,
 }
 
@@ -212,6 +214,7 @@ impl AppController {
             prev_owner_bets: Vec::new(),
             prev_alice_bets: Vec::new(),
             strap_rewards_by_game: HashMap::new(),
+            active_modifiers_by_game: HashMap::new(),
             errors: Vec::new(),
         })
     }
@@ -255,6 +258,8 @@ impl AppController {
             .simulate(Execution::StateReadOnly)
             .await?
             .value;
+        self.active_modifiers_by_game
+            .insert(current_game_id, active_modifiers.clone());
 
         // My bets by roll
         let all_rolls = all_rolls();
@@ -293,7 +298,11 @@ impl AppController {
                     SharedGame {
                         game_id: prev,
                         rolls: self.shared_last_roll_history.clone(),
-                        modifiers: active_modifiers.clone(),
+                        modifiers: self
+                            .active_modifiers_by_game
+                            .get(&prev)
+                            .cloned()
+                            .unwrap_or_default(),
                     },
                 );
                 self.owner_bets_hist.insert(prev, owner_bets);
@@ -591,17 +600,29 @@ impl AppController {
             .get_asset_balance(&self.clients.chip_asset_id)
             .await
             .unwrap_or(0);
+        let upgraded_straps = self.expected_upgraded_straps(game_id, &enabled);
         let strap_list = self
             .strap_rewards_by_game
             .get(&game_id)
             .cloned()
             .unwrap_or_default();
+        let mut strap_candidates: Vec<strapped::Strap> = Vec::new();
+        for (_roll, strap) in &strap_list {
+            if !strap_candidates.iter().any(|existing| existing == strap) {
+                strap_candidates.push(strap.clone());
+            }
+        }
+        for (_roll, strap) in &upgraded_straps {
+            if !strap_candidates.iter().any(|existing| existing == strap) {
+                strap_candidates.push(strap.clone());
+            }
+        }
         let mut pre_straps: Vec<(strapped::Strap, u64)> = Vec::new();
-        for (_roll, s) in &strap_list {
-            let sub = strapped_contract::strap_to_sub_id(s);
+        for strap in &strap_candidates {
+            let sub = strapped_contract::strap_to_sub_id(strap);
             let aid = self.clients.contract_id.asset_id(&sub);
             let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            pre_straps.push((s.clone(), bal));
+            pre_straps.push((strap.clone(), bal));
         }
 
         let mut claimed_ok = false;
@@ -628,6 +649,17 @@ impl AppController {
             self.status = format!("Claim failed for game {}", game_id);
             self.push_errors(errs);
             return Ok(());
+        }
+        {
+            let entry = self
+                .strap_rewards_by_game
+                .entry(game_id)
+                .or_insert_with(Vec::new);
+            for (roll, strap) in &upgraded_straps {
+                if !entry.iter().any(|(_, existing)| existing == strap) {
+                    entry.push((roll.clone(), strap.clone()));
+                }
+            }
         }
         // mark as claimed in local cache for the current user
         match self.wallet {
@@ -666,6 +698,83 @@ impl AppController {
         );
         self.push_errors(errs);
         Ok(())
+    }
+
+    fn expected_upgraded_straps(
+        &self,
+        game_id: u64,
+        enabled: &[(strapped::Roll, strapped::Modifier)],
+    ) -> Vec<(strapped::Roll, strapped::Strap)> {
+        let bets_hist = match self.wallet {
+            WalletKind::Owner => self.owner_bets_hist.get(&game_id),
+            WalletKind::Alice => self.alice_bets_hist.get(&game_id),
+        };
+        let bets_hist = match bets_hist {
+            Some(bets) => bets.clone(),
+            None => return Vec::new(),
+        };
+
+        let rolls = self
+            .shared_prev_games
+            .iter()
+            .find(|g| g.game_id == game_id)
+            .map(|g| g.rolls.clone())
+            .unwrap_or_default();
+        if rolls.is_empty() {
+            return Vec::new();
+        }
+
+        let active_modifiers = self
+            .active_modifiers_by_game
+            .get(&game_id)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut upgrades: Vec<(strapped::Roll, strapped::Strap)> = Vec::new();
+        for (idx, roll) in rolls.iter().enumerate() {
+            if let Some((_, bets)) = bets_hist.iter().find(|(r, _)| r == roll) {
+                for (bet, _amount, bet_roll_index) in bets {
+                    if *bet_roll_index <= idx as u64 {
+                        if let strapped::Bet::Strap(strap) = bet {
+                            let mut new_strap = strap.clone();
+                            new_strap.level = new_strap.level.saturating_add(1);
+                            if let Some(modifier) = Self::modifier_override_for_roll(
+                                &active_modifiers,
+                                roll,
+                                *bet_roll_index,
+                                enabled,
+                            ) {
+                                new_strap.modifier = modifier;
+                            }
+                            upgrades.push((roll.clone(), new_strap));
+                        }
+                    }
+                }
+            }
+        }
+
+        upgrades
+    }
+
+    fn modifier_override_for_roll(
+        active: &[(strapped::Roll, strapped::Modifier, u64)],
+        roll: &strapped::Roll,
+        bet_roll_index: u64,
+        enabled: &[(strapped::Roll, strapped::Modifier)],
+    ) -> Option<strapped::Modifier> {
+        for (modifier_roll, modifier, activated_index) in active {
+            if modifier_roll == roll && *activated_index <= bet_roll_index {
+                let is_enabled = enabled
+                    .iter()
+                    .any(|(r, m)| r == modifier_roll && m == modifier);
+                if is_enabled {
+                    return Some(modifier.clone());
+                } else {
+                    return None;
+                }
+            }
+        }
+        None
     }
 
     pub async fn purchase_modifier_for(
