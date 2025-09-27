@@ -5,6 +5,7 @@ use fuels::{
         AssetConfig,
         AssetId,
         CallParameters,
+        Execution,
         VariableOutputPolicy,
     },
     tx::ContractIdExt,
@@ -51,25 +52,21 @@ fn run_claim_rewards_property(
         let alice_instance =
             separate_contract_instance(&contract_id, alice_wallet.clone()).await;
         let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-
-        // instance
-        //     .methods()
-        //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-        //     .call()
-        //     .await
-        //     .unwrap();
-        // instance
-        //     .methods()
-        //     .set_chip_asset_id(chip_asset_id)
-        //     .call()
-        //     .await
-        //     .unwrap();
         instance
             .methods()
             .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
             .call()
             .await
             .unwrap();
+        let next_roll_height = instance
+            .methods()
+            .next_roll_height()
+            .simulate(Execution::StateReadOnly)
+            .await
+            .unwrap()
+            .value
+            .unwrap();
+        ctx.advance_to_block_height(next_roll_height).await;
 
         let call_params = CallParameters::new(10_000_000, chip_asset_id, 1_000_000);
         instance
@@ -200,18 +197,6 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -252,6 +237,16 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .unwrap()
         .value;
 
+    let next_roll_height = instance
+        .methods()
+        .next_roll_height()
+        .simulate(Execution::StateReadOnly)
+        .await
+        .unwrap()
+        .value
+        .unwrap();
+    ctx.advance_to_block_height(next_roll_height).await;
+
     // roll the correct number
     let first_number = 10; // 10 % 36 = 10 which is Six
     vrf_instance
@@ -268,6 +263,16 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .call()
         .await
         .unwrap();
+
+    let next_roll_height = instance
+        .methods()
+        .next_roll_height()
+        .simulate(Execution::StateReadOnly)
+        .await
+        .unwrap()
+        .value
+        .unwrap();
+    ctx.advance_to_block_height(next_roll_height).await;
     // hit twice
     instance
         .methods()
@@ -276,6 +281,16 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .call()
         .await
         .unwrap();
+
+    let next_roll_height = instance
+        .methods()
+        .next_roll_height()
+        .simulate(Execution::StateReadOnly)
+        .await
+        .unwrap()
+        .value
+        .unwrap();
+    ctx.advance_to_block_height(next_roll_height).await;
     // hit thrice
     instance
         .methods()
@@ -285,6 +300,15 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .await
         .unwrap();
 
+    let next_roll_height = instance
+        .methods()
+        .next_roll_height()
+        .simulate(Execution::StateReadOnly)
+        .await
+        .unwrap()
+        .value
+        .unwrap();
+    ctx.advance_to_block_height(next_roll_height).await;
     // roll seven
     let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
     vrf_instance
@@ -332,18 +356,6 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -408,18 +420,6 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -521,18 +521,6 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -641,18 +629,6 @@ async fn claim_rewards__can_receive_strap_token() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -779,18 +755,6 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -933,12 +897,6 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
     let chip_asset_id = AssetId::new([1; 32]);
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -1042,18 +1000,6 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
     let (instance, contract_id) = get_contract_instance(owner.clone()).await;
     let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
     let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
@@ -1177,19 +1123,6 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
     let alice_instance = separate_contract_instance(&contract_id, alice).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
     let chip_asset_id = AssetId::new([1u8; 32]);
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // let chip_asset_id = AssetId::new([1u8; 32]);
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_id), chip_asset_id, 10)
@@ -1331,19 +1264,6 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     let alice_instance = separate_contract_instance(&contract_id, alice).await;
     let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
     let chip_asset_id = AssetId::new([1u8; 32]);
-    // instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_id))
-    //     .call()
-    //     .await
-    //     .unwrap();
-    // let chip_asset_id = AssetId::new([1u8; 32]);
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
     instance
         .methods()
         .initialize(Bits256(*vrf_id), chip_asset_id, 10)

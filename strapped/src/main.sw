@@ -119,6 +119,9 @@ abi Strapped {
     #[storage(write)]
     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
 
+    #[storage(read)]
+    fn next_roll_height() -> Option<u32>;
+
     /// Roll the dice and process the results
     #[storage(read, write)]
     fn roll_dice();
@@ -193,6 +196,11 @@ impl Strapped for Contract {
         storage.roll_frequency.write(roll_frequency);
         let current_height = height();
         storage.next_roll_block_height.write(Some(current_height + roll_frequency));
+    }
+
+    #[storage(read)]
+    fn next_roll_height() -> Option<u32> {
+        storage.next_roll_block_height.read()
     }
 
     #[storage(read, write)]

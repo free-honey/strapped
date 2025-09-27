@@ -1,7 +1,14 @@
 use crate::vrf_types;
 use fuels::prelude::{
-    AssetConfig, AssetId, Contract, ContractId, LoadConfiguration, TxPolicies,
-    WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
+    AssetConfig,
+    AssetId,
+    Contract,
+    ContractId,
+    LoadConfiguration,
+    TxPolicies,
+    WalletUnlocked,
+    WalletsConfig,
+    launch_custom_provider_and_get_wallets,
 };
 
 pub async fn get_vrf_contract_instance(
@@ -63,6 +70,16 @@ impl TestContext {
 
     pub fn owner(&self) -> WalletUnlocked {
         self.owner.clone()
+    }
+
+    pub async fn advance_to_block_height(&self, height: u32) {
+        let provider = self.owner.provider().unwrap();
+        let current_height = provider.latest_block_height().await.unwrap();
+        let blocks_to_advance = height.saturating_sub(current_height);
+        provider
+            .produce_blocks(blocks_to_advance, None)
+            .await
+            .unwrap();
     }
 }
 
