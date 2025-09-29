@@ -1,20 +1,40 @@
 use crate::ui;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{
+    Result,
+    eyre,
+};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
-        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
-        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
+        AssetConfig,
+        AssetId,
+        Bech32ContractId,
+        CallParameters,
+        Contract,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        Provider,
+        TxPolicies,
+        VariableOutputPolicy,
+        WalletUnlocked,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
     },
     tx::ContractIdExt,
     types::Bits256,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{
+        HashMap,
+        HashSet,
+    },
     time::Duration,
 };
-use strapped_contract::{strapped_types as strapped, vrf_types as vrf};
+use strapped_contract::{
+    strapped_types as strapped,
+    vrf_types as vrf,
+};
 use tokio::time;
 use tracing::error;
 
@@ -586,6 +606,30 @@ impl AppController {
     }
 
     pub async fn roll(&mut self) -> Result<()> {
+        // advance chain to next roll height
+        let next_roll_height = self
+            .clients
+            .owner
+            .methods()
+            .next_roll_height()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value.unwrap();
+        let provider = self
+            .clients
+            .owner
+            .account()
+            .provider()
+            .ok_or_else(|| eyre!("no provider"))?
+            .clone();
+        let current_height = provider.latest_block_height().await.unwrap();
+        if current_height < next_roll_height {
+            let blocks_to_advance = next_roll_height.saturating_sub(current_height);
+            provider
+                .produce_blocks(blocks_to_advance, None)
+                .await
+                .unwrap();
+        }
         // Roll using owner instance but allow any wallet to trigger.
         self.clients
             .owner
