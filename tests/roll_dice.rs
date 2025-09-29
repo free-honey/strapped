@@ -2,12 +2,7 @@
 
 use fuels::prelude::CallParameters;
 use strapped_contract::{
-    strapped_types::{
-        Modifier,
-        Roll,
-        Strap,
-        StrapKind,
-    },
+    strapped_types::{Modifier, Roll, Strap, StrapKind},
     test_helpers::TestContext,
 };
 

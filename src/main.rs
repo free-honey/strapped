@@ -29,5 +29,11 @@ fn init_tracing() -> Result<()> {
 async fn main() -> Result<()> {
     color_eyre::install()?;
     // init_tracing()?;
-    client::run_app().await
+    let use_fake_vrf = std::env::args().any(|arg| arg == "--fake-vrf");
+    let vrf_mode = if use_fake_vrf {
+        client::VrfMode::Fake
+    } else {
+        client::VrfMode::Pseudo
+    };
+    client::run_app(vrf_mode).await
 }

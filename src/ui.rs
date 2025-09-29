@@ -1,4 +1,4 @@
-use crate::client::{AppSnapshot, PreviousGameSummary};
+use crate::client::{AppSnapshot, PreviousGameSummary, VrfMode};
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -736,11 +736,19 @@ fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 }
 
 fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
-    let vrf_roll = vrf_to_roll(snap.vrf_number);
-    let text = format!(
-        "Game: {} | Pot: {} | VRF: {} ({:?})",
-        snap.current_game_id, snap.pot_balance, snap.vrf_number, vrf_roll
-    );
+    let text = match snap.vrf_mode {
+        VrfMode::Fake => {
+            let vrf_roll = vrf_to_roll(snap.vrf_number);
+            format!(
+                "Game: {} | Pot: {} | Fake VRF: {} ({:?})",
+                snap.current_game_id, snap.pot_balance, snap.vrf_number, vrf_roll
+            )
+        }
+        VrfMode::Pseudo => format!(
+            "Game: {} | Pot: {} | Pseudo VRF Mode",
+            snap.current_game_id, snap.pot_balance
+        ),
+    };
     let widget =
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Game"));
     f.render_widget(widget, area);
