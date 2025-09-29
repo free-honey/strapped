@@ -1,172 +1,122 @@
 #![allow(non_snake_case)]
+
 use fuels::{
     prelude::{
         AssetConfig,
-        AssetId,
         CallParameters,
     },
     tx::ContractIdExt,
-    types::Bits256,
 };
 use strapped_contract::{
     contract_id,
-    get_contract_instance,
     strap_to_sub_id,
-    strapped_types,
-    strapped_types::Strap,
-    test_helpers::{
-        TestContext,
-        get_vrf_contract_instance,
+    strapped_types::{
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
     },
+    test_helpers::TestContext,
 };
 
 #[tokio::test]
 async fn place_bet__adds_bets_to_list() {
-    let asset_id = AssetId::new([1; 32]);
     let ctx = TestContext::new().await;
-    let alice = ctx.alice();
-    let owner = ctx.owner();
-    let (_, vrf_id) = get_vrf_contract_instance(owner).await;
-    // given
-    let (instance, _id) = get_contract_instance(alice.clone()).await;
+    let chip_asset_id = ctx.chip_asset_id();
+    let roll = Roll::Six;
     let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
-    let roll = strapped_types::Roll::Six;
-    //     #[storage(write)]
-    //     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
-    // instance
-    //     .methods()
-    //     .set_chip_asset_id(asset_id)
-    //     .call()
-    //     .await
-    //     .unwrap();
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_id), asset_id, 10)
-        .call()
-        .await
-        .unwrap();
 
-    // when
-    let call_params = CallParameters::new(bet_amount, asset_id, 1_000_000);
-    instance
+    ctx.alice_instance()
         .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
+        .place_bet(roll.clone(), Bet::Chip, bet_amount)
+        .call_params(CallParameters::new(bet_amount, chip_asset_id, 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
 
-    // then
-    let actual = instance
+    let actual = ctx
+        .alice_instance()
         .methods()
-        .get_my_bets(roll)
+        .get_my_bets(roll.clone())
         .call()
         .await
         .unwrap()
         .value;
-    let expected = vec![(bet, bet_amount, 0)];
+    let expected = vec![(Bet::Chip, bet_amount, 0)];
     assert_eq!(expected, actual);
 }
 
 #[tokio::test]
 async fn place_bet__fails_if_funds_not_transferred() {
     let ctx = TestContext::new().await;
-    let alice = ctx.alice();
-    // given
-    let (instance, _id) = get_contract_instance(alice.clone()).await;
+    let roll = Roll::Six;
     let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
-    let roll = strapped_types::Roll::Six;
 
-    // when
-    let result = instance
+    let result = ctx
+        .alice_instance()
         .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
+        .place_bet(roll, Bet::Chip, bet_amount)
         .call()
         .await;
 
-    // then
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn place_bet__can_bet_strap() {
-    // given
     let contract_id = contract_id();
-    let roll = strapped_types::Roll::Six;
-
-    // when
-    let level = 1;
-    let kind = strapped_types::StrapKind::Shirt;
-    let modifier = strapped_types::Modifier::Nothing;
-    let strap = Strap {
-        level,
-        kind: kind.clone(),
-        modifier: modifier.clone(),
-    };
-    let bet_amount = 1;
-    let bet = strapped_types::Bet::Strap(strap.clone());
-    let sub_id = strap_to_sub_id(&strap);
-    let asset_id = contract_id.asset_id(&sub_id);
+    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let strap_sub_id = strap_to_sub_id(&strap);
+    let strap_asset_id = contract_id.asset_id(&strap_sub_id);
 
     let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: asset_id.clone(),
+        id: strap_asset_id,
         num_coins: 1,
         coin_amount: 1,
     }])
     .await;
-    let alice = ctx.alice();
-    let (instance, _contract_id) = get_contract_instance(alice.clone()).await;
-    let call_params = CallParameters::new(bet_amount, asset_id, 1_000_000);
-    instance
+
+    let strap_asset_id = ctx.contract_id().asset_id(&strap_sub_id);
+    let roll = Roll::Six;
+    let bet_amount = 1;
+
+    ctx.alice_instance()
         .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
+        .place_bet(roll.clone(), Bet::Strap(strap.clone()), bet_amount)
+        .call_params(CallParameters::new(bet_amount, strap_asset_id, 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
 
-    // then
-    let actual = instance
+    let actual = ctx
+        .alice_instance()
         .methods()
         .get_my_bets(roll)
         .call()
         .await
         .unwrap()
         .value;
-    let expected = vec![(bet, bet_amount, 0)];
+    let expected = vec![(Bet::Strap(strap), bet_amount, 0)];
     assert_eq!(expected, actual);
 }
 
 #[tokio::test]
 async fn place_bet__fails_if_does_not_include_strap() {
-    // given
-    let roll = strapped_types::Roll::Six;
-    let ctx = TestContext::new().await;
-    let alice = ctx.alice();
-    let (instance, _contract_id) = get_contract_instance(alice.clone()).await;
-
-    let level = 1;
-    let kind = strapped_types::StrapKind::Shirt;
-    let modifier = strapped_types::Modifier::Nothing;
-    let strap = Strap {
-        level,
-        kind: kind.clone(),
-        modifier: modifier.clone(),
-    };
+    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let roll = Roll::Six;
     let bet_amount = 1;
-    let bet = strapped_types::Bet::Strap(strap.clone());
 
-    // when
-    let result = instance
+    let ctx = TestContext::new().await;
+
+    let result = ctx
+        .alice_instance()
         .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
+        .place_bet(roll, Bet::Strap(strap), bet_amount)
         .call()
         .await;
 
-    // then
     assert!(result.is_err());
 }

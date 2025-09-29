@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
@@ -9,134 +10,75 @@ use fuels::{
         VariableOutputPolicy,
     },
     tx::ContractIdExt,
-    types::Bits256,
 };
 use proptest::prelude::*;
 use strapped_contract::{
     contract_id,
-    get_contract_instance,
-    separate_contract_instance,
     strap_to_sub_id,
-    strapped_types,
     strapped_types::{
+        self,
         Bet,
         Modifier,
         Roll,
         Strap,
         StrapKind,
     },
-    test_helpers::*,
+    test_helpers::TestContext,
 };
 use tokio::runtime::Runtime;
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
     #[test]
-    fn claim_rewards__adds_chips_to_wallet((vrf_bucket, bet_amount) in (0u64..36, 100u64..=1_000u64)) {
-        run_claim_rewards_property(vrf_bucket, bet_amount).unwrap();
+    fn claim_rewards__adds_chips_to_wallet((vrf_number, bet_amount) in (0u64..36, 1u64..=1_000u64)) {
+        run_claim_rewards_property(vrf_number, bet_amount).unwrap();
     }
 }
 
 fn run_claim_rewards_property(
-    vrf_bucket: u64,
+    vrf_number: u64,
     bet_amount: u64,
 ) -> Result<(), TestCaseError> {
-    let runtime = Runtime::new().unwrap();
-    runtime.block_on(async move {
+    Runtime::new().unwrap().block_on(async move {
         let ctx = TestContext::new().await;
-        let owner = ctx.owner();
-        let chip_asset_id = AssetId::new([1; 32]);
 
-        let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-        let alice_wallet = ctx.alice();
-        let alice_instance =
-            separate_contract_instance(&contract_id, alice_wallet.clone()).await;
-        let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-        instance
+        // given
+        let chip_asset_id = ctx.chip_asset_id();
+        let payout_config = ctx
+            .owner_contract()
             .methods()
-            .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-            .call()
-            .await
-            .unwrap();
-        let next_roll_height = instance
-            .methods()
-            .next_roll_height()
-            .simulate(Execution::StateReadOnly)
-            .await
-            .unwrap()
-            .value
-            .unwrap();
-        ctx.advance_to_block_height(next_roll_height).await;
-
-        let call_params = CallParameters::new(10_000_000, chip_asset_id, 1_000_000);
-        instance
-            .methods()
-            .fund()
-            .call_params(call_params)
-            .unwrap()
-            .call()
-            .await
-            .unwrap();
-
-        let payout_config = instance.methods().payouts().call().await.unwrap().value;
-
-        let target_roll = roll_from_vrf_bucket(vrf_bucket);
-        let expected_multiplier = multiplier_for_roll(&payout_config, &target_roll);
-
-        let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-        alice_instance
-            .methods()
-            .place_bet(target_roll.clone(), Bet::Chip, bet_amount)
-            .call_params(call_params)
-            .unwrap()
-            .call()
-            .await
-            .unwrap();
-
-        let bet_game_id = alice_instance
-            .methods()
-            .current_game_id()
+            .payouts()
             .call()
             .await
             .unwrap()
             .value;
 
-        vrf_instance
-            .methods()
-            .set_number(vrf_bucket)
-            .call()
-            .await
-            .unwrap();
-        instance
-            .methods()
-            .roll_dice()
-            .with_contracts(&[&vrf_instance])
-            .call()
-            .await
-            .unwrap();
+        let target_roll = roll_from_vrf_bucket(vrf_number);
+        let expected_multiplier = multiplier_for_roll(&payout_config, &target_roll);
 
+        place_chip_bet(&ctx, target_roll.clone(), bet_amount).await;
+
+        let bet_game_id = ctx
+            .alice_contract()
+            .methods()
+            .current_game_id()
+            .simulate(Execution::StateReadOnly)
+            .await
+            .unwrap()
+            .value;
+
+        ctx.advance_and_roll(vrf_number).await;
+        // roll seven to end game if not already rolled
         if target_roll != Roll::Seven {
             const SEVEN_VRF_NUMBER: u64 = 19;
-            vrf_instance
-                .methods()
-                .set_number(SEVEN_VRF_NUMBER)
-                .call()
-                .await
-                .unwrap();
-            instance
-                .methods()
-                .roll_dice()
-                .with_contracts(&[&vrf_instance])
-                .call()
-                .await
-                .unwrap();
+            ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
         }
 
-        let balance_before_claim =
-            ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+        let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
 
+        // when
         if expected_multiplier != 0 {
-            alice_instance
+            ctx.alice_contract()
                 .methods()
                 .claim_rewards(bet_game_id, Vec::new())
                 .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
@@ -145,13 +87,469 @@ fn run_claim_rewards_property(
                 .unwrap();
         }
 
-        let balance_after_claim =
-            ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-
-        let expected = balance_before_claim + bet_amount * expected_multiplier;
-        prop_assert_eq!(balance_after_claim, expected);
+        // then
+        let expected = balance_before + bet_amount * expected_multiplier;
+        let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+        prop_assert_eq!(expected, actual);
         Ok(())
     })
+}
+
+#[tokio::test]
+async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
+    let ctx = TestContext::new().await;
+    let chip_asset_id = ctx.chip_asset_id();
+
+    let bet_amount = 100;
+    let roll = Roll::Six;
+    place_chip_bet(&ctx, roll.clone(), bet_amount).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(19).await;
+
+    let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+
+    let expected = balance_before + bet_amount * 2 * 3;
+    assert_eq!(balance_after, expected);
+}
+
+#[tokio::test]
+async fn claim_rewards__cannot_claim_rewards_for_current_game() {
+    let ctx = TestContext::new().await;
+    let chip_asset_id = ctx.chip_asset_id();
+
+    place_chip_bet(&ctx, Roll::Six, 100).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await;
+
+    let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+
+    let result = ctx
+        .alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await;
+
+    assert!(result.is_err());
+
+    let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    assert_eq!(balance_after, balance_before);
+}
+
+#[tokio::test]
+async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
+    let ctx = TestContext::new().await;
+    let chip_asset_id = ctx.chip_asset_id();
+
+    ctx.advance_and_roll(10).await; // roll happens before bet
+
+    place_chip_bet(&ctx, Roll::Six, 100).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(19).await; // end game
+
+    let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap_err();
+
+    let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    assert_eq!(balance_before, balance_after);
+}
+
+#[tokio::test]
+async fn claim_rewards__cannot_claim_rewards_twice() {
+    let ctx = TestContext::new().await;
+    let chip_asset_id = ctx.chip_asset_id();
+
+    place_chip_bet(&ctx, Roll::Six, 100).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(19).await;
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    let balance_after_first =
+        ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+
+    let result = ctx
+        .alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await;
+
+    assert!(result.is_err());
+
+    let balance_after_second =
+        ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    assert_eq!(balance_after_first, balance_after_second);
+}
+
+#[tokio::test]
+async fn claim_rewards__can_receive_strap_token() {
+    let ctx = TestContext::new().await;
+
+    ctx.advance_and_roll(19).await; // seed strap rewards for roll eight
+
+    place_chip_bet(&ctx, Roll::Eight, 100).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(25).await; // Eight
+    ctx.advance_and_roll(19).await; // Seven to end game
+
+    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let strap_asset_id = strap_asset_id(&ctx, &strap);
+    let balance_before = ctx
+        .alice()
+        .get_asset_balance(&strap_asset_id)
+        .await
+        .unwrap();
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
+        .call()
+        .await
+        .unwrap();
+
+    let balance_after = ctx
+        .alice()
+        .get_asset_balance(&strap_asset_id)
+        .await
+        .unwrap();
+
+    assert_eq!(balance_after, balance_before + 1);
+}
+
+#[tokio::test]
+async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
+    let ctx = TestContext::new().await;
+
+    ctx.advance_and_roll(19).await; // seed strap rewards
+
+    place_chip_bet(&ctx, Roll::Eight, 100).await;
+    place_chip_bet(&ctx, Roll::Eight, 100).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(25).await; // Eight
+    ctx.advance_and_roll(19).await; // Seven to end game
+
+    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let strap_asset_id = strap_asset_id(&ctx, &strap);
+    let balance_before = ctx
+        .alice()
+        .get_asset_balance(&strap_asset_id)
+        .await
+        .unwrap();
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
+        .call()
+        .await
+        .unwrap();
+
+    let balance_after = ctx
+        .alice()
+        .get_asset_balance(&strap_asset_id)
+        .await
+        .unwrap();
+
+    assert_eq!(balance_after, balance_before + 1);
+}
+
+#[tokio::test]
+async fn claim_rewards__bet_straps_are_levelled_up() {
+    let base_contract_id = contract_id();
+    let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
+
+    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
+        id: base_strap_asset,
+        num_coins: 1,
+        coin_amount: 1,
+    }])
+    .await;
+
+    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await; // Six
+    ctx.advance_and_roll(19).await; // Seven to end game
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
+    let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
+    let balance = ctx
+        .alice()
+        .get_asset_balance(&leveled_asset_id)
+        .await
+        .unwrap();
+    assert_eq!(balance, 1);
+}
+
+#[tokio::test]
+async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
+    let base_contract_id = contract_id();
+    let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
+
+    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
+        id: base_strap_asset,
+        num_coins: 1,
+        coin_amount: 1,
+    }])
+    .await;
+
+    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(19).await;
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
+    let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
+    let balance = ctx
+        .alice()
+        .get_asset_balance(&leveled_asset_id)
+        .await
+        .unwrap();
+    assert_eq!(balance, 1);
+}
+
+#[tokio::test]
+async fn claim_rewards__includes_modifier_in_strap_level_up() {
+    let base_contract_id = contract_id();
+    let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
+
+    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
+        id: base_strap_asset,
+        num_coins: 1,
+        coin_amount: 1,
+    }])
+    .await;
+
+    ctx.advance_and_roll(19).await; // seed modifiers
+    ctx.advance_and_roll(0).await; // trigger Burnt modifier
+
+    ctx.alice_contract()
+        .methods()
+        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
+        .unwrap()
+        .call()
+        .await
+        .unwrap();
+
+    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await; // hit six
+    ctx.advance_and_roll(19).await; // end game
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, vec![(Roll::Six, Modifier::Burnt)])
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Burnt);
+    let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
+    let balance = ctx
+        .alice()
+        .get_asset_balance(&leveled_asset_id)
+        .await
+        .unwrap();
+    assert_eq!(balance, 1);
+}
+
+#[tokio::test]
+async fn claim_rewards__does_not_include_modifier_if_not_specified() {
+    let base_contract_id = contract_id();
+    let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+    let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
+
+    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
+        id: base_strap_asset,
+        num_coins: 1,
+        coin_amount: 1,
+    }])
+    .await;
+
+    ctx.advance_and_roll(19).await; // seed modifiers
+    ctx.advance_and_roll(0).await; // trigger Burnt modifier
+
+    ctx.alice_contract()
+        .methods()
+        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
+        .unwrap()
+        .call()
+        .await
+        .unwrap();
+
+    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(19).await;
+
+    ctx.alice_contract()
+        .methods()
+        .claim_rewards(bet_game_id, Vec::new())
+        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
+        .call()
+        .await
+        .unwrap();
+
+    let leveled_plain = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
+    let leveled_plain_asset = strap_asset_id(&ctx, &leveled_plain);
+    let plain_balance = ctx
+        .alice()
+        .get_asset_balance(&leveled_plain_asset)
+        .await
+        .unwrap();
+    assert_eq!(plain_balance, 1);
+
+    let leveled_burnt = Strap::new(2, StrapKind::Shirt, Modifier::Burnt);
+    let leveled_burnt_asset = strap_asset_id(&ctx, &leveled_burnt);
+    let burnt_balance = ctx
+        .alice()
+        .get_asset_balance(&leveled_burnt_asset)
+        .await
+        .unwrap();
+    assert_eq!(burnt_balance, 0);
 }
 
 fn roll_from_vrf_bucket(vrf_bucket: u64) -> Roll {
@@ -173,6 +571,7 @@ fn roll_from_vrf_bucket(vrf_bucket: u64) -> Roll {
 fn multiplier_for_roll(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
     match roll {
         Roll::Two => cfg.two_payout_multiplier,
+        // Roll::Three => panic!("{}", cfg.three_payout_multiplier),
         Roll::Three => cfg.three_payout_multiplier,
         Roll::Four => cfg.four_payout_multiplier,
         Roll::Five => cfg.five_payout_multiplier,
@@ -186,1202 +585,30 @@ fn multiplier_for_roll(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
     }
 }
 
-#[tokio::test]
-async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
-    let ctx = TestContext::new().await;
-    let owner = ctx.owner();
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    // init contracts
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
+async fn place_chip_bet(ctx: &TestContext, roll: Roll, amount: u64) {
+    ctx.alice_contract()
         .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // fund contract with chips
-    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
-    instance
-        .methods()
-        .fund()
-        .call_params(call_params)
+        .place_bet(roll, Bet::Chip, amount)
+        .call_params(CallParameters::new(amount, ctx.chip_asset_id(), 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
-
-    // place bet
-    let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    let next_roll_height = instance
-        .methods()
-        .next_roll_height()
-        .simulate(Execution::StateReadOnly)
-        .await
-        .unwrap()
-        .value
-        .unwrap();
-    ctx.advance_to_block_height(next_roll_height).await;
-
-    // roll the correct number
-    let first_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(first_number)
-        .call()
-        .await
-        .unwrap();
-    // hit once
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    let next_roll_height = instance
-        .methods()
-        .next_roll_height()
-        .simulate(Execution::StateReadOnly)
-        .await
-        .unwrap()
-        .value
-        .unwrap();
-    ctx.advance_to_block_height(next_roll_height).await;
-    // hit twice
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    let next_roll_height = instance
-        .methods()
-        .next_roll_height()
-        .simulate(Execution::StateReadOnly)
-        .await
-        .unwrap()
-        .value
-        .unwrap();
-    ctx.advance_to_block_height(next_roll_height).await;
-    // hit thrice
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    let next_roll_height = instance
-        .methods()
-        .next_roll_height()
-        .simulate(Execution::StateReadOnly)
-        .await
-        .unwrap()
-        .value
-        .unwrap();
-    ctx.advance_to_block_height(next_roll_height).await;
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-
-    // claim reward
-    let wallet_balance = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-
-    // Six pays 2:1 for each roll
-    let expected = wallet_balance + bet_amount * 2 + bet_amount * 2 + bet_amount * 2;
-    let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-    assert_eq!(expected, actual);
 }
 
-#[tokio::test]
-async fn claim_rewards__cannot_claim_rewards_for_current_game() {
-    let ctx = TestContext::new().await;
-    let owner = ctx.owner();
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    // init contracts
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
+async fn place_strap_bet(ctx: &TestContext, strap: &Strap, roll: Roll, amount: u64) {
+    let asset_id = strap_asset_id(ctx, strap);
+    ctx.alice_contract()
         .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
+        .place_bet(roll, Bet::Strap(strap.clone()), amount)
+        .call_params(CallParameters::new(amount, asset_id, 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
-    vrf_instance
-        .methods()
-        .set_number(10) // 10 % 36 = 10 which is Six
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // when
-    let result = instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .call()
-        .await;
-
-    // then
-    assert!(result.is_err());
 }
 
-#[tokio::test]
-async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
-    let ctx = TestContext::new().await;
-    let owner = ctx.owner();
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    // init contracts
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // fund contract with chips
-    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
-    instance
-        .methods()
-        .fund()
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // roll the correct number
-    let first_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(first_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-
-    // claim reward
-    let wallet_balance = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap_err();
-
-    // then
-    let expected = wallet_balance;
-    let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
-async fn claim_rewards__cannot_claim_rewards_twice() {
-    let ctx = TestContext::new().await;
-    let owner = ctx.owner();
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    // init contracts
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // fund contract with chips
-    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
-    instance
-        .methods()
-        .fund()
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 100;
-    let bet = strapped_types::Bet::Chip;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll the correct number
-    let first_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(first_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // claim reward
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // when
-    let wallet_balance = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-    // try claiming again
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap_err();
-
-    let expected = wallet_balance;
-    let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
-async fn claim_rewards__can_receive_strap_token() {
-    let ctx = TestContext::new().await;
-    let owner = ctx.owner();
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    // init contracts
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // fund contract with chips
-    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
-    instance
-        .methods()
-        .fund()
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 100;
-    let bet = Bet::Chip;
-    let roll = Roll::Eight;
-    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll the correct number
-    let first_number = 25; // 25 % 36 = 25 which is Eight
-    vrf_instance
-        .methods()
-        .set_number(first_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let sub_asset_id = strap_to_sub_id(&strap);
-    let expected_asset_id = contract_id.asset_id(&sub_asset_id);
-    let wallet_balance = ctx
-        .alice()
-        .get_asset_balance(&expected_asset_id)
-        .await
-        .unwrap();
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let expected = wallet_balance + 1;
-    let actual = ctx
-        .alice()
-        .get_asset_balance(&expected_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
-async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
-    let ctx = TestContext::new().await;
-    let owner = ctx.owner();
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    // init contracts
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // fund contract with chips
-    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
-    instance
-        .methods()
-        .fund()
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 100;
-    let bet = Bet::Chip;
-    let roll = Roll::Eight;
-    let call_params = CallParameters::new(bet_amount, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params.clone())
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll the correct number
-    let first_number = 25; // 25 % 36 = 25 which is Eight
-    vrf_instance
-        .methods()
-        .set_number(first_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let sub_asset_id = strap_to_sub_id(&strap);
-    let expected_asset_id = contract_id.asset_id(&sub_asset_id);
-    let wallet_balance = ctx
-        .alice()
-        .get_asset_balance(&expected_asset_id)
-        .await
-        .unwrap();
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let expected = wallet_balance + 1;
-    let actual = ctx
-        .alice()
-        .get_asset_balance(&expected_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
-async fn claim_rewards__bet_straps_are_levelled_up() {
-    // given
-    let contract_id = contract_id();
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let strap_sub_id = strap_to_sub_id(&strap);
-    let bet = Bet::Strap(strap);
-    let strap_asset_id = contract_id.asset_id(&strap_sub_id);
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: strap_asset_id.clone(),
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
-    let owner = ctx.owner();
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    let chip_asset_id = AssetId::new([1; 32]);
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 1;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(bet_amount, strap_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll the correct number
-    let six_vrf_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(six_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-
-    // claim reward
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let lvl_2_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
-    let new_strap_sub_id = strap_to_sub_id(&lvl_2_strap);
-    let new_strap_asset_id = contract_id.asset_id(&new_strap_sub_id);
-    let expected = 1;
-    let actual = ctx
-        .alice()
-        .get_asset_balance(&new_strap_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(expected, actual);
-}
-#[tokio::test]
-async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
-    let chip_asset_id = AssetId::new([1; 32]);
-
-    // given
-    let contract_id = contract_id();
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let strap_sub_id = strap_to_sub_id(&strap);
-    let bet = Bet::Strap(strap);
-    let strap_asset_id = contract_id.asset_id(&strap_sub_id);
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: strap_asset_id.clone(),
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
-    let owner = ctx.owner();
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, ctx.alice()).await;
-    let (vrf_instance, vrf_contract_id) = get_vrf_contract_instance(owner).await;
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-
-    // fund contract with chips
-    let call_params = CallParameters::new(1_000_000, chip_asset_id, 1_000_000);
-    instance
-        .methods()
-        .fund()
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // place bet
-    let bet_amount = 1;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(bet_amount, strap_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), bet_amount)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll the correct number
-    let six_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(six_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-
-    // claim reward
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let lvl_2_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
-    let new_strap_sub_id = strap_to_sub_id(&lvl_2_strap);
-    let new_strap_asset_id = contract_id.asset_id(&new_strap_sub_id);
-    let expected = 1;
-    let actual = ctx
-        .alice()
-        .get_asset_balance(&new_strap_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(expected, actual);
-}
-
-#[tokio::test]
-async fn claim_rewards__includes_modifier_in_strap_level_up() {
-    let contract_id = contract_id();
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let strap_sub_id = strap_to_sub_id(&strap);
-    let bet = Bet::Strap(strap);
-    let strap_asset_id = contract_id.asset_id(&strap_sub_id);
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: strap_asset_id.clone(),
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
-    let owner = ctx.owner();
-    let alice = ctx.alice();
-    // given
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, alice).await;
-    let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
-    let chip_asset_id = AssetId::new([1u8; 32]);
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-    // update vrf to something that will resolve to Seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // trigger modifier
-    let two_vrf_number = 0; // 0 % 36 = 0 which is Two
-    vrf_instance
-        .methods()
-        .set_number(two_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // purchase triggered modifier
-    let cost = 1;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(cost, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .purchase_modifier(roll.clone(), Modifier::Burnt)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // place bet on modified roll
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), 1)
-        .call_params(CallParameters::new(1, strap_asset_id, 1_000_000))
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll six to trigger hit
-    let six_vrf_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(six_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven to end game
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, vec![(Roll::Six, Modifier::Burnt)])
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let lvl_2_strap = Strap::new(2, StrapKind::Shirt, Modifier::Burnt);
-    let new_strap_sub_id = strap_to_sub_id(&lvl_2_strap);
-    let new_strap_asset_id = contract_id.asset_id(&new_strap_sub_id);
-    let expected = 1;
-    let actual = ctx
-        .alice()
-        .get_asset_balance(&new_strap_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(expected, actual);
-}
-#[tokio::test]
-async fn claim_rewards__does_not_include_modifier_if_not_specified() {
-    let contract_id = contract_id();
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let strap_sub_id = strap_to_sub_id(&strap);
-    let bet = Bet::Strap(strap);
-    let strap_asset_id = contract_id.asset_id(&strap_sub_id);
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: strap_asset_id.clone(),
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
-    let owner = ctx.owner();
-    let alice = ctx.alice();
-    // given
-    let (instance, contract_id) = get_contract_instance(owner.clone()).await;
-    let alice_instance = separate_contract_instance(&contract_id, alice).await;
-    let (vrf_instance, vrf_id) = get_vrf_contract_instance(owner).await;
-    let chip_asset_id = AssetId::new([1u8; 32]);
-    instance
-        .methods()
-        .initialize(Bits256(*vrf_id), chip_asset_id, 10)
-        .call()
-        .await
-        .unwrap();
-    // update vrf to something that will resolve to Seven
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // trigger modifier
-    let two_vrf_number = 0; // 0 % 36 = 0 which is Two
-    vrf_instance
-        .methods()
-        .set_number(two_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // purchase triggered modifier
-    let cost = 1;
-    let roll = Roll::Six;
-    let call_params = CallParameters::new(cost, chip_asset_id, 1_000_000);
-    alice_instance
-        .methods()
-        .purchase_modifier(roll.clone(), Modifier::Burnt)
-        .call_params(call_params)
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-
-    // place bet on modified roll
-    alice_instance
-        .methods()
-        .place_bet(roll.clone(), bet.clone(), 1)
-        .call_params(CallParameters::new(1, strap_asset_id, 1_000_000))
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
-    let bet_game_id = alice_instance
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
-
-    // roll six to trigger hit
-    let six_vrf_number = 10; // 10 % 36 = 10 which is Six
-    vrf_instance
-        .methods()
-        .set_number(six_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // roll seven to end game
-    let seven_vrf_number = 19; // 22 % 36 = 22 which is Seven
-    vrf_instance
-        .methods()
-        .set_number(seven_vrf_number)
-        .call()
-        .await
-        .unwrap();
-    instance
-        .methods()
-        .roll_dice()
-        .with_contracts(&[&vrf_instance])
-        .call()
-        .await
-        .unwrap();
-
-    // when
-    alice_instance
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let lvl_2_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
-    let new_strap_sub_id = strap_to_sub_id(&lvl_2_strap);
-    let new_strap_asset_id = contract_id.asset_id(&new_strap_sub_id);
-    let expected = 1;
-    let actual = ctx
-        .alice()
-        .get_asset_balance(&new_strap_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(expected, actual);
+fn strap_asset_id(ctx: &TestContext, strap: &Strap) -> AssetId {
+    let sub_id = strap_to_sub_id(strap);
+    ctx.contract_id().asset_id(&sub_id)
 }

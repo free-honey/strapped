@@ -1,19 +1,35 @@
-use crate::vrf_types;
-use fuels::prelude::{
-    AssetConfig,
-    AssetId,
-    Contract,
-    ContractId,
-    LoadConfiguration,
-    TxPolicies,
-    WalletUnlocked,
-    WalletsConfig,
-    launch_custom_provider_and_get_wallets,
+use crate::{
+    get_contract_instance,
+    separate_contract_instance,
+    strapped_types,
+    vrf_types,
 };
+use fuels::{
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Contract,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        TxPolicies,
+        WalletUnlocked,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
+    },
+    types::Bits256,
+};
+use strapped_types::MyContract;
+use vrf_types::VRFContract;
+
+const CHIP_ASSET_BYTES: [u8; 32] = [1u8; 32];
+const DEFAULT_ROLL_FREQUENCY: u32 = 10;
+const DEFAULT_FUND_AMOUNT: u64 = 1_000_000;
 
 pub async fn get_vrf_contract_instance(
     wallet: WalletUnlocked,
-) -> (vrf_types::VRFContract<WalletUnlocked>, ContractId) {
+) -> (VRFContract<WalletUnlocked>, ContractId) {
     let id = Contract::load_from(
         "vrf-contract/out/debug/vrf-contract.bin",
         LoadConfiguration::default(),
@@ -23,7 +39,7 @@ pub async fn get_vrf_contract_instance(
     .await
     .unwrap();
 
-    let instance = vrf_types::VRFContract::new(id.clone(), wallet);
+    let instance = VRFContract::new(id.clone(), wallet);
 
     (instance, id.into())
 }
@@ -31,6 +47,11 @@ pub async fn get_vrf_contract_instance(
 pub struct TestContext {
     alice: WalletUnlocked,
     owner: WalletUnlocked,
+    contract_id: ContractId,
+    chip_asset_id: AssetId,
+    owner_instance: MyContract<WalletUnlocked>,
+    alice_instance: MyContract<WalletUnlocked>,
+    vrf_instance: VRFContract<WalletUnlocked>,
 }
 
 impl TestContext {
@@ -39,29 +60,70 @@ impl TestContext {
     }
 
     pub async fn new_with_extra_assets(extra_assets: Vec<AssetConfig>) -> Self {
+        let chip_asset_id = AssetId::from(CHIP_ASSET_BYTES);
         let mut base_assets = vec![
             AssetConfig {
                 id: AssetId::zeroed(),
-                num_coins: 1,               // Single coin (UTXO)
-                coin_amount: 1_000_000_000, // Amount per coin
+                num_coins: 1,
+                coin_amount: 1_000_000_000,
             },
             AssetConfig {
-                id: AssetId::from([1u8; 32]),
-                num_coins: 1,               // Single coin (UTXO)
-                coin_amount: 1_000_000_000, // Amount per coin
+                id: chip_asset_id,
+                num_coins: 1,
+                coin_amount: 1_000_000_000,
             },
         ];
         base_assets.extend(extra_assets);
         let mut wallets = launch_custom_provider_and_get_wallets(
-            WalletsConfig::new_multiple_assets(3 /* Three wallets */, base_assets),
+            WalletsConfig::new_multiple_assets(3, base_assets),
             None,
             None,
         )
         .await
         .unwrap();
+
         let owner = wallets.pop().unwrap();
         let alice = wallets.pop().unwrap();
-        Self { alice, owner }
+
+        let (owner_instance, contract_id) = get_contract_instance(owner.clone()).await;
+        let alice_instance =
+            separate_contract_instance(&contract_id, alice.clone()).await;
+        let (vrf_instance, vrf_contract_id) =
+            get_vrf_contract_instance(owner.clone()).await;
+
+        owner_instance
+            .methods()
+            .initialize(
+                Bits256(*vrf_contract_id),
+                chip_asset_id,
+                DEFAULT_ROLL_FREQUENCY,
+            )
+            .call()
+            .await
+            .unwrap();
+
+        owner_instance
+            .methods()
+            .fund()
+            .call_params(CallParameters::new(
+                DEFAULT_FUND_AMOUNT,
+                chip_asset_id,
+                1_000_000,
+            ))
+            .unwrap()
+            .call()
+            .await
+            .unwrap();
+
+        Self {
+            alice,
+            owner,
+            contract_id,
+            chip_asset_id,
+            owner_instance,
+            alice_instance,
+            vrf_instance,
+        }
     }
 
     pub fn alice(&self) -> WalletUnlocked {
@@ -70,6 +132,67 @@ impl TestContext {
 
     pub fn owner(&self) -> WalletUnlocked {
         self.owner.clone()
+    }
+
+    pub fn contract_id(&self) -> ContractId {
+        self.contract_id
+    }
+
+    pub fn chip_asset_id(&self) -> AssetId {
+        self.chip_asset_id
+    }
+
+    pub fn owner_contract(&self) -> MyContract<WalletUnlocked> {
+        self.owner_instance.clone()
+    }
+
+    pub fn alice_contract(&self) -> MyContract<WalletUnlocked> {
+        self.alice_instance.clone()
+    }
+
+    pub fn vrf_contract(&self) -> VRFContract<WalletUnlocked> {
+        self.vrf_instance.clone()
+    }
+
+    pub fn owner_instance(&self) -> MyContract<WalletUnlocked> {
+        self.owner_contract()
+    }
+
+    pub fn alice_instance(&self) -> MyContract<WalletUnlocked> {
+        self.alice_contract()
+    }
+
+    pub fn vrf_instance(&self) -> VRFContract<WalletUnlocked> {
+        self.vrf_contract()
+    }
+
+    pub async fn advance_and_roll(&self, vrf_number: u64) {
+        if let Some(next_height) = self
+            .owner_instance
+            .methods()
+            .next_roll_height()
+            .simulate(Execution::StateReadOnly)
+            .await
+            .unwrap()
+            .value
+        {
+            self.advance_to_block_height(next_height).await;
+        }
+
+        self.vrf_instance
+            .methods()
+            .set_number(vrf_number)
+            .call()
+            .await
+            .unwrap();
+
+        self.owner_instance
+            .methods()
+            .roll_dice()
+            .with_contracts(&[&self.vrf_instance])
+            .call()
+            .await
+            .unwrap();
     }
 
     pub async fn advance_to_block_height(&self, height: u32) {
@@ -84,13 +207,8 @@ impl TestContext {
 }
 
 pub async fn get_wallet() -> WalletUnlocked {
-    // Launch a local network and deploy the contract
     let mut wallets = launch_custom_provider_and_get_wallets(
-        WalletsConfig::new(
-            Some(1),             // Single wallet
-            Some(1),             // Single coin (UTXO)
-            Some(1_000_000_000), // Amount per coin
-        ),
+        WalletsConfig::new(Some(1), Some(1), Some(1_000_000_000)),
         None,
         None,
     )
