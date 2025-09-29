@@ -98,6 +98,8 @@ fn run_claim_rewards_property(
 #[tokio::test]
 async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
     let ctx = TestContext::new().await;
+
+    // given
     let chip_asset_id = ctx.chip_asset_id();
 
     let bet_amount = 100;
@@ -120,6 +122,7 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
 
     let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -128,8 +131,8 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .await
         .unwrap();
 
+    // then
     let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-
     let expected = balance_before + bet_amount * 2 * 3;
     assert_eq!(balance_after, expected);
 }
@@ -137,6 +140,8 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
 #[tokio::test]
 async fn claim_rewards__cannot_claim_rewards_for_current_game() {
     let ctx = TestContext::new().await;
+
+    // given
     let chip_asset_id = ctx.chip_asset_id();
 
     place_chip_bet(&ctx, Roll::Six, 100).await;
@@ -154,6 +159,7 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
 
     let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
 
+    // when
     let result = ctx
         .alice_contract()
         .methods()
@@ -162,8 +168,8 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
         .call()
         .await;
 
+    // then
     assert!(result.is_err());
-
     let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
     assert_eq!(balance_after, balance_before);
 }
@@ -171,12 +177,15 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
 #[tokio::test]
 async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
     let ctx = TestContext::new().await;
+
+    // given
     let chip_asset_id = ctx.chip_asset_id();
 
     ctx.advance_and_roll(10).await; // roll happens before bet
 
     place_chip_bet(&ctx, Roll::Six, 100).await;
 
+    // when
     let bet_game_id = ctx
         .alice_contract()
         .methods()
@@ -198,6 +207,7 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
         .await
         .unwrap_err();
 
+    // then
     let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
     assert_eq!(balance_before, balance_after);
 }
@@ -205,6 +215,8 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
 #[tokio::test]
 async fn claim_rewards__cannot_claim_rewards_twice() {
     let ctx = TestContext::new().await;
+
+    // given
     let chip_asset_id = ctx.chip_asset_id();
 
     place_chip_bet(&ctx, Roll::Six, 100).await;
@@ -221,6 +233,7 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
     ctx.advance_and_roll(10).await;
     ctx.advance_and_roll(19).await;
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -240,8 +253,8 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
         .call()
         .await;
 
+    // then
     assert!(result.is_err());
-
     let balance_after_second =
         ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
     assert_eq!(balance_after_first, balance_after_second);
@@ -250,9 +263,9 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
 #[tokio::test]
 async fn claim_rewards__can_receive_strap_token() {
     let ctx = TestContext::new().await;
-
     ctx.advance_and_roll(19).await; // seed strap rewards for roll eight
 
+    // given
     place_chip_bet(&ctx, Roll::Eight, 100).await;
 
     let bet_game_id = ctx
@@ -275,6 +288,7 @@ async fn claim_rewards__can_receive_strap_token() {
         .await
         .unwrap();
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -283,12 +297,12 @@ async fn claim_rewards__can_receive_strap_token() {
         .await
         .unwrap();
 
+    // then
     let balance_after = ctx
         .alice()
         .get_asset_balance(&strap_asset_id)
         .await
         .unwrap();
-
     assert_eq!(balance_after, balance_before + 1);
 }
 
@@ -298,6 +312,7 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
 
     ctx.advance_and_roll(19).await; // seed strap rewards
 
+    // given
     place_chip_bet(&ctx, Roll::Eight, 100).await;
     place_chip_bet(&ctx, Roll::Eight, 100).await;
 
@@ -321,6 +336,7 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .await
         .unwrap();
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -329,17 +345,18 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .await
         .unwrap();
 
+    // then
     let balance_after = ctx
         .alice()
         .get_asset_balance(&strap_asset_id)
         .await
         .unwrap();
-
     assert_eq!(balance_after, balance_before + 1);
 }
 
 #[tokio::test]
 async fn claim_rewards__bet_straps_are_levelled_up() {
+    // given
     let base_contract_id = contract_id();
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
@@ -365,6 +382,7 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
     ctx.advance_and_roll(10).await; // Six
     ctx.advance_and_roll(19).await; // Seven to end game
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -373,6 +391,7 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
         .await
         .unwrap();
 
+    // then
     let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
     let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
     let balance = ctx
@@ -385,6 +404,7 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
 
 #[tokio::test]
 async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
+    // given
     let base_contract_id = contract_id();
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
@@ -411,6 +431,7 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
     ctx.advance_and_roll(10).await;
     ctx.advance_and_roll(19).await;
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -419,6 +440,7 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
         .await
         .unwrap();
 
+    // then
     let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
     let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
     let balance = ctx
@@ -431,6 +453,7 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
 
 #[tokio::test]
 async fn claim_rewards__includes_modifier_in_strap_level_up() {
+    // given
     let base_contract_id = contract_id();
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
@@ -468,6 +491,7 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
     ctx.advance_and_roll(10).await; // hit six
     ctx.advance_and_roll(19).await; // end game
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, vec![(Roll::Six, Modifier::Burnt)])
@@ -476,6 +500,7 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
         .await
         .unwrap();
 
+    // then
     let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Burnt);
     let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
     let balance = ctx
@@ -488,6 +513,7 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
 
 #[tokio::test]
 async fn claim_rewards__does_not_include_modifier_if_not_specified() {
+    // given
     let base_contract_id = contract_id();
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
@@ -525,6 +551,7 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     ctx.advance_and_roll(10).await;
     ctx.advance_and_roll(19).await;
 
+    // when
     ctx.alice_contract()
         .methods()
         .claim_rewards(bet_game_id, Vec::new())
@@ -533,6 +560,7 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .await
         .unwrap();
 
+    // then
     let leveled_plain = Strap::new(2, StrapKind::Shirt, Modifier::Nothing);
     let leveled_plain_asset = strap_asset_id(&ctx, &leveled_plain);
     let plain_balance = ctx
