@@ -1,42 +1,36 @@
 use crate::ui;
-use color_eyre::eyre::{
-    Result,
-    eyre,
-};
+use color_eyre::eyre::{Result, eyre};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig,
-        AssetId,
-        Bech32ContractId,
-        CallParameters,
-        Contract,
-        ContractId,
-        Execution,
-        LoadConfiguration,
-        Provider,
-        TxPolicies,
-        VariableOutputPolicy,
-        WalletUnlocked,
-        WalletsConfig,
-        launch_custom_provider_and_get_wallets,
+        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
+        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
+        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
     },
     tx::ContractIdExt,
     types::Bits256,
 };
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
+    collections::{HashMap, HashSet},
     time::Duration,
 };
 use strapped_contract::{
-    strapped_types as strapped,
-    vrf_types as vrf,
+    pseudo_vrf_types as pseudo_vrf, strapped_types as strapped, vrf_types as fake_vrf,
 };
 use tokio::time;
 use tracing::error;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VrfMode {
+    Fake,
+    Pseudo,
+}
+
+#[derive(Clone)]
+pub enum VrfClient {
+    Fake(fake_vrf::FakeVRFContract<WalletUnlocked>),
+    Pseudo(pseudo_vrf::PseudoVRFContract<WalletUnlocked>),
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum WalletKind {
@@ -66,6 +60,7 @@ pub struct AppSnapshot {
     pub chip_balance: u64,
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
+    pub vrf_mode: VrfMode,
     pub status: String,
     pub cells: Vec<RollCell>,
     pub previous_games: Vec<PreviousGameSummary>,
@@ -75,7 +70,8 @@ pub struct AppSnapshot {
 pub struct Clients {
     pub owner: strapped::MyContract<WalletUnlocked>,
     pub alice: strapped::MyContract<WalletUnlocked>,
-    pub vrf: vrf::VRFContract<WalletUnlocked>,
+    pub vrf: VrfClient,
+    pub vrf_mode: VrfMode,
     pub contract_id: ContractId,
     pub chip_asset_id: AssetId,
 }
@@ -89,7 +85,7 @@ impl Clients {
     }
 }
 
-pub async fn init_local() -> Result<Clients> {
+pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
     // Mirror TestContext: base asset + chip asset for two wallets.
     let base_asset = AssetConfig {
         id: AssetId::zeroed(),
@@ -122,26 +118,32 @@ pub async fn init_local() -> Result<Clients> {
     let owner_instance = strapped::MyContract::new(strapped_id.clone(), owner.clone());
     let alice_instance = strapped::MyContract::new(strapped_id.clone(), alice.clone());
 
-    // Deploy VRF and connect
-    let vrf_bin = "vrf-contract/out/debug/vrf-contract.bin";
-    let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
-        .deploy(&owner, TxPolicies::default())
-        .await?;
-    let vrf_instance = vrf::VRFContract::new(vrf_id.clone(), owner.clone());
-
-    let vrf_contract_id: ContractId = vrf_id.clone().into();
-
-    // Initialize VRF to a known value so first roll matches the UI
-    vrf_instance.methods().set_number(19).call().await?;
+    let (vrf_client, vrf_contract_id): (VrfClient, ContractId) = match vrf_mode {
+        VrfMode::Fake => {
+            let vrf_bin = "fake-vrf-contract/out/debug/fake-vrf-contract.bin";
+            let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
+                .deploy(&owner, TxPolicies::default())
+                .await?;
+            let instance = fake_vrf::FakeVRFContract::new(vrf_id.clone(), owner.clone());
+            instance.methods().set_number(19).call().await?;
+            (VrfClient::Fake(instance), vrf_id.into())
+        }
+        VrfMode::Pseudo => {
+            let vrf_bin = "pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin";
+            let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
+                .deploy(&owner, TxPolicies::default())
+                .await?;
+            let instance =
+                pseudo_vrf::PseudoVRFContract::new(vrf_id.clone(), owner.clone());
+            instance.methods().set_entropy(19).call().await?;
+            (VrfClient::Pseudo(instance), vrf_id.into())
+        }
+    };
 
     // Initialize strapped contract
     owner_instance
         .methods()
-        .initialize(
-            Bits256(*vrf_contract_id),
-            chip_asset_id,
-            10, // roll every 10 seconds
-        )
+        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
         .call()
         .await?;
 
@@ -157,7 +159,8 @@ pub async fn init_local() -> Result<Clients> {
     Ok(Clients {
         owner: owner_instance,
         alice: alice_instance,
-        vrf: vrf_instance,
+        vrf: vrf_client,
+        vrf_mode,
         contract_id,
         chip_asset_id,
     })
@@ -214,13 +217,17 @@ impl AppController {
         }
         Ok(out)
     }
-    pub async fn new_local() -> Result<Self> {
-        let clients = init_local().await?;
+    pub async fn new_local(vrf_mode: VrfMode) -> Result<Self> {
+        let clients = init_local(vrf_mode).await?;
+        let initial_vrf = match vrf_mode {
+            VrfMode::Fake => 19,
+            VrfMode::Pseudo => 0,
+        };
         Ok(Self {
             clients,
             wallet: WalletKind::Alice,
             selected_roll: strapped::Roll::Six,
-            vrf_number: 19,
+            vrf_number: initial_vrf,
             status: String::from("Ready"),
             last_seen_game_id_owner: None,
             last_seen_game_id_alice: None,
@@ -497,6 +504,7 @@ impl AppController {
             chip_balance,
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
+            vrf_mode: self.clients.vrf_mode,
             status: self.status.clone(),
             cells,
             previous_games,
@@ -586,10 +594,17 @@ impl AppController {
     }
 
     pub async fn set_vrf_number(&mut self, n: u64) -> Result<()> {
-        // Only owner wallet holds the VRF instance (same provider though).
-        self.clients.vrf.methods().set_number(n).call().await?;
-        self.vrf_number = n;
-        self.status = format!("VRF set to {}", n);
+        match &self.clients.vrf {
+            VrfClient::Fake(vrf) => {
+                vrf.methods().set_number(n).call().await?;
+                self.vrf_number = n;
+                self.status = format!("VRF set to {}", n);
+            }
+            VrfClient::Pseudo(_) => {
+                self.status =
+                    String::from("Pseudo VRF mode does not support manual adjustment");
+            }
+        }
         Ok(())
     }
 
@@ -620,13 +635,26 @@ impl AppController {
                 .unwrap();
         }
         // Roll using owner instance but allow any wallet to trigger.
-        self.clients
-            .owner
-            .methods()
-            .roll_dice()
-            .with_contracts(&[&self.clients.vrf])
-            .call()
-            .await?;
+        match &self.clients.vrf {
+            VrfClient::Fake(vrf) => {
+                self.clients
+                    .owner
+                    .methods()
+                    .roll_dice()
+                    .with_contracts(&[vrf])
+                    .call()
+                    .await?;
+            }
+            VrfClient::Pseudo(vrf) => {
+                self.clients
+                    .owner
+                    .methods()
+                    .roll_dice()
+                    .with_contracts(&[vrf])
+                    .call()
+                    .await?;
+            }
+        }
         self.status = String::from("Rolled dice");
         Ok(())
     }
@@ -934,8 +962,8 @@ struct SharedGame {
     modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
 }
 
-pub async fn run_app() -> Result<()> {
-    let mut controller = AppController::new_local().await?;
+pub async fn run_app(vrf_mode: VrfMode) -> Result<()> {
+    let mut controller = AppController::new_local(vrf_mode).await?;
     let mut ui_state = ui::UiState::default();
 
     // UI bootstrap

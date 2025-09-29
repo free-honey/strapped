@@ -1,0 +1,17 @@
+[[package]]
+name = "fake-vrf-contract"
+source = "member"
+dependencies = [
+    "std",
+    "vrf_abi",
+]
+
+[[package]]
+name = "std"
+version = "0.69.1"
+source = "registry+std?0.69.1#QmbPunScay4xpfHKpxQ71dFKXSiyJuPP8P8YhgX5Dkmzm9!"
+
+[[package]]
+name = "vrf_abi"
+source = "path+from-root-160DEE0BDEE2DBA3"
+dependencies = ["std"]

@@ -19,8 +19,17 @@ pub mod vrf_types {
     use fuels::macros::abigen;
 
     abigen!(Contract(
-        name = "VRFContract",
-        abi = "vrf-contract/out/debug/vrf-contract-abi.json"
+        name = "FakeVRFContract",
+        abi = "fake-vrf-contract/out/debug/fake-vrf-contract-abi.json"
+    ));
+}
+
+pub mod pseudo_vrf_types {
+    use fuels::macros::abigen;
+
+    abigen!(Contract(
+        name = "PseudoVRFContract",
+        abi = "pseudo-vrf-contract/out/debug/pseudo-vrf-contract-abi.json"
     ));
 }
 
