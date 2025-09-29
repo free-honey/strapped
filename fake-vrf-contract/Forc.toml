@@ -2,7 +2,7 @@
 authors = ["human"]
 entry = "main.sw"
 license = "Apache-2.0"
-name = "vrf-contract"
+name = "fake-vrf-contract"
 
 [dependencies]
 vrf_abi = { path = "../vrf_abi" } 

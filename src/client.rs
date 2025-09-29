@@ -75,7 +75,7 @@ pub struct AppSnapshot {
 pub struct Clients {
     pub owner: strapped::MyContract<WalletUnlocked>,
     pub alice: strapped::MyContract<WalletUnlocked>,
-    pub vrf: vrf::VRFContract<WalletUnlocked>,
+    pub vrf: vrf::FakeVRFContract<WalletUnlocked>,
     pub contract_id: ContractId,
     pub chip_asset_id: AssetId,
 }
@@ -123,11 +123,11 @@ pub async fn init_local() -> Result<Clients> {
     let alice_instance = strapped::MyContract::new(strapped_id.clone(), alice.clone());
 
     // Deploy VRF and connect
-    let vrf_bin = "vrf-contract/out/debug/vrf-contract.bin";
+    let vrf_bin = "fake-vrf-contract/out/debug/fake-vrf-contract.bin";
     let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
         .deploy(&owner, TxPolicies::default())
         .await?;
-    let vrf_instance = vrf::VRFContract::new(vrf_id.clone(), owner.clone());
+    let vrf_instance = vrf::FakeVRFContract::new(vrf_id.clone(), owner.clone());
 
     let vrf_contract_id: ContractId = vrf_id.clone().into();
 

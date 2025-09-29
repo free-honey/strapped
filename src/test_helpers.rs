@@ -21,7 +21,7 @@ use fuels::{
     types::Bits256,
 };
 use strapped_types::MyContract;
-use vrf_types::VRFContract;
+use vrf_types::FakeVRFContract;
 
 const CHIP_ASSET_BYTES: [u8; 32] = [1u8; 32];
 const DEFAULT_ROLL_FREQUENCY: u32 = 10;
@@ -29,9 +29,9 @@ const DEFAULT_FUND_AMOUNT: u64 = 1_000_000;
 
 pub async fn get_vrf_contract_instance(
     wallet: WalletUnlocked,
-) -> (VRFContract<WalletUnlocked>, ContractId) {
+) -> (FakeVRFContract<WalletUnlocked>, ContractId) {
     let id = Contract::load_from(
-        "vrf-contract/out/debug/vrf-contract.bin",
+        "fake-vrf-contract/out/debug/vrf-contract.bin",
         LoadConfiguration::default(),
     )
     .unwrap()
@@ -39,7 +39,7 @@ pub async fn get_vrf_contract_instance(
     .await
     .unwrap();
 
-    let instance = VRFContract::new(id.clone(), wallet);
+    let instance = FakeVRFContract::new(id.clone(), wallet);
 
     (instance, id.into())
 }
@@ -51,7 +51,7 @@ pub struct TestContext {
     chip_asset_id: AssetId,
     owner_instance: MyContract<WalletUnlocked>,
     alice_instance: MyContract<WalletUnlocked>,
-    vrf_instance: VRFContract<WalletUnlocked>,
+    vrf_instance: FakeVRFContract<WalletUnlocked>,
 }
 
 impl TestContext {
@@ -150,7 +150,7 @@ impl TestContext {
         self.alice_instance.clone()
     }
 
-    pub fn vrf_contract(&self) -> VRFContract<WalletUnlocked> {
+    pub fn vrf_contract(&self) -> FakeVRFContract<WalletUnlocked> {
         self.vrf_instance.clone()
     }
 
@@ -162,7 +162,7 @@ impl TestContext {
         self.alice_contract()
     }
 
-    pub fn vrf_instance(&self) -> VRFContract<WalletUnlocked> {
+    pub fn vrf_instance(&self) -> FakeVRFContract<WalletUnlocked> {
         self.vrf_contract()
     }
 

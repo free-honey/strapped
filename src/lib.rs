@@ -1,6 +1,16 @@
-use crate::strapped_types::{Modifier, Strap, StrapKind};
+use crate::strapped_types::{
+    Modifier,
+    Strap,
+    StrapKind,
+};
 use fuels::{
-    prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked},
+    prelude::{
+        Contract,
+        ContractId,
+        LoadConfiguration,
+        TxPolicies,
+        WalletUnlocked,
+    },
     types::Bytes32,
 };
 
@@ -19,8 +29,8 @@ pub mod vrf_types {
     use fuels::macros::abigen;
 
     abigen!(Contract(
-        name = "VRFContract",
-        abi = "vrf-contract/out/debug/vrf-contract-abi.json"
+        name = "FakeVRFContract",
+        abi = "fake-vrf-contract/out/debug/fake-vrf-contract-abi.json"
     ));
 }
 

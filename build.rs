@@ -21,7 +21,7 @@ fn build_strapped() {
 }
 
 fn build_vrf() {
-    const PATH: &str = "vrf-contract/";
+    const PATH: &str = "fake-vrf-contract/";
     // run forc build command
     let output = std::process::Command::new("forc")
         .arg("build")
