@@ -1,10 +1,25 @@
-use crate::client::{AppSnapshot, PreviousGameSummary, VrfMode};
+use crate::client::{
+    AppSnapshot,
+    PreviousGameSummary,
+    VrfMode,
+};
 use color_eyre::eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode},
+    event::{
+        self,
+        Event,
+        KeyCode,
+        KeyEventKind,
+    },
+    terminal::{
+        disable_raw_mode,
+        enable_raw_mode,
+    },
 };
-use ratatui::{prelude::*, widgets::*};
+use ratatui::{
+    prelude::*,
+    widgets::*,
+};
 use std::io::stdout;
 use strapped_contract::strapped_types as strapped;
 
@@ -736,17 +751,29 @@ fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 }
 
 fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
+    let next_roll_text = match snap.next_roll_height {
+        Some(h) => h.to_string(),
+        None => String::from("N/A"),
+    };
     let text = match snap.vrf_mode {
         VrfMode::Fake => {
             let vrf_roll = vrf_to_roll(snap.vrf_number);
             format!(
-                "Game: {} | Pot: {} | Fake VRF: {} ({:?})",
-                snap.current_game_id, snap.pot_balance, snap.vrf_number, vrf_roll
+                "Game: {} | Pot: {} | Fake VRF: {} ({:?}) | Next Roll Height: {} | Current Block Height: {}",
+                snap.current_game_id,
+                snap.pot_balance,
+                snap.vrf_number,
+                vrf_roll,
+                next_roll_text.as_str(),
+                snap.current_block_height
             )
         }
         VrfMode::Pseudo => format!(
-            "Game: {} | Pot: {} | Pseudo VRF Mode",
-            snap.current_game_id, snap.pot_balance
+            "Game: {} | Pot: {} | Pseudo VRF Mode | Next Roll Height: {} | Current Block Height: {}",
+            snap.current_game_id,
+            snap.pot_balance,
+            next_roll_text.as_str(),
+            snap.current_block_height
         ),
     };
     let widget =

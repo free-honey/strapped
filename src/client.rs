@@ -1,21 +1,41 @@
 use crate::ui;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{
+    Result,
+    eyre,
+};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
-        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
-        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
+        AssetConfig,
+        AssetId,
+        Bech32ContractId,
+        CallParameters,
+        Contract,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        Provider,
+        TxPolicies,
+        VariableOutputPolicy,
+        WalletUnlocked,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
     },
     tx::ContractIdExt,
     types::Bits256,
 };
+use rand::Rng;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{
+        HashMap,
+        HashSet,
+    },
     time::Duration,
 };
 use strapped_contract::{
-    pseudo_vrf_types as pseudo_vrf, strapped_types as strapped, vrf_types as fake_vrf,
+    pseudo_vrf_types as pseudo_vrf,
+    strapped_types as strapped,
+    vrf_types as fake_vrf,
 };
 use tokio::time;
 use tracing::error;
@@ -61,6 +81,8 @@ pub struct AppSnapshot {
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub vrf_mode: VrfMode,
+    pub current_block_height: u32,
+    pub next_roll_height: Option<u32>,
     pub status: String,
     pub cells: Vec<RollCell>,
     pub previous_games: Vec<PreviousGameSummary>,
@@ -135,7 +157,9 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
                 .await?;
             let instance =
                 pseudo_vrf::PseudoVRFContract::new(vrf_id.clone(), owner.clone());
-            instance.methods().set_entropy(19).call().await?;
+            let mut random_gen = rand::rng();
+            let entropy = random_gen.random();
+            instance.methods().set_entropy(entropy).call().await?;
             (VrfClient::Pseudo(instance), vrf_id.into())
         }
     };
@@ -253,6 +277,16 @@ impl AppController {
             .provider()
             .ok_or_else(|| eyre!("no provider"))?
             .clone();
+
+        let current_block_height = provider.latest_block_height().await?;
+        let next_roll_height = self
+            .clients
+            .owner
+            .methods()
+            .next_roll_height()
+            .simulate(Execution::StateReadOnly)
+            .await?
+            .value;
 
         let current_game_id = me
             .methods()
@@ -505,6 +539,8 @@ impl AppController {
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
             vrf_mode: self.clients.vrf_mode,
+            current_block_height,
+            next_roll_height,
             status: self.status.clone(),
             cells,
             previous_games,
