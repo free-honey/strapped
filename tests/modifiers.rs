@@ -2,18 +2,27 @@
 
 use fuels::prelude::CallParameters;
 use strapped_contract::{
-    strapped_types::{Modifier, Roll},
+    strapped_types::{
+        Modifier,
+        Roll,
+    },
     test_helpers::TestContext,
 };
+
+pub const TWO_VRF_NUMBER: u64 = 0;
+pub const SIX_VRF_NUMBER: u64 = 10;
+pub const SEVEN_VRF_NUMBER: u64 = 19;
 
 #[tokio::test]
 async fn purchase_modifier__activates_modifier_for_current_game() {
     let ctx = TestContext::new().await;
     let chip_asset_id = ctx.chip_asset_id();
 
-    ctx.advance_and_roll(19).await; // Seven -> seed modifiers
-    ctx.advance_and_roll(0).await; // Two -> trigger Burnt modifier
+    // given
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven -> seed modifiers
+    ctx.advance_and_roll(TWO_VRF_NUMBER).await; // Two -> trigger Burnt modifier
 
+    // when
     ctx.alice_instance()
         .methods()
         .purchase_modifier(Roll::Six, Modifier::Burnt)
@@ -23,6 +32,7 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
         .await
         .unwrap();
 
+    // then
     let actual_active_modifier = ctx
         .owner_instance()
         .methods()

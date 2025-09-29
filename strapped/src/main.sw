@@ -130,14 +130,6 @@ abi Strapped {
     #[storage(read)]
     fn roll_history() -> Vec<Roll>;
 
-    // /// Set the VRF contract ID
-    // #[storage(write)]
-    // fn set_vrf_contract_id(id: b256);
-
-    // /// Set the chip asset ID
-    // #[storage(write)]
-    // fn set_chip_asset_id(id: AssetId);
-
     /// Place a bet on a specific roll with a specific bet type and amount
     #[storage(read, write), payable]
     fn place_bet(roll: Roll, bet: Bet, amount: u64);
@@ -180,15 +172,6 @@ abi Strapped {
 }
 
 impl Strapped for Contract {
-    // #[storage(write)]
-    // fn set_vrf_contract_id(id: b256) {
-    //     storage.vrf_contract_id.write(id);
-    // }
-
-    // #[storage(write)]
-    // fn set_chip_asset_id(id: AssetId) {
-    //     storage.chip_asset_id.write(id);
-    // }
     #[storage(write)]
     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32) {
         storage.vrf_contract_id.write(vrf_contract_id);

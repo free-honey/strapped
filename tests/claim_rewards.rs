@@ -27,6 +27,9 @@ use strapped_contract::{
 };
 use tokio::runtime::Runtime;
 
+pub const SIX_VRF_NUMBER: u64 = 10;
+pub const SEVEN_VRF_NUMBER: u64 = 19;
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
     #[test]
@@ -70,7 +73,6 @@ fn run_claim_rewards_property(
         ctx.advance_and_roll(vrf_number).await;
         // roll seven to end game if not already rolled
         if target_roll != Roll::Seven {
-            const SEVEN_VRF_NUMBER: u64 = 19;
             ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
         }
 
@@ -115,10 +117,10 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(19).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
 
@@ -155,7 +157,7 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
 
     let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
 
@@ -181,7 +183,7 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
     // given
     let chip_asset_id = ctx.chip_asset_id();
 
-    ctx.advance_and_roll(10).await; // roll happens before bet
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await; // roll happens before bet
 
     place_chip_bet(&ctx, Roll::Six, 100).await;
 
@@ -195,7 +197,7 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(19).await; // end game
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
 
     let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
 
@@ -230,8 +232,8 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(19).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     // when
     ctx.alice_contract()
@@ -263,7 +265,7 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
 #[tokio::test]
 async fn claim_rewards__can_receive_strap_token() {
     let ctx = TestContext::new().await;
-    ctx.advance_and_roll(19).await; // seed strap rewards for roll eight
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards for roll eight
 
     // given
     place_chip_bet(&ctx, Roll::Eight, 100).await;
@@ -278,7 +280,7 @@ async fn claim_rewards__can_receive_strap_token() {
         .value;
 
     ctx.advance_and_roll(25).await; // Eight
-    ctx.advance_and_roll(19).await; // Seven to end game
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
     let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let strap_asset_id = strap_asset_id(&ctx, &strap);
@@ -310,7 +312,7 @@ async fn claim_rewards__can_receive_strap_token() {
 async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
     let ctx = TestContext::new().await;
 
-    ctx.advance_and_roll(19).await; // seed strap rewards
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards
 
     // given
     place_chip_bet(&ctx, Roll::Eight, 100).await;
@@ -326,7 +328,7 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .value;
 
     ctx.advance_and_roll(25).await; // Eight
-    ctx.advance_and_roll(19).await; // Seven to end game
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
     let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let strap_asset_id = strap_asset_id(&ctx, &strap);
@@ -379,8 +381,8 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await; // Six
-    ctx.advance_and_roll(19).await; // Seven to end game
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await; // Six
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
     // when
     ctx.alice_contract()
@@ -427,9 +429,9 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(19).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     // when
     ctx.alice_contract()
@@ -465,7 +467,7 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
     }])
     .await;
 
-    ctx.advance_and_roll(19).await; // seed modifiers
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
     ctx.advance_and_roll(0).await; // trigger Burnt modifier
 
     ctx.alice_contract()
@@ -488,8 +490,8 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await; // hit six
-    ctx.advance_and_roll(19).await; // end game
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await; // hit six
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
 
     // when
     ctx.alice_contract()
@@ -525,7 +527,7 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     }])
     .await;
 
-    ctx.advance_and_roll(19).await; // seed modifiers
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
     ctx.advance_and_roll(0).await; // trigger Burnt modifier
 
     ctx.alice_contract()
@@ -548,8 +550,8 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(10).await;
-    ctx.advance_and_roll(19).await;
+    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     // when
     ctx.alice_contract()

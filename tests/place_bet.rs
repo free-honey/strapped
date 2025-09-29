@@ -24,9 +24,12 @@ use strapped_contract::{
 async fn place_bet__adds_bets_to_list() {
     let ctx = TestContext::new().await;
     let chip_asset_id = ctx.chip_asset_id();
+
+    // given
     let roll = Roll::Six;
     let bet_amount = 100;
 
+    // when
     ctx.alice_instance()
         .methods()
         .place_bet(roll.clone(), Bet::Chip, bet_amount)
@@ -36,6 +39,7 @@ async fn place_bet__adds_bets_to_list() {
         .await
         .unwrap();
 
+    // then
     let actual = ctx
         .alice_instance()
         .methods()
@@ -51,9 +55,11 @@ async fn place_bet__adds_bets_to_list() {
 #[tokio::test]
 async fn place_bet__fails_if_funds_not_transferred() {
     let ctx = TestContext::new().await;
+    // given
     let roll = Roll::Six;
     let bet_amount = 100;
 
+    // when
     let result = ctx
         .alice_instance()
         .methods()
@@ -61,6 +67,7 @@ async fn place_bet__fails_if_funds_not_transferred() {
         .call()
         .await;
 
+    // then
     assert!(result.is_err());
 }
 
@@ -78,10 +85,12 @@ async fn place_bet__can_bet_strap() {
     }])
     .await;
 
+    // given
     let strap_asset_id = ctx.contract_id().asset_id(&strap_sub_id);
     let roll = Roll::Six;
     let bet_amount = 1;
 
+    // when
     ctx.alice_instance()
         .methods()
         .place_bet(roll.clone(), Bet::Strap(strap.clone()), bet_amount)
@@ -91,6 +100,7 @@ async fn place_bet__can_bet_strap() {
         .await
         .unwrap();
 
+    // then
     let actual = ctx
         .alice_instance()
         .methods()
@@ -111,6 +121,7 @@ async fn place_bet__fails_if_does_not_include_strap() {
 
     let ctx = TestContext::new().await;
 
+    // when
     let result = ctx
         .alice_instance()
         .methods()
@@ -118,5 +129,6 @@ async fn place_bet__fails_if_does_not_include_strap() {
         .call()
         .await;
 
+    // then
     assert!(result.is_err());
 }

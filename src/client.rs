@@ -130,23 +130,11 @@ pub async fn init_local() -> Result<Clients> {
     let vrf_instance = vrf::VRFContract::new(vrf_id.clone(), owner.clone());
 
     let vrf_contract_id: ContractId = vrf_id.clone().into();
-    // owner_instance
-    //     .methods()
-    //     .set_vrf_contract_id(Bits256(*vrf_contract_id))
-    //     .call()
-    //     .await?;
 
     // Initialize VRF to a known value so first roll matches the UI
     vrf_instance.methods().set_number(19).call().await?;
 
-    // // Set chip asset id on contract
-    // owner_instance
-    //     .methods()
-    //     .set_chip_asset_id(chip_asset_id)
-    //     .call()
-    //     .await?;
-    //     #[storage(write)]
-    //     fn initialize(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32);
+    // Initialize strapped contract
     owner_instance
         .methods()
         .initialize(
@@ -614,7 +602,8 @@ impl AppController {
             .next_roll_height()
             .simulate(Execution::StateReadOnly)
             .await?
-            .value.unwrap();
+            .value
+            .unwrap();
         let provider = self
             .clients
             .owner
