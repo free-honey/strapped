@@ -32,8 +32,6 @@ From the base directory.
 
 Many values in the Sway contract are currently hard-coded to enable simpler testing, but those will be improved over time. 
 
-To get the best experience, place bets on Six and Eight only.
-
 To populate the game and the shop, roll a seven. This should just require pressing `r` after starting up.
 
 
