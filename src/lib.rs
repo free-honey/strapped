@@ -110,6 +110,8 @@ pub fn strap_to_sub_id(strap: &Strap) -> Bytes32 {
         Modifier::Moldy => 7u8,
         Modifier::Starched => 8u8,
         Modifier::Evil => 9u8,
+        Modifier::Groovy => 10u8,
+        Modifier::Delicate => 11u8,
     };
     let mut sub_id = [0u8; 32];
     sub_id[0] = level_bytes;

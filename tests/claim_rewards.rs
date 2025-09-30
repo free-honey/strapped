@@ -34,67 +34,68 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
     #[test]
     fn claim_rewards__adds_chips_to_wallet((vrf_number, bet_amount) in (0u64..36, 1u64..=1_000u64)) {
-        run_claim_rewards_property(vrf_number, bet_amount).unwrap();
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            _claim_rewards__adds_chips_to_wallet(vrf_number, bet_amount).await.unwrap()
+        });
     }
 }
 
-fn run_claim_rewards_property(
+async fn _claim_rewards__adds_chips_to_wallet(
     vrf_number: u64,
     bet_amount: u64,
 ) -> Result<(), TestCaseError> {
-    Runtime::new().unwrap().block_on(async move {
-        let ctx = TestContext::new().await;
+    let ctx = TestContext::new().await;
 
-        // given
-        let chip_asset_id = ctx.chip_asset_id();
-        let payout_config = ctx
-            .owner_contract()
+    // given
+    let chip_asset_id = ctx.chip_asset_id();
+    let payout_config = ctx
+        .owner_contract()
+        .methods()
+        .payouts()
+        .call()
+        .await
+        .unwrap()
+        .value;
+
+    let target_roll = roll_from_vrf_bucket(vrf_number);
+    let expected_multiplier = multiplier_for_roll(&payout_config, &target_roll);
+
+    place_chip_bet(&ctx, target_roll.clone(), bet_amount).await;
+
+    let bet_game_id = ctx
+        .alice_contract()
+        .methods()
+        .current_game_id()
+        .simulate(Execution::StateReadOnly)
+        .await
+        .unwrap()
+        .value;
+
+    ctx.advance_and_roll(vrf_number).await;
+    // roll seven to end game if not already rolled
+    if target_roll != Roll::Seven {
+        ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
+    }
+
+    let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+
+    // when
+    if expected_multiplier != 0 {
+        ctx.alice_contract()
             .methods()
-            .payouts()
+            .claim_rewards(bet_game_id, Vec::new())
+            .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call()
             .await
-            .unwrap()
-            .value;
+            .unwrap();
+    }
 
-        let target_roll = roll_from_vrf_bucket(vrf_number);
-        let expected_multiplier = multiplier_for_roll(&payout_config, &target_roll);
-
-        place_chip_bet(&ctx, target_roll.clone(), bet_amount).await;
-
-        let bet_game_id = ctx
-            .alice_contract()
-            .methods()
-            .current_game_id()
-            .simulate(Execution::StateReadOnly)
-            .await
-            .unwrap()
-            .value;
-
-        ctx.advance_and_roll(vrf_number).await;
-        // roll seven to end game if not already rolled
-        if target_roll != Roll::Seven {
-            ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
-        }
-
-        let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-
-        // when
-        if expected_multiplier != 0 {
-            ctx.alice_contract()
-                .methods()
-                .claim_rewards(bet_game_id, Vec::new())
-                .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
-                .call()
-                .await
-                .unwrap();
-        }
-
-        // then
-        let expected = balance_before + bet_amount * expected_multiplier;
-        let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
-        prop_assert_eq!(expected, actual);
-        Ok(())
-    })
+    // then
+    let expected = balance_before + bet_amount * expected_multiplier;
+    let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    prop_assert_eq!(expected, actual);
+    Ok(())
 }
 
 #[tokio::test]
@@ -455,8 +456,18 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
     assert_eq!(balance, 1);
 }
 
-#[tokio::test]
-async fn claim_rewards__includes_modifier_in_strap_level_up() {
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
+    #[test]
+    fn claim_rewards__includes_modifier_in_strap_level_up(seven_mult in 1u64..=1000u64) {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            _claim_rewards__includes_modifier_in_strap_level_up(seven_mult).await;
+        });
+    }
+}
+
+async fn _claim_rewards__includes_modifier_in_strap_level_up(seven_mult: u64) {
     // given
     let base_contract_id = contract_id();
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
@@ -469,19 +480,26 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
     }])
     .await;
 
-    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
-    ctx.advance_and_roll(0).await; // trigger Burnt modifier
+    let some_seven_vrf_number = SEVEN_VRF_NUMBER + (seven_mult * 36);
+    ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
+    let (trigger_roll, modifier_roll, modifier) =
+        modifier_triggers_for_roll(some_seven_vrf_number)
+            .first()
+            .unwrap()
+            .clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
+    ctx.advance_and_roll(vrf_number).await; // trigger modifier
 
     ctx.alice_contract()
         .methods()
-        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .purchase_modifier(modifier_roll.clone(), modifier.clone())
         .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
 
-    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+    place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -492,20 +510,21 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await; // hit six
+    let vrf_number = roll_to_vrf_number(&modifier_roll);
+    ctx.advance_and_roll(vrf_number).await; // hit six
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
 
     // when
     ctx.alice_contract()
         .methods()
-        .claim_rewards(bet_game_id, vec![(Roll::Six, Modifier::Burnt)])
+        .claim_rewards(bet_game_id, vec![(modifier_roll.clone(), modifier.clone())])
         .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
         .call()
         .await
         .unwrap();
 
     // then
-    let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Burnt);
+    let leveled_strap = Strap::new(2, StrapKind::Shirt, modifier);
     let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
     let balance = ctx
         .alice()
@@ -530,18 +549,24 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     .await;
 
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
-    ctx.advance_and_roll(0).await; // trigger Burnt modifier
+    let (trigger_roll, modifier_roll, modifier) =
+        modifier_triggers_for_roll(SEVEN_VRF_NUMBER)
+            .first()
+            .unwrap()
+            .clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
+    ctx.advance_and_roll(vrf_number).await; // trigger Burnt modifier
 
     ctx.alice_contract()
         .methods()
-        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .purchase_modifier(modifier_roll.clone(), modifier.clone())
         .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
 
-    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+    place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -552,7 +577,8 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    let vrf_number = roll_to_vrf_number(&modifier_roll);
+    ctx.advance_and_roll(vrf_number).await; // hit six
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     // when

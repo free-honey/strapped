@@ -88,6 +88,7 @@ async fn roll_dice__if_seven_generates_new_modifier_triggers() {
     // given
     // when
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
+    let mut triggers = modifier_triggers_for_roll(SEVEN_VRF_NUMBER);
 
     // then
     let actual = ctx
@@ -98,10 +99,10 @@ async fn roll_dice__if_seven_generates_new_modifier_triggers() {
         .await
         .unwrap()
         .value;
-    let expected = vec![
-        (Roll::Two, Roll::Six, Modifier::Burnt, false),
-        (Roll::Twelve, Roll::Eight, Modifier::Lucky, false),
-    ];
+    let expected = triggers
+        .into_iter()
+        .map(|(a, b, c)| (a, b, c, false))
+        .collect::<Vec<_>>();
     assert_eq!(expected, actual);
 }
 
@@ -111,8 +112,12 @@ async fn roll_dice__if_hit_the_modifier_value_triggers_the_modifier_to_be_purcha
     // given
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
+    let mut triggers = modifier_triggers_for_roll(SEVEN_VRF_NUMBER);
+
+    let (trigger_roll, _, _) = triggers.first().unwrap().clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
     // when
-    ctx.advance_and_roll(TWO_VRF_NUMBER).await;
+    ctx.advance_and_roll(vrf_number).await;
 
     // then
     let actual = ctx
@@ -123,10 +128,15 @@ async fn roll_dice__if_hit_the_modifier_value_triggers_the_modifier_to_be_purcha
         .await
         .unwrap()
         .value;
-    let expected = vec![
-        (Roll::Two, Roll::Six, Modifier::Burnt, true),
-        (Roll::Twelve, Roll::Eight, Modifier::Lucky, false),
-    ];
+    let mut expected = triggers
+        .into_iter()
+        .map(|(a, b, c)| (a, b, c, false))
+        .collect::<Vec<_>>();
+    if let Some((_, _, _, triggered)) = expected.first_mut() {
+        *triggered = true;
+    } else {
+        panic!("Expected at least one modifier trigger");
+    }
     assert_eq!(expected, actual);
 }
 
@@ -135,13 +145,19 @@ async fn roll_dice__resets_active_modifiers_and_triggers() {
     let ctx = TestContext::new().await;
     // given
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
-    ctx.advance_and_roll(TWO_VRF_NUMBER).await;
+    let (trigger_roll, modifier_roll, modifier) =
+        modifier_triggers_for_roll(SEVEN_VRF_NUMBER)
+            .first()
+            .unwrap()
+            .clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
+    ctx.advance_and_roll(vrf_number).await; // Two -> trigger Burnt modifier
 
     let chip_asset_id = ctx.chip_asset_id();
     let call_params = CallParameters::new(1, chip_asset_id, 1_000_000);
     ctx.alice_instance()
         .methods()
-        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .purchase_modifier(modifier_roll, modifier)
         .call_params(call_params)
         .unwrap()
         .call()
@@ -149,7 +165,12 @@ async fn roll_dice__resets_active_modifiers_and_triggers() {
         .unwrap();
 
     // when
-    ctx.advance_and_roll(19).await; // Seven -> new game resets state
+    let different_seven_vrf_number = 15 + 36;
+    ctx.advance_and_roll(different_seven_vrf_number).await; // Seven -> new game resets state
+    let expected_triggers = modifier_triggers_for_roll(different_seven_vrf_number)
+        .into_iter()
+        .map(|(a, b, c)| (a, b, c, false))
+        .collect::<Vec<_>>();
 
     // then
     let triggers = ctx
@@ -160,10 +181,6 @@ async fn roll_dice__resets_active_modifiers_and_triggers() {
         .await
         .unwrap()
         .value;
-    let expected_triggers = vec![
-        (Roll::Two, Roll::Six, Modifier::Burnt, false),
-        (Roll::Twelve, Roll::Eight, Modifier::Lucky, false),
-    ];
     assert_eq!(expected_triggers, triggers);
 
     let active_modifiers = ctx

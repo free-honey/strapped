@@ -353,11 +353,19 @@ impl AppController {
                 // Build shared game entry and bets for both users so rolls persist and bets differ
                 let owner_bets = self.prev_owner_bets.clone();
                 let alice_bets = self.prev_alice_bets.clone();
+                let mut completed_rolls = self.shared_last_roll_history.clone();
+                if !completed_rolls
+                    .last()
+                    .map(|r| matches!(r, strapped::Roll::Seven))
+                    .unwrap_or(false)
+                {
+                    completed_rolls.push(strapped::Roll::Seven);
+                }
                 self.shared_prev_games.insert(
                     0,
                     SharedGame {
                         game_id: prev,
-                        rolls: self.shared_last_roll_history.clone(),
+                        rolls: completed_rolls,
                         modifiers: self
                             .active_modifiers_by_game
                             .get(&prev)
@@ -915,6 +923,8 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
         strapped::Modifier::Moldy => "🍄",
         strapped::Modifier::Starched => "🏳️",
         strapped::Modifier::Evil => "😈",
+        strapped::Modifier::Groovy => "✌️",
+        strapped::Modifier::Delicate => "❤️",
     };
     let kind_emoji = match s.kind {
         strapped::StrapKind::Shirt => "👕",

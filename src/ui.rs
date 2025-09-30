@@ -543,7 +543,7 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         let label = Paragraph::new(lines);
         let mods = active_mods_emojis(&cell.roll, &snap.active_modifiers);
         let base = match cell.roll {
-            strapped::Roll::Seven => String::from("Seven (RESET)"),
+            strapped::Roll::Seven => String::from("Seven/RESET"),
             _ => format!("{:?}", cell.roll),
         };
         let title = if mods.is_empty() {
@@ -551,16 +551,20 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         } else {
             format!("{} {}", base, mods)
         };
-        let block = Block::default().borders(Borders::ALL).title(Span::styled(
-            title,
-            if selected {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            },
-        ));
+        let border_style =
+            roll_border_style(&cell.roll, selected, &snap.active_modifiers);
+        let title_style = if selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(Span::styled(title, title_style));
         f.render_widget(&block, rect);
         let inner = block.inner(rect);
         f.render_widget(label, inner);
@@ -996,7 +1000,7 @@ fn centered_rect(w_percent: u16, h_percent: u16, r: Rect) -> Rect {
 
 fn active_mods_emojis(
     roll: &strapped::Roll,
-    active: &Vec<(strapped::Roll, strapped::Modifier, u64)>,
+    active: &[(strapped::Roll, strapped::Modifier, u64)],
 ) -> String {
     let mut s = String::new();
     for (r, m, _) in active {
@@ -1011,6 +1015,48 @@ fn active_mods_emojis(
         }
     }
     s
+}
+
+fn roll_border_style(
+    roll: &strapped::Roll,
+    selected: bool,
+    active: &[(strapped::Roll, strapped::Modifier, u64)],
+) -> Style {
+    let mut style = Style::default();
+    if let Some(color) = border_color_for_roll(roll, active) {
+        style = style.fg(color);
+    }
+    if selected {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
+fn border_color_for_roll(
+    roll: &strapped::Roll,
+    active: &[(strapped::Roll, strapped::Modifier, u64)],
+) -> Option<Color> {
+    active
+        .iter()
+        .find(|(r, m, _)| r == roll && *m != strapped::Modifier::Nothing)
+        .map(|(_, m, _)| modifier_border_color(m))
+}
+
+fn modifier_border_color(m: &strapped::Modifier) -> Color {
+    match m {
+        strapped::Modifier::Nothing => Color::Rgb(108, 117, 125),
+        strapped::Modifier::Burnt => Color::Rgb(220, 53, 69),
+        strapped::Modifier::Lucky => Color::Rgb(40, 167, 69),
+        strapped::Modifier::Holy => Color::Rgb(255, 193, 7),
+        strapped::Modifier::Holey => Color::Rgb(108, 117, 125),
+        strapped::Modifier::Scotch => Color::Rgb(139, 87, 42),
+        strapped::Modifier::Soaked => Color::Rgb(0, 123, 255),
+        strapped::Modifier::Moldy => Color::Rgb(111, 66, 193),
+        strapped::Modifier::Starched => Color::Rgb(222, 226, 230),
+        strapped::Modifier::Evil => Color::Rgb(156, 39, 176),
+        strapped::Modifier::Groovy => Color::Rgb(255, 87, 34),
+        strapped::Modifier::Delicate => Color::Rgb(255, 182, 193),
+    }
 }
 
 fn strap_emoji(kind: &strapped::StrapKind) -> &'static str {
@@ -1049,6 +1095,8 @@ fn modifier_emoji(m: &strapped::Modifier) -> &'static str {
         strapped::Modifier::Moldy => "🍄",
         strapped::Modifier::Starched => "🏳️",
         strapped::Modifier::Evil => "😈",
+        strapped::Modifier::Groovy => "✌️",
+        strapped::Modifier::Delicate => "❤️",
     }
 }
 
@@ -1162,6 +1210,8 @@ fn modifier_order_value(modifier: &strapped::Modifier) -> u8 {
         strapped::Modifier::Moldy => 7,
         strapped::Modifier::Starched => 8,
         strapped::Modifier::Evil => 9,
+        strapped::Modifier::Groovy => 10,
+        strapped::Modifier::Delicate => 11,
     }
 }
 

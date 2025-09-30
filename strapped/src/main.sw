@@ -203,6 +203,7 @@ impl Strapped for Contract {
         let current_game_id = storage.current_game_id.read();
         let old_roll_index = storage.roll_index.read();
         storage.roll_index.write(old_roll_index + 1);
+        storage.roll_history.get(current_game_id).push(roll);
         match roll {
             Roll::Seven => {
                 storage.current_game_id.write(current_game_id + 1);
@@ -218,7 +219,6 @@ impl Strapped for Contract {
                 }
             }
             _ => {
-                storage.roll_history.get(current_game_id).push(roll);
                 let modifier_triggers = storage.modifier_triggers.load_vec();
                 let mut index = 0;
                 for (trigger_roll, modifier_roll, modifier, triggered) in modifier_triggers.iter() {
@@ -496,10 +496,44 @@ fn rewards_for_roll(available_straps: Vec<(Roll, Strap)>, roll: Roll) -> Vec<Sub
 
 fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
     let mut triggers = Vec::new();
-    // hardcode for now
-    triggers.push((Roll::Two, Roll::Six, Modifier::Burnt));
-    triggers.push((Roll::Twelve, Roll::Eight, Modifier::Lucky));
+    let mut multiple = 1;
+    while roll % multiple == 0 && roll != 0 {
+        let inner = roll / multiple;
+        let (modifier_roll, modifier) = u64_to_modifier(inner);
+        let trigger_roll = u64_to_trigger_roll(inner);
+        triggers.push((trigger_roll, modifier_roll, modifier));
+        multiple = multiple * 3;
+    }
     triggers
+}
+
+fn u64_to_modifier(num: u64) -> (Roll, Modifier) {
+    let modulo = num % 11;
+
+    match modulo {
+        0 => (Roll::Two, Modifier::Burnt),
+        1 => (Roll::Three, Modifier::Lucky),
+        2 => (Roll::Four, Modifier::Holy),
+        3 => (Roll::Five, Modifier::Holey),
+        4 => (Roll::Six, Modifier::Scotch),
+        8 => (Roll::Seven, Modifier::Evil),
+        5 => (Roll::Eight, Modifier::Soaked),
+        6 => (Roll::Nine, Modifier::Moldy),
+        7 => (Roll::Ten, Modifier::Starched),
+        9 => (Roll::Eleven, Modifier::Groovy),
+        _ => (Roll::Twelve, Modifier::Delicate),
+    }
+}
+
+fn u64_to_trigger_roll(num: u64) -> Roll {
+    let modulo = num % 4;
+
+    match modulo {
+        0 => Roll::Two,
+        1 => Roll::Three,
+        2 => Roll::Eleven,
+        _ => Roll::Twelve,
+    }
 }
 
 fn modifier_for_roll(active_modifiers: Vec<(Roll, Modifier, RollIndex)>, roll: Roll, roll_index: RollIndex, enabled_modifiers: Vec<(Roll, Modifier)>) -> Option<Modifier> {
