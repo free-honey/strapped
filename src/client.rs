@@ -920,6 +920,7 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
         strapped::StrapKind::Shirt => "👕",
         strapped::StrapKind::Pants => "👖",
         strapped::StrapKind::Shoes => "👟",
+        strapped::StrapKind::Dress => "👗",
         strapped::StrapKind::Hat => "🎩",
         strapped::StrapKind::Glasses => "👓",
         strapped::StrapKind::Watch => "⌚",
@@ -927,11 +928,13 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
         strapped::StrapKind::Necklace => "📿",
         strapped::StrapKind::Earring => "🧷",
         strapped::StrapKind::Bracelet => "🧶",
-        strapped::StrapKind::Tattoo => "🎨",
+        strapped::StrapKind::Tattoo => "🐉",
+        strapped::StrapKind::Skirt => "👚",
         strapped::StrapKind::Piercing => "📌",
         strapped::StrapKind::Coat => "🧥",
         strapped::StrapKind::Scarf => "🧣",
         strapped::StrapKind::Gloves => "🧤",
+        strapped::StrapKind::Gown => "👘",
         strapped::StrapKind::Belt => "🧵",
     };
     format!("{}{}{}", mod_emoji, kind_emoji, s.level)

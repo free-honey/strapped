@@ -22,6 +22,7 @@ pub enum StrapKind {
     Shirt: (),
     Pants: (),
     Shoes: (),
+    Dress: (),
     Hat: (),
     Glasses: (),
     Watch: (),
@@ -30,10 +31,12 @@ pub enum StrapKind {
     Earring: (),
     Bracelet: (),
     Tattoo: (),
+    Skirt: (),
     Piercing: (),
     Coat: (),
     Scarf: (),
     Gloves: (),
+    Gown: (),
     Belt: (),
 }
 
@@ -114,19 +117,22 @@ impl Hash for StrapKind {
             StrapKind::Shirt => { 0_u8.hash(state); }
             StrapKind::Pants => { 1_u8.hash(state); }
             StrapKind::Shoes => { 2_u8.hash(state); }
-            StrapKind::Hat => { 3_u8.hash(state); }
-            StrapKind::Glasses => { 4_u8.hash(state); }
-            StrapKind::Watch => { 5_u8.hash(state); }
-            StrapKind::Ring => { 6_u8.hash(state); }
-            StrapKind::Necklace => { 7_u8.hash(state); }
-            StrapKind::Earring => { 8_u8.hash(state); }
-            StrapKind::Bracelet => { 9_u8.hash(state); }
-            StrapKind::Tattoo => { 10_u8.hash(state); }
-            StrapKind::Piercing => { 11_u8.hash(state); }
-            StrapKind::Coat => { 12_u8.hash(state); }
-            StrapKind::Scarf => { 13_u8.hash(state); }
-            StrapKind::Gloves => { 14_u8.hash(state); }
-            StrapKind::Belt => { 15_u8.hash(state); }
+            StrapKind::Dress => { 3_u8.hash(state); }
+            StrapKind::Hat => { 4_u8.hash(state); }
+            StrapKind::Glasses => { 5_u8.hash(state); }
+            StrapKind::Watch => { 6_u8.hash(state); }
+            StrapKind::Ring => { 7_u8.hash(state); }
+            StrapKind::Necklace => { 8_u8.hash(state); }
+            StrapKind::Earring => { 9_u8.hash(state); }
+            StrapKind::Bracelet => { 10_u8.hash(state); }
+            StrapKind::Tattoo => { 11_u8.hash(state); }
+            StrapKind::Skirt => { 12_u8.hash(state); }
+            StrapKind::Piercing => { 13_u8.hash(state); }
+            StrapKind::Coat => { 14_u8.hash(state); }
+            StrapKind::Scarf => { 15_u8.hash(state); }
+            StrapKind::Gloves => { 16_u8.hash(state); }
+            StrapKind::Gown => { 17_u8.hash(state); }
+            StrapKind::Belt => { 18_u8.hash(state); }
         }
     }
 }
@@ -196,19 +202,22 @@ impl Strap {
             StrapKind::Shirt => 0_u8,
             StrapKind::Pants => 1_u8,
             StrapKind::Shoes => 2_u8,
-            StrapKind::Hat => 3_u8,
-            StrapKind::Glasses => 4_u8,
-            StrapKind::Watch => 5_u8,
-            StrapKind::Ring => 6_u8,
-            StrapKind::Necklace => 7_u8,
-            StrapKind::Earring => 8_u8,
-            StrapKind::Bracelet => 9_u8,
-            StrapKind::Tattoo => 10_u8,
-            StrapKind::Piercing => 11_u8,
-            StrapKind::Coat => 12_u8,
-            StrapKind::Scarf => 13_u8,
-            StrapKind::Gloves => 14_u8,
-            StrapKind::Belt => 15_u8,
+            StrapKind::Dress => 3_u8,
+            StrapKind::Hat => 4_u8,
+            StrapKind::Glasses => 5_u8,
+            StrapKind::Watch => 6_u8,
+            StrapKind::Ring => 7_u8,
+            StrapKind::Necklace => 8_u8,
+            StrapKind::Earring => 9_u8,
+            StrapKind::Bracelet => 19_u8,
+            StrapKind::Tattoo => 12_u8,
+            StrapKind::Skirt => 13_u8,
+            StrapKind::Piercing => 114_u8,
+            StrapKind::Coat => 15_u8,
+            StrapKind::Scarf => 16_u8,
+            StrapKind::Gloves => 17_u8,
+            StrapKind::Gown => 18_u8,
+            StrapKind::Belt => 19_u8,
         };
         sub_id[2] = match self.modifier {
             Modifier::Nothing => 0_u8,
