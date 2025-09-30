@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc bdaf2c8cefd3a58a2789c9e689b0b8730018f70e7a0c1493a0748b0cf5f8bb9b # shrinks to (vrf_bucket, bet_amount) = (15, 100)
 cc 5e0bcf62997f3f7b4779e5504fa465840690a6460f88938367a8e75633f6816f # shrinks to (vrf_bucket, bet_amount) = (0, 100)
+cc 757809f2508534edc6bedffd840e65f9f71f261683f355223153c45f3240e5a3 # shrinks to (vrf_number, bet_amount) = (24, 700)
