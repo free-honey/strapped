@@ -1,10 +1,27 @@
 use crate::{
-    get_contract_instance, separate_contract_instance, strapped_types, vrf_types,
+    get_contract_instance,
+    separate_contract_instance,
+    strapped_types,
+    strapped_types::{
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
+    vrf_types,
 };
 use fuels::{
     prelude::{
-        AssetConfig, AssetId, CallParameters, Contract, ContractId, Execution,
-        LoadConfiguration, TxPolicies, WalletUnlocked, WalletsConfig,
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Contract,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        TxPolicies,
+        WalletUnlocked,
+        WalletsConfig,
         launch_custom_provider_and_get_wallets,
     },
     types::Bits256,
@@ -204,4 +221,93 @@ pub async fn get_wallet() -> WalletUnlocked {
     .await
     .unwrap();
     wallets.pop().unwrap()
+}
+pub fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
+    let mut straps: Vec<(Roll, Strap)> = Vec::new();
+    let mut multiple = 1;
+    while seed % multiple == 0 && seed != 0 {
+        let inner = seed / multiple;
+        let strap = u64_to_strap(inner);
+        let slot = u64_to_slot(inner);
+        straps.push((slot, strap));
+        multiple = multiple * 2;
+    }
+    straps
+}
+
+pub fn u64_to_strap(num: u64) -> Strap {
+    let level = 1;
+    let modifier = Modifier::Nothing;
+    let modulo = num % 141;
+    let kind = if modulo < 20 {
+        StrapKind::Shirt // weight 20
+    } else if modulo < 40 {
+        StrapKind::Pants // weight 20
+    } else if modulo < 60 {
+        StrapKind::Shoes // weight 20
+    } else if modulo < 70 {
+        StrapKind::Hat // weight 10
+    } else if modulo < 80 {
+        StrapKind::Glasses // weight 10
+    } else if modulo < 90 {
+        StrapKind::Watch // weight 10
+    } else if modulo < 100 {
+        StrapKind::Ring // weight 10
+    } else if modulo < 105 {
+        StrapKind::Necklace // weight 5
+    } else if modulo < 110 {
+        StrapKind::Earring // weight 5
+    } else if modulo < 115 {
+        StrapKind::Bracelet // weight 5
+    } else if modulo < 120 {
+        StrapKind::Tattoo // weight 5
+    } else if modulo < 125 {
+        StrapKind::Skirt // weight 5
+    } else if modulo < 130 {
+        StrapKind::Piercing // weight 5
+    } else if modulo < 135 {
+        StrapKind::Coat // weight 5
+    } else if modulo < 137 {
+        StrapKind::Scarf // weight 5
+    } else if modulo < 139 {
+        StrapKind::Gloves // weight 2
+    } else if modulo < 141 {
+        StrapKind::Gown // weight 2
+    } else {
+        StrapKind::Belt // weight 1
+    };
+    Strap::new(level, kind, modifier)
+}
+// two -> twelve, never seven
+pub fn u64_to_slot(num: u64) -> Roll {
+    let modulo = num % 10;
+
+    match modulo {
+        0 => Roll::Two,
+        1 => Roll::Three,
+        2 => Roll::Four,
+        3 => Roll::Five,
+        4 => Roll::Six,
+        5 => Roll::Eight,
+        6 => Roll::Nine,
+        7 => Roll::Ten,
+        8 => Roll::Eleven,
+        _ => Roll::Twelve,
+    }
+}
+
+pub fn roll_to_vrf_number(roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => 0,
+        Roll::Three => 1,
+        Roll::Four => 3,
+        Roll::Five => 6,
+        Roll::Six => 10,
+        Roll::Seven => 15,
+        Roll::Eight => 21,
+        Roll::Nine => 26,
+        Roll::Ten => 30,
+        Roll::Eleven => 33,
+        Roll::Twelve => 35,
+    }
 }
