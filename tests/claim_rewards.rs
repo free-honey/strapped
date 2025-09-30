@@ -2,13 +2,27 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{AssetConfig, AssetId, CallParameters, Execution, VariableOutputPolicy},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Execution,
+        VariableOutputPolicy,
+    },
     tx::ContractIdExt,
 };
 use proptest::prelude::*;
 use strapped_contract::{
-    contract_id, strap_to_sub_id,
-    strapped_types::{self, Bet, Modifier, Roll, Strap, StrapKind},
+    contract_id,
+    strap_to_sub_id,
+    strapped_types::{
+        self,
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
     test_helpers::TestContext,
 };
 use tokio::runtime::Runtime;
@@ -253,8 +267,9 @@ async fn claim_rewards__can_receive_strap_token() {
     let ctx = TestContext::new().await;
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards for roll eight
 
+    let (roll, strap) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
     // given
-    place_chip_bet(&ctx, Roll::Eight, 100).await;
+    place_chip_bet(&ctx, roll.clone(), 100).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -265,10 +280,10 @@ async fn claim_rewards__can_receive_strap_token() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(25).await; // Eight
+    let vrf_number = roll_to_vrf_number(&roll);
+    ctx.advance_and_roll(vrf_number).await;
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let strap_asset_id = strap_asset_id(&ctx, &strap);
     let balance_before = ctx
         .alice()
@@ -301,8 +316,9 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards
 
     // given
-    place_chip_bet(&ctx, Roll::Eight, 100).await;
-    place_chip_bet(&ctx, Roll::Eight, 100).await;
+    let (roll, strap) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
+    place_chip_bet(&ctx, roll.clone(), 100).await;
+    place_chip_bet(&ctx, roll.clone(), 100).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -313,10 +329,10 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(25).await; // Eight
+    let vrf_number = roll_to_vrf_number(&roll);
+    ctx.advance_and_roll(vrf_number).await; // Eight
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let strap_asset_id = strap_asset_id(&ctx, &strap);
     let balance_before = ctx
         .alice()
@@ -340,6 +356,96 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .await
         .unwrap();
     assert_eq!(balance_after, balance_before + 1);
+}
+
+fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
+    let mut straps: Vec<(Roll, Strap)> = Vec::new();
+    let mut multiple = 1;
+    while seed % multiple == 0 && seed != 0 {
+        let inner = seed / multiple;
+        let strap = u64_to_strap(inner);
+        let slot = u64_to_slot(inner);
+        straps.push((slot, strap));
+        multiple = multiple * 2;
+    }
+    straps
+}
+
+fn u64_to_strap(num: u64) -> Strap {
+    let level = 1;
+    let modifier = Modifier::Nothing;
+    let modulo = num % 141;
+    let kind = if modulo < 20 {
+        StrapKind::Shirt // weight 20
+    } else if modulo < 40 {
+        StrapKind::Pants // weight 20
+    } else if modulo < 60 {
+        StrapKind::Shoes // weight 20
+    } else if modulo < 70 {
+        StrapKind::Hat // weight 10
+    } else if modulo < 80 {
+        StrapKind::Glasses // weight 10
+    } else if modulo < 90 {
+        StrapKind::Watch // weight 10
+    } else if modulo < 100 {
+        StrapKind::Ring // weight 10
+    } else if modulo < 105 {
+        StrapKind::Necklace // weight 5
+    } else if modulo < 110 {
+        StrapKind::Earring // weight 5
+    } else if modulo < 115 {
+        StrapKind::Bracelet // weight 5
+    } else if modulo < 120 {
+        StrapKind::Tattoo // weight 5
+    } else if modulo < 125 {
+        StrapKind::Skirt // weight 5
+    } else if modulo < 130 {
+        StrapKind::Piercing // weight 5
+    } else if modulo < 135 {
+        StrapKind::Coat // weight 5
+    } else if modulo < 137 {
+        StrapKind::Scarf // weight 5
+    } else if modulo < 139 {
+        StrapKind::Gloves // weight 2
+    } else if modulo < 141 {
+        StrapKind::Gown // weight 2
+    } else {
+        StrapKind::Belt // weight 1
+    };
+    Strap::new(level, kind, modifier)
+}
+// two -> twelve, never seven
+fn u64_to_slot(num: u64) -> Roll {
+    let modulo = num % 10;
+
+    match modulo {
+        0 => Roll::Two,
+        1 => Roll::Three,
+        2 => Roll::Four,
+        3 => Roll::Five,
+        4 => Roll::Six,
+        5 => Roll::Eight,
+        6 => Roll::Nine,
+        7 => Roll::Ten,
+        8 => Roll::Eleven,
+        _ => Roll::Twelve,
+    }
+}
+
+fn roll_to_vrf_number(roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => 0,
+        Roll::Three => 1,
+        Roll::Four => 3,
+        Roll::Five => 6,
+        Roll::Six => 10,
+        Roll::Seven => 15,
+        Roll::Eight => 21,
+        Roll::Nine => 26,
+        Roll::Ten => 30,
+        Roll::Eleven => 33,
+        Roll::Twelve => 35,
+    }
 }
 
 #[tokio::test]
