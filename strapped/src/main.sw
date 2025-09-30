@@ -203,6 +203,7 @@ impl Strapped for Contract {
         let current_game_id = storage.current_game_id.read();
         let old_roll_index = storage.roll_index.read();
         storage.roll_index.write(old_roll_index + 1);
+        storage.roll_history.get(current_game_id).push(roll);
         match roll {
             Roll::Seven => {
                 storage.current_game_id.write(current_game_id + 1);
@@ -218,7 +219,6 @@ impl Strapped for Contract {
                 }
             }
             _ => {
-                storage.roll_history.get(current_game_id).push(roll);
                 let modifier_triggers = storage.modifier_triggers.load_vec();
                 let mut index = 0;
                 for (trigger_roll, modifier_roll, modifier, triggered) in modifier_triggers.iter() {
