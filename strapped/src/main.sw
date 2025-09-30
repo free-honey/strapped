@@ -499,16 +499,16 @@ fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
     let mut multiple = 1;
     while roll % multiple == 0 && roll != 0 {
         let inner = roll / multiple;
-        let (trigger_roll, modifier) = u64_to_modifier(inner);
-        let activated_roll = u64_to_trigger_roll(inner);
-        triggers.push((trigger_roll, activated_roll, modifier));
+        let (modifier_roll, modifier) = u64_to_modifier(inner);
+        let trigger_roll = u64_to_trigger_roll(inner);
+        triggers.push((trigger_roll, modifier_roll, modifier));
         multiple = multiple * 3;
     }
     triggers
 }
 
 fn u64_to_modifier(num: u64) -> (Roll, Modifier) {
-    let modulo = num % 10;
+    let modulo = num % 11;
 
     match modulo {
         0 => (Roll::Two, Modifier::Burnt),
@@ -520,7 +520,7 @@ fn u64_to_modifier(num: u64) -> (Roll, Modifier) {
         5 => (Roll::Eight, Modifier::Soaked),
         6 => (Roll::Nine, Modifier::Moldy),
         7 => (Roll::Ten, Modifier::Starched),
-        8 => (Roll::Eleven, Modifier::Groovy),
+        9 => (Roll::Eleven, Modifier::Groovy),
         _ => (Roll::Twelve, Modifier::Delicate),
     }
 }
