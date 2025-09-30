@@ -1049,6 +1049,8 @@ fn modifier_emoji(m: &strapped::Modifier) -> &'static str {
         strapped::Modifier::Moldy => "🍄",
         strapped::Modifier::Starched => "🏳️",
         strapped::Modifier::Evil => "😈",
+        strapped::Modifier::Groovy => "✌️",
+        strapped::Modifier::Delicate => "❤️",
     }
 }
 
@@ -1162,6 +1164,8 @@ fn modifier_order_value(modifier: &strapped::Modifier) -> u8 {
         strapped::Modifier::Moldy => 7,
         strapped::Modifier::Starched => 8,
         strapped::Modifier::Evil => 9,
+        strapped::Modifier::Groovy => 10,
+        strapped::Modifier::Delicate => 11,
     }
 }
 

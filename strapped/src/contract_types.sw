@@ -51,6 +51,8 @@ pub enum Modifier {
     Moldy: (),
     Starched: (),
     Evil: (),
+    Groovy: (),
+    Delicate: (),
 }
 
 pub struct Strap {
@@ -150,6 +152,8 @@ impl Hash for Modifier {
             Modifier::Moldy => { 7_u8.hash(state); }
             Modifier::Starched => { 8_u8.hash(state); }
             Modifier::Evil => { 9_u8.hash(state); }
+            Modifier::Groovy => { 10_u8.hash(state); }
+            Modifier::Delicate => { 11_u8.hash(state); }
         }
     }
 }
@@ -167,6 +171,8 @@ impl PartialEq for Modifier {
             (Modifier::Moldy, Modifier::Moldy) => true,
             (Modifier::Starched, Modifier::Starched) => true,
             (Modifier::Evil, Modifier::Evil) => true,
+            (Modifier::Groovy, Modifier::Groovy) => true,
+            (Modifier::Delicate, Modifier::Delicate) => true,
             _ => false,
         }
     }
@@ -230,6 +236,8 @@ impl Strap {
             Modifier::Moldy => 7_u8,
             Modifier::Starched => 8_u8,
             Modifier::Evil => 9_u8,
+            Modifier::Groovy => 10_u8,
+            Modifier::Delicate => 11_u8,
         };
         b256::from_be_bytes(sub_id)
     }

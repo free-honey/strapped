@@ -470,18 +470,24 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
     .await;
 
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
-    ctx.advance_and_roll(0).await; // trigger Burnt modifier
+    let (trigger_roll, modifier_roll, modifier) =
+        modifier_triggers_for_roll(SEVEN_VRF_NUMBER)
+            .first()
+            .unwrap()
+            .clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
+    ctx.advance_and_roll(vrf_number).await; // trigger modifier
 
     ctx.alice_contract()
         .methods()
-        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .purchase_modifier(modifier_roll.clone(), modifier.clone())
         .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
 
-    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+    place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -492,20 +498,21 @@ async fn claim_rewards__includes_modifier_in_strap_level_up() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await; // hit six
+    let vrf_number = roll_to_vrf_number(&modifier_roll);
+    ctx.advance_and_roll(vrf_number).await; // hit six
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
 
     // when
     ctx.alice_contract()
         .methods()
-        .claim_rewards(bet_game_id, vec![(Roll::Six, Modifier::Burnt)])
+        .claim_rewards(bet_game_id, vec![(modifier_roll.clone(), modifier.clone())])
         .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
         .call()
         .await
         .unwrap();
 
     // then
-    let leveled_strap = Strap::new(2, StrapKind::Shirt, Modifier::Burnt);
+    let leveled_strap = Strap::new(2, StrapKind::Shirt, modifier);
     let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
     let balance = ctx
         .alice()
@@ -530,18 +537,24 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     .await;
 
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
-    ctx.advance_and_roll(0).await; // trigger Burnt modifier
+    let (trigger_roll, modifier_roll, modifier) =
+        modifier_triggers_for_roll(SEVEN_VRF_NUMBER)
+            .first()
+            .unwrap()
+            .clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
+    ctx.advance_and_roll(vrf_number).await; // trigger Burnt modifier
 
     ctx.alice_contract()
         .methods()
-        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .purchase_modifier(modifier_roll.clone(), modifier.clone())
         .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
         .unwrap()
         .call()
         .await
         .unwrap();
 
-    place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
+    place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -552,7 +565,8 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    let vrf_number = roll_to_vrf_number(&modifier_roll);
+    ctx.advance_and_roll(vrf_number).await; // hit six
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     // when

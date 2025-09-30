@@ -496,10 +496,44 @@ fn rewards_for_roll(available_straps: Vec<(Roll, Strap)>, roll: Roll) -> Vec<Sub
 
 fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
     let mut triggers = Vec::new();
-    // hardcode for now
-    triggers.push((Roll::Two, Roll::Six, Modifier::Burnt));
-    triggers.push((Roll::Twelve, Roll::Eight, Modifier::Lucky));
+    let mut multiple = 1;
+    while roll % multiple == 0 && roll != 0 {
+        let inner = roll / multiple;
+        let (trigger_roll, modifier) = u64_to_modifier(inner);
+        let activated_roll = u64_to_trigger_roll(inner);
+        triggers.push((trigger_roll, activated_roll, modifier));
+        multiple = multiple * 3;
+    }
     triggers
+}
+
+fn u64_to_modifier(num: u64) -> (Roll, Modifier) {
+    let modulo = num % 10;
+
+    match modulo {
+        0 => (Roll::Two, Modifier::Burnt),
+        1 => (Roll::Three, Modifier::Lucky),
+        2 => (Roll::Four, Modifier::Holy),
+        3 => (Roll::Five, Modifier::Holey),
+        4 => (Roll::Six, Modifier::Scotch),
+        8 => (Roll::Seven, Modifier::Evil),
+        5 => (Roll::Eight, Modifier::Soaked),
+        6 => (Roll::Nine, Modifier::Moldy),
+        7 => (Roll::Ten, Modifier::Starched),
+        8 => (Roll::Eleven, Modifier::Groovy),
+        _ => (Roll::Twelve, Modifier::Delicate),
+    }
+}
+
+fn u64_to_trigger_roll(num: u64) -> Roll {
+    let modulo = num % 4;
+
+    match modulo {
+        0 => Roll::Two,
+        1 => Roll::Three,
+        2 => Roll::Eleven,
+        _ => Roll::Twelve,
+    }
 }
 
 fn modifier_for_roll(active_modifiers: Vec<(Roll, Modifier, RollIndex)>, roll: Roll, roll_index: RollIndex, enabled_modifiers: Vec<(Roll, Modifier)>) -> Option<Modifier> {

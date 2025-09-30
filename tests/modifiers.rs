@@ -2,8 +2,15 @@
 
 use fuels::prelude::CallParameters;
 use strapped_contract::{
-    strapped_types::{Modifier, Roll},
-    test_helpers::TestContext,
+    strapped_types::{
+        Modifier,
+        Roll,
+    },
+    test_helpers::{
+        TestContext,
+        modifier_triggers_for_roll,
+        roll_to_vrf_number,
+    },
 };
 
 pub const TWO_VRF_NUMBER: u64 = 0;
@@ -17,12 +24,18 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
 
     // given
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven -> seed modifiers
-    ctx.advance_and_roll(TWO_VRF_NUMBER).await; // Two -> trigger Burnt modifier
+    let (trigger_roll, modifier_roll, modifier) =
+        modifier_triggers_for_roll(SEVEN_VRF_NUMBER)
+            .first()
+            .unwrap()
+            .clone();
+    let vrf_number = roll_to_vrf_number(&trigger_roll);
+    ctx.advance_and_roll(vrf_number).await; // Two -> trigger Burnt modifier
 
     // when
     ctx.alice_instance()
         .methods()
-        .purchase_modifier(Roll::Six, Modifier::Burnt)
+        .purchase_modifier(modifier_roll.clone(), modifier.clone())
         .call_params(CallParameters::new(1, chip_asset_id, 1_000_000))
         .unwrap()
         .call()
@@ -38,6 +51,6 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
         .await
         .unwrap()
         .value;
-    let expected_active_modifier = vec![(Roll::Six, Modifier::Burnt, 1u64)];
+    let expected_active_modifier = vec![(modifier_roll, modifier, 1u64)];
     assert_eq!(expected_active_modifier, actual_active_modifier);
 }

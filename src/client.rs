@@ -915,6 +915,8 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
         strapped::Modifier::Moldy => "🍄",
         strapped::Modifier::Starched => "🏳️",
         strapped::Modifier::Evil => "😈",
+        strapped::Modifier::Groovy => "✌️",
+        strapped::Modifier::Delicate => "❤️",
     };
     let kind_emoji = match s.kind {
         strapped::StrapKind::Shirt => "👕",
