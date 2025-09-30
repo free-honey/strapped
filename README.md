@@ -2,7 +2,8 @@
 
 #### massively-multiplayer strip-craps game 😈
 
-<img width="1727" height="1078" alt="image" src="https://github.com/user-attachments/assets/5ba11fd1-aaff-4625-9fe5-f0e43298b664" />
+<img width="1728" height="1078" alt="image" src="https://github.com/user-attachments/assets/81e7d83a-5404-4aa6-a8e4-385de586ce05" />
+
 
 
 To test out the game with a (vibe-coded) TUI, run:
