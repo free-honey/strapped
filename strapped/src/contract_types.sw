@@ -234,4 +234,3 @@ impl Strap {
         b256::from_be_bytes(sub_id)
     }
 }
-
