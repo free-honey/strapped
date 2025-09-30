@@ -1,6 +1,16 @@
-use crate::strapped_types::{Modifier, Strap, StrapKind};
+use crate::strapped_types::{
+    Modifier,
+    Strap,
+    StrapKind,
+};
 use fuels::{
-    prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked},
+    prelude::{
+        Contract,
+        ContractId,
+        LoadConfiguration,
+        TxPolicies,
+        WalletUnlocked,
+    },
     types::Bytes32,
 };
 
@@ -72,19 +82,22 @@ pub fn strap_to_sub_id(strap: &Strap) -> Bytes32 {
         StrapKind::Shirt => 0u8,
         StrapKind::Pants => 1u8,
         StrapKind::Shoes => 2u8,
-        StrapKind::Hat => 3u8,
-        StrapKind::Glasses => 4u8,
-        StrapKind::Watch => 5u8,
-        StrapKind::Ring => 6u8,
-        StrapKind::Necklace => 7u8,
-        StrapKind::Earring => 8u8,
-        StrapKind::Bracelet => 9u8,
-        StrapKind::Tattoo => 10u8,
-        StrapKind::Piercing => 11u8,
-        StrapKind::Coat => 12u8,
-        StrapKind::Scarf => 13u8,
-        StrapKind::Gloves => 14u8,
-        StrapKind::Belt => 15u8,
+        StrapKind::Dress => 3u8,
+        StrapKind::Hat => 4u8,
+        StrapKind::Glasses => 5u8,
+        StrapKind::Watch => 6u8,
+        StrapKind::Ring => 7u8,
+        StrapKind::Necklace => 8u8,
+        StrapKind::Earring => 9u8,
+        StrapKind::Bracelet => 10u8,
+        StrapKind::Tattoo => 11u8,
+        StrapKind::Skirt => 12u8,
+        StrapKind::Piercing => 13u8,
+        StrapKind::Coat => 14u8,
+        StrapKind::Scarf => 15u8,
+        StrapKind::Gloves => 16u8,
+        StrapKind::Gown => 17u8,
+        StrapKind::Belt => 18u8,
     };
     let modifier_bytes = match strap.modifier {
         Modifier::Nothing => 0u8,

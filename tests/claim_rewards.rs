@@ -2,14 +2,28 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{AssetConfig, AssetId, CallParameters, Execution, VariableOutputPolicy},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Execution,
+        VariableOutputPolicy,
+    },
     tx::ContractIdExt,
 };
 use proptest::prelude::*;
 use strapped_contract::{
-    contract_id, strap_to_sub_id,
-    strapped_types::{self, Bet, Modifier, Roll, Strap, StrapKind},
-    test_helpers::TestContext,
+    contract_id,
+    strap_to_sub_id,
+    strapped_types::{
+        self,
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
+    test_helpers::*,
 };
 use tokio::runtime::Runtime;
 
@@ -253,8 +267,9 @@ async fn claim_rewards__can_receive_strap_token() {
     let ctx = TestContext::new().await;
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards for roll eight
 
+    let (roll, strap) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
     // given
-    place_chip_bet(&ctx, Roll::Eight, 100).await;
+    place_chip_bet(&ctx, roll.clone(), 100).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -265,10 +280,10 @@ async fn claim_rewards__can_receive_strap_token() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(25).await; // Eight
+    let vrf_number = roll_to_vrf_number(&roll);
+    ctx.advance_and_roll(vrf_number).await;
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let strap_asset_id = strap_asset_id(&ctx, &strap);
     let balance_before = ctx
         .alice()
@@ -301,8 +316,9 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards
 
     // given
-    place_chip_bet(&ctx, Roll::Eight, 100).await;
-    place_chip_bet(&ctx, Roll::Eight, 100).await;
+    let (roll, strap) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
+    place_chip_bet(&ctx, roll.clone(), 100).await;
+    place_chip_bet(&ctx, roll.clone(), 100).await;
 
     let bet_game_id = ctx
         .alice_contract()
@@ -313,10 +329,10 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .unwrap()
         .value;
 
-    ctx.advance_and_roll(25).await; // Eight
+    let vrf_number = roll_to_vrf_number(&roll);
+    ctx.advance_and_roll(vrf_number).await; // Eight
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
-    let strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let strap_asset_id = strap_asset_id(&ctx, &strap);
     let balance_before = ctx
         .alice()

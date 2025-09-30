@@ -2,8 +2,13 @@
 
 use fuels::prelude::CallParameters;
 use strapped_contract::{
-    strapped_types::{Modifier, Roll, Strap, StrapKind},
-    test_helpers::TestContext,
+    strapped_types::{
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
+    test_helpers::*,
 };
 
 pub const TWO_VRF_NUMBER: u64 = 0;
@@ -60,10 +65,12 @@ async fn roll_dice__if_seven_rolled_move_to_next_game() {
 async fn roll_dice__if_seven_adds_new_strap_reward() {
     let ctx = TestContext::new().await;
     // given
+
     // when
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     // then
+    let expected = generate_straps(SEVEN_VRF_NUMBER);
     let actual = ctx
         .owner_instance()
         .methods()
@@ -72,11 +79,6 @@ async fn roll_dice__if_seven_adds_new_strap_reward() {
         .await
         .unwrap()
         .value;
-
-    let expected = vec![(
-        Roll::Eight,
-        Strap::new(1, StrapKind::Shirt, Modifier::Nothing),
-    )];
     assert_eq!(expected, actual);
 }
 
