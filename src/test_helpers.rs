@@ -1,21 +1,10 @@
 use crate::{
-    get_contract_instance,
-    separate_contract_instance,
-    strapped_types,
-    vrf_types,
+    get_contract_instance, separate_contract_instance, strapped_types, vrf_types,
 };
 use fuels::{
     prelude::{
-        AssetConfig,
-        AssetId,
-        CallParameters,
-        Contract,
-        ContractId,
-        Execution,
-        LoadConfiguration,
-        TxPolicies,
-        WalletUnlocked,
-        WalletsConfig,
+        AssetConfig, AssetId, CallParameters, Contract, ContractId, Execution,
+        LoadConfiguration, TxPolicies, WalletUnlocked, WalletsConfig,
         launch_custom_provider_and_get_wallets,
     },
     types::Bits256,
