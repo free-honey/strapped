@@ -1,6 +1,9 @@
 #![allow(non_snake_case)]
 
-use fuels::prelude::CallParameters;
+use fuels::prelude::{
+    CallParameters,
+    Execution,
+};
 use strapped_contract::{
     strapped_types::{
         Modifier,
@@ -31,7 +34,7 @@ async fn roll_dice__adds_roll_to_roll_history() {
         .owner_instance()
         .methods()
         .roll_history()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;

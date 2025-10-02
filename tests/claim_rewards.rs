@@ -28,7 +28,7 @@ use strapped_contract::{
 use tokio::runtime::Runtime;
 
 pub const SIX_VRF_NUMBER: u64 = 10;
-pub const SEVEN_VRF_NUMBER: u64 = 19;
+pub const SEVEN_VRF_NUMBER: u64 = 15;
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
@@ -53,7 +53,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .owner_contract()
         .methods()
         .payouts()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -113,7 +113,7 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -153,7 +153,7 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -193,7 +193,7 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -228,7 +228,7 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -276,7 +276,7 @@ async fn claim_rewards__can_receive_strap_token() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -325,7 +325,7 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -379,7 +379,7 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -427,7 +427,7 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -456,82 +456,113 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
     assert_eq!(balance, 1);
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
-    #[test]
-    fn claim_rewards__includes_modifier_in_strap_level_up(seven_mult in 1u64..=1000u64) {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            _claim_rewards__includes_modifier_in_strap_level_up(seven_mult).await;
-        });
+mod _claim_rewards__includes_modifier_in_strap_level_up {
+    use super::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
+        #[test]
+        fn claim_rewards__includes_modifier_in_strap_level_up(seven_mult in 1u64..=1000u64, seven_base in 15u64..=20) {
+            let rt = Runtime::new().unwrap();
+            rt.block_on(async {
+                _claim_rewards__includes_modifier_in_strap_level_up(seven_base, seven_mult).await;
+            });
+        }
     }
-}
 
-async fn _claim_rewards__includes_modifier_in_strap_level_up(seven_mult: u64) {
-    // given
-    let base_contract_id = contract_id();
-    let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-    let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
+    async fn _claim_rewards__includes_modifier_in_strap_level_up(
+        seven_base: u64,
+        seven_mult: u64,
+    ) {
+        // given
+        let base_contract_id = contract_id();
+        let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
+        let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+        let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 20,
+            coin_amount: 1,
+        }])
+        .await;
 
-    let some_seven_vrf_number = SEVEN_VRF_NUMBER + (seven_mult * 36);
-    ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
-    let (trigger_roll, modifier_roll, modifier) =
-        modifier_triggers_for_roll(some_seven_vrf_number)
-            .first()
+        let some_seven_vrf_number = seven_base + (seven_mult * 36);
+        ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
+        let available_triggers = modifier_triggers_for_roll(some_seven_vrf_number);
+        let deets = format!(
+            "seven_base: {:?}, seven_mult: {:?}, total: {:?}, available_triggers: {:?}",
+            seven_base, seven_mult, some_seven_vrf_number, available_triggers
+        );
+        let bet_game_id = ctx
+            .alice_contract()
+            .methods()
+            .current_game_id()
+            .simulate(Execution::StateReadOnly)
+            .await
             .unwrap()
-            .clone();
-    let vrf_number = roll_to_vrf_number(&trigger_roll);
-    ctx.advance_and_roll(vrf_number).await; // trigger modifier
+            .value;
+        let mut seven_rolled = false;
+        for (trigger_roll, modifier_roll, modifier) in available_triggers.clone().iter() {
+            let vrf_number = roll_to_vrf_number(&trigger_roll);
+            ctx.advance_and_roll(vrf_number).await; // trigger modifier
 
-    ctx.alice_contract()
-        .methods()
-        .purchase_modifier(modifier_roll.clone(), modifier.clone())
-        .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
-        .unwrap()
-        .call()
-        .await
-        .unwrap();
+            ctx.alice_contract()
+                .methods()
+                .purchase_modifier(modifier_roll.clone(), modifier.clone())
+                .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
+                .unwrap()
+                .call()
+                .await
+                .expect(&deets);
+            place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
+            let vrf_number = roll_to_vrf_number(&modifier_roll);
+            ctx.advance_and_roll(vrf_number).await;
+            if *modifier_roll == Roll::Seven {
+                seven_rolled = true;
+                break;
+            }
+        }
 
-    place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
+        ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
 
-    let bet_game_id = ctx
-        .alice_contract()
-        .methods()
-        .current_game_id()
-        .call()
-        .await
-        .unwrap()
-        .value;
+        let enabled_modifiers = available_triggers
+            .clone()
+            .into_iter()
+            .map(|(_, modifier_roll, modifier)| (modifier_roll, modifier))
+            .collect::<Vec<_>>();
+        // when
+        ctx.alice_contract()
+            .methods()
+            .claim_rewards(bet_game_id, enabled_modifiers)
+            .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
+            .call()
+            .await
+            .expect(&format!(
+                "Failed to claim rewards with modifiers: {:?}",
+                available_triggers
+            ));
 
-    let vrf_number = roll_to_vrf_number(&modifier_roll);
-    ctx.advance_and_roll(vrf_number).await; // hit six
-    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
-
-    // when
-    ctx.alice_contract()
-        .methods()
-        .claim_rewards(bet_game_id, vec![(modifier_roll.clone(), modifier.clone())])
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(1))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let leveled_strap = Strap::new(2, StrapKind::Shirt, modifier);
-    let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
-    let balance = ctx
-        .alice()
-        .get_asset_balance(&leveled_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(balance, 1);
+        // then
+        let mut seven_rolled = false;
+        for (_, modifier_roll, modifier) in available_triggers {
+            let leveled_strap = Strap::new(2, StrapKind::Shirt, modifier);
+            let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
+            let balance = ctx
+                .alice()
+                .get_asset_balance(&leveled_asset_id)
+                .await
+                .unwrap();
+            assert_eq!(
+                balance, 1,
+                "Failed check for strap {:?} with deets: {:?}",
+                leveled_strap, deets
+            );
+            if modifier_roll == Roll::Seven {
+                seven_rolled = true;
+                break
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -572,7 +603,7 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
