@@ -1,6 +1,9 @@
 #![allow(non_snake_case)]
 
-use fuels::prelude::CallParameters;
+use fuels::prelude::{
+    CallParameters,
+    Execution,
+};
 use strapped_contract::{
     strapped_types::{
         Modifier,
@@ -47,7 +50,7 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
         .owner_instance()
         .methods()
         .active_modifiers()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;

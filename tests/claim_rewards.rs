@@ -53,7 +53,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .owner_contract()
         .methods()
         .payouts()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -113,7 +113,7 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -153,7 +153,7 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -193,7 +193,7 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -228,7 +228,7 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -276,7 +276,7 @@ async fn claim_rewards__can_receive_strap_token() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -325,7 +325,7 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -379,7 +379,7 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -427,7 +427,7 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;
@@ -497,7 +497,7 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             .alice_contract()
             .methods()
             .current_game_id()
-            .call()
+            .simulate(Execution::StateReadOnly)
             .await
             .unwrap()
             .value;
@@ -603,7 +603,7 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .call()
+        .simulate(Execution::StateReadOnly)
         .await
         .unwrap()
         .value;

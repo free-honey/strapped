@@ -1,12 +1,23 @@
 #![allow(non_snake_case)]
 
 use fuels::{
-    prelude::{AssetConfig, CallParameters},
+    prelude::{
+        AssetConfig,
+        CallParameters,
+        Execution,
+    },
     tx::ContractIdExt,
 };
 use strapped_contract::{
-    contract_id, strap_to_sub_id,
-    strapped_types::{Bet, Modifier, Roll, Strap, StrapKind},
+    contract_id,
+    strap_to_sub_id,
+    strapped_types::{
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
     test_helpers::TestContext,
 };
 
@@ -34,7 +45,7 @@ async fn place_bet__adds_bets_to_list() {
         .alice_instance()
         .methods()
         .get_my_bets(roll.clone())
-        .call()
+        .simulate(Execution::Realistic)
         .await
         .unwrap()
         .value;
@@ -95,7 +106,7 @@ async fn place_bet__can_bet_strap() {
         .alice_instance()
         .methods()
         .get_my_bets(roll)
-        .call()
+        .simulate(Execution::Realistic)
         .await
         .unwrap()
         .value;
