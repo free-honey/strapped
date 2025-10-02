@@ -491,13 +491,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
 
         let some_seven_vrf_number = seven_base + (seven_mult * 36);
         ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
-        // let (trigger_roll, modifier_roll, modifier) =
-        //     modifier_triggers_for_roll(some_seven_vrf_number)
-        //         .first()
-        //         .unwrap()
-        //         .clone();
-        // let vrf_number = roll_to_vrf_number(&trigger_roll);
-        // ctx.advance_and_roll(vrf_number).await; // trigger modifier
         let available_triggers = modifier_triggers_for_roll(some_seven_vrf_number);
         let deets = format!(
             "seven_base: {:?}, seven_mult: {:?}, total: {:?}, available_triggers: {:?}",
@@ -533,15 +526,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
                 break;
             }
         }
-
-        // ctx.alice_contract()
-        //     .methods()
-        //     .purchase_modifier(modifier_roll.clone(), modifier.clone())
-        //     .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
-        //     .unwrap()
-        //     .call()
-        //     .await
-        //     .unwrap();
 
         ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // end game
 
