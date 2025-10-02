@@ -313,13 +313,83 @@ pub fn roll_to_vrf_number(roll: &Roll) -> u64 {
 }
 
 pub fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
+    let mut two = false;
+    let mut three = false;
+    let mut four = false;
+    let mut five = false;
+    let mut six = false;
+    let mut seven = false;
+    let mut eight = false;
+    let mut nine = false;
+    let mut ten = false;
+    let mut eleven = false;
+    let mut twelve = false;
     let mut triggers = Vec::new();
     let mut multiple = 1;
     while roll % multiple == 0 && roll != 0 {
         let inner = roll / multiple;
         let (modifier_roll, modifier) = u64_to_modifier(inner);
         let trigger_roll = u64_to_trigger_roll(inner);
-        triggers.push((trigger_roll, modifier_roll, modifier));
+        let add = match modifier_roll {
+            Roll::Two => {
+                let was = two;
+                two = true;
+                !was
+            }
+            Roll::Three => {
+                let was = three;
+                three = true;
+                !was
+            }
+            Roll::Four => {
+                let was = four;
+                four = true;
+                !was
+            }
+            Roll::Five => {
+                let was = five;
+                five = true;
+                !was
+            }
+            Roll::Six => {
+                let was = six;
+                six = true;
+                !was
+            }
+            Roll::Seven => {
+                let was = seven;
+                seven = true;
+                !was
+            }
+            Roll::Eight => {
+                let was = eight;
+                eight = true;
+                !was
+            }
+            Roll::Nine => {
+                let was = nine;
+                nine = true;
+                !was
+            }
+            Roll::Ten => {
+                let was = ten;
+                ten = true;
+                !was
+            }
+            Roll::Eleven => {
+                let was = eleven;
+                eleven = true;
+                !was
+            }
+            Roll::Twelve => {
+                let was = twelve;
+                twelve = true;
+                !was
+            }
+        };
+        if add {
+            triggers.push((trigger_roll, modifier_roll, modifier));
+        }
         multiple = multiple * 3;
     }
     triggers
