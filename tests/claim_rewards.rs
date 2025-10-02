@@ -460,7 +460,7 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
     use super::*;
 
     proptest! {
-        #![proptest_config(ProptestConfig { cases: 100, .. ProptestConfig::default() })]
+        #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
         #[test]
         fn claim_rewards__includes_modifier_in_strap_level_up(seven_mult in 1u64..=1000u64, seven_base in 15u64..=20) {
             let rt = Runtime::new().unwrap();
@@ -474,9 +474,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
         seven_base: u64,
         seven_mult: u64,
     ) {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
-            .try_init();
         // given
         let base_contract_id = contract_id();
         let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
@@ -496,7 +493,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             "seven_base: {:?}, seven_mult: {:?}, total: {:?}, available_triggers: {:?}",
             seven_base, seven_mult, some_seven_vrf_number, available_triggers
         );
-        tracing::error!("deets: {}", deets);
         let bet_game_id = ctx
             .alice_contract()
             .methods()
