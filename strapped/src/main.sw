@@ -75,7 +75,7 @@ storage {
     /// Bets placed by (game_id, identity, roll) -> Vec<(bet, amount, roll_index)>
     bets: StorageMap<(GameId, Identity, Roll), StorageVec<(Bet, Amount, RollIndex)>> = StorageMap {},
     /// Straps to be rewarded for the current game when it ends
-    strap_rewards: StorageVec<(Roll, Strap)> = StorageVec {},
+    strap_rewards: StorageMap<GameId, StorageVec<(Roll, Strap)>> = StorageMap {},
     /// Triggers to add modifiers to shop, and whether they have been triggered this game
     /// 1. Roll that triggers the modifier
     /// 2. Roll that will add the modifier once purchased
@@ -197,22 +197,22 @@ impl Strapped for Contract {
             0
         };
         let rng_contract_id = storage.vrf_contract_id.read();
-        let rng_abi = abi(VRF, rng_contract_id);
-        let random_number = rng_abi.get_random(roll_height);
-        let roll = u64_to_roll(random_number);
         let current_game_id = storage.current_game_id.read();
         let old_roll_index = storage.roll_index.read();
         storage.roll_index.write(old_roll_index + 1);
+        let rng_abi = abi(VRF, rng_contract_id);
+        let random_number = rng_abi.get_random(roll_height);
+        let roll = u64_to_roll(random_number);
         storage.roll_history.get(current_game_id).push(roll);
         match roll {
             Roll::Seven => {
-                storage.current_game_id.write(current_game_id + 1);
+                let new_game_id = current_game_id + 1;
+                storage.current_game_id.write(new_game_id);
                 let new_straps = generate_straps(random_number);
-                storage.strap_rewards.clear();
                 storage.roll_index.write(0);
                 storage.modifier_triggers.clear();
                 for (roll, strap) in new_straps.iter() {
-                    storage.strap_rewards.push((roll, strap));
+                    storage.strap_rewards.get(new_game_id).push((roll, strap));
                 }
                 for (trigger_roll, modifier_roll, modifier) in modifier_triggers_for_roll(random_number).iter() {
                     storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
@@ -294,7 +294,8 @@ impl Strapped for Contract {
                     match bet {
                         Bet::Chip => {
                             if !received_chip_reward_for_roll {
-                                let roll_rewards = rewards_for_roll(storage.strap_rewards.load_vec(), roll);
+                                let straps = storage.strap_rewards.get(game_id).load_vec();
+                                let roll_rewards = rewards_for_roll(straps, roll);
                                 for sub_id in roll_rewards.iter() {
                                     rewards.push((sub_id, 1));
                                     received_chip_reward_for_roll = true;
@@ -360,7 +361,8 @@ impl Strapped for Contract {
 
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap)> {
-        storage.strap_rewards.load_vec()
+        let current_game_id = storage.current_game_id.read();
+        storage.strap_rewards.get(current_game_id).load_vec()
     }
 
     #[storage(read)]
@@ -452,9 +454,9 @@ fn u64_to_strap(num: u64) -> Strap {
     } else if modulo < 130 {
         StrapKind::Piercing // weight 5
     } else if modulo < 135 {
-        StrapKind::Coat // weight 5
+        StrapKind::Coat // weight 2
     } else if modulo < 137 {
-        StrapKind::Scarf // weight 5
+        StrapKind::Scarf // weight 2
     } else if modulo < 139 {
         StrapKind::Gloves // weight 2
     } else if modulo < 141 {

@@ -266,9 +266,9 @@ pub fn u64_to_strap(num: u64) -> Strap {
     } else if modulo < 130 {
         StrapKind::Piercing // weight 5
     } else if modulo < 135 {
-        StrapKind::Coat // weight 5
+        StrapKind::Coat // weight 2
     } else if modulo < 137 {
-        StrapKind::Scarf // weight 5
+        StrapKind::Scarf // weight 2
     } else if modulo < 139 {
         StrapKind::Gloves // weight 2
     } else if modulo < 141 {
