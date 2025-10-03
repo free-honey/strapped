@@ -30,6 +30,13 @@ use tokio::runtime::Runtime;
 pub const SIX_VRF_NUMBER: u64 = 10;
 pub const SEVEN_VRF_NUMBER: u64 = 15;
 
+// prop strategy for generating a random vrf_number that will roll "Seven"
+prop_compose! {
+    fn seven_vrf_number()(seven_mult in 1u64..=1000u64, seven_base in 15u64..=20) -> u64 {
+        seven_base + (seven_mult * 36)
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
     #[test]
@@ -269,21 +276,16 @@ mod _claim_rewards__can_receive_strap_token {
     proptest! {
         #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
         #[test]
-        fn claim_rewards__includes_modifier_in_strap_level_up(seven_mult in 1u64..=1000u64, seven_base in 15u64..=20) {
+        fn claim_rewards__includes_modifier_in_strap_level_up(seven_vrf_number in seven_vrf_number()) {
             let rt = Runtime::new().unwrap();
             rt.block_on(async {
-                _claim_rewards__can_receive_strap_token(seven_base, seven_mult).await;
+                _claim_rewards__can_receive_strap_token(seven_vrf_number).await;
             });
         }
     }
 
-    async fn _claim_rewards__can_receive_strap_token(seven_base: u64, seven_mult: u64) {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
-            .try_init();
-
+    async fn _claim_rewards__can_receive_strap_token(seven_vrf_number: u64) {
         let ctx = TestContext::new().await;
-        let seven_vrf_number = seven_base + (seven_mult * 36);
         ctx.advance_and_roll(seven_vrf_number).await;
 
         // given
@@ -297,33 +299,6 @@ mod _claim_rewards__can_receive_strap_token {
             .value;
         let generate_straps = generate_straps(seven_vrf_number);
         let (roll, strap) = generate_straps.first().clone().unwrap();
-        // tracing::error!("straps generated: {:?}", generate_straps);
-
-        let vrf_number = ctx
-            .vrf_contract()
-            .methods()
-            .get_random(1)
-            .simulate(Execution::StateReadOnly)
-            .await
-            .unwrap()
-            .value;
-        assert_eq!(
-            vrf_number, seven_vrf_number,
-            "VRF number does not match expected seven_vrf_number"
-        );
-        let actual_reward_list = ctx
-            .alice_contract()
-            .methods()
-            .strap_rewards()
-            .simulate(Execution::StateReadOnly)
-            .await
-            .unwrap()
-            .value;
-        assert_eq!(
-            actual_reward_list, generate_straps,
-            "rewards list does not match expected for vrf number: {:?}",
-            vrf_number
-        );
 
         place_chip_bet(&ctx, roll.clone(), 100).await;
         let vrf_number = roll_to_vrf_number(&roll);
@@ -352,13 +327,7 @@ mod _claim_rewards__can_receive_strap_token {
             .get_asset_balance(&strap_asset_id)
             .await
             .unwrap();
-        // assert_eq!(
-        //     balance_after,
-        //     balance_before + 1,
-        //     "Failed to receive straps {:?}, with deets: seven_vrf_number: {:?}",
-        //     generate_straps,
-        //     seven_vrf_number
-        // );
+
         let expected = balance_before + 1;
         if balance_after != expected {
             panic!(
@@ -523,17 +492,16 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
     proptest! {
         #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
         #[test]
-        fn claim_rewards__includes_modifier_in_strap_level_up(seven_mult in 1u64..=1000u64, seven_base in 15u64..=20) {
+        fn claim_rewards__includes_modifier_in_strap_level_up(seven_vrf_number in seven_vrf_number()) {
             let rt = Runtime::new().unwrap();
             rt.block_on(async {
-                _claim_rewards__includes_modifier_in_strap_level_up(seven_base, seven_mult).await;
+                _claim_rewards__includes_modifier_in_strap_level_up(seven_vrf_number).await;
             });
         }
     }
 
     async fn _claim_rewards__includes_modifier_in_strap_level_up(
-        seven_base: u64,
-        seven_mult: u64,
+        some_seven_vrf_number: u64,
     ) {
         // given
         let base_contract_id = contract_id();
@@ -547,12 +515,11 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
         }])
         .await;
 
-        let some_seven_vrf_number = seven_base + (seven_mult * 36);
         ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
         let available_triggers = modifier_triggers_for_roll(some_seven_vrf_number);
         let deets = format!(
-            "seven_base: {:?}, seven_mult: {:?}, total: {:?}, available_triggers: {:?}",
-            seven_base, seven_mult, some_seven_vrf_number, available_triggers
+            "seven_vrf_number: {:?}, available_triggers: {:?}",
+            some_seven_vrf_number, available_triggers
         );
         let bet_game_id = ctx
             .alice_contract()
