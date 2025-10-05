@@ -432,12 +432,19 @@ impl AppController {
             }
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
             // rewards for this roll (count available rewards, not wallet balance)
-            let mut rewards: Vec<(strapped::Strap, u64)> = Vec::new();
-            for (_rr, s, _) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
-                if let Some((_es, cnt)) = rewards.iter_mut().find(|(es, _)| es == s) {
-                    *cnt += 1;
+            let mut rewards: Vec<RewardInfo> = Vec::new();
+            for (_rr, s, cost) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
+                if let Some(existing) = rewards
+                    .iter_mut()
+                    .find(|info| info.strap == *s && info.cost == *cost)
+                {
+                    existing.count += 1;
                 } else {
-                    rewards.push((s.clone(), 1));
+                    rewards.push(RewardInfo {
+                        strap: s.clone(),
+                        cost: *cost,
+                        count: 1,
+                    });
                 }
                 if !unique_straps.iter().any(|es| *es == *s) {
                     unique_straps.push(s.clone());
@@ -991,7 +998,14 @@ pub struct RollCell {
     pub chip_total: u64,
     pub strap_total: u64,
     pub straps: Vec<(strapped::Strap, u64)>,
-    pub rewards: Vec<(strapped::Strap, u64)>,
+    pub rewards: Vec<RewardInfo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RewardInfo {
+    pub strap: strapped::Strap,
+    pub cost: u64,
+    pub count: u64,
 }
 
 #[derive(Clone, Debug)]

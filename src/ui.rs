@@ -532,11 +532,17 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         if cell.rewards.is_empty() {
             lines.push(Line::from("  None"));
         } else {
-            for (s, bal) in &cell.rewards {
+            for reward in &cell.rewards {
+                let qty = if reward.count > 1 {
+                    format!(" x{}", reward.count)
+                } else {
+                    String::new()
+                };
                 lines.push(Line::from(format!(
-                    "  {} x{}",
-                    render_reward_compact(s),
-                    bal
+                    " ${} {}{}",
+                    reward.cost,
+                    render_reward_compact(&reward.strap),
+                    qty
                 )));
             }
         }
