@@ -780,7 +780,8 @@ impl AppController {
                 .or_insert_with(Vec::new);
             for (roll, strap) in &upgraded_straps {
                 if !entry.iter().any(|(_, existing, _)| existing == strap) {
-                    entry.push((roll.clone(), strap.clone(), todo!()));
+                    let cost = Self::strap_cost(strap);
+                    entry.push((roll.clone(), strap.clone(), cost));
                 }
             }
         }
@@ -958,6 +959,30 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
 }
 
 impl AppController {
+    fn strap_cost(strap: &strapped::Strap) -> u64 {
+        match strap.kind {
+            strapped::StrapKind::Shirt => 10,
+            strapped::StrapKind::Pants => 10,
+            strapped::StrapKind::Shoes => 10,
+            strapped::StrapKind::Dress => 10,
+            strapped::StrapKind::Hat => 20,
+            strapped::StrapKind::Glasses => 20,
+            strapped::StrapKind::Watch => 20,
+            strapped::StrapKind::Ring => 20,
+            strapped::StrapKind::Necklace => 50,
+            strapped::StrapKind::Earring => 50,
+            strapped::StrapKind::Bracelet => 50,
+            strapped::StrapKind::Tattoo => 50,
+            strapped::StrapKind::Skirt => 50,
+            strapped::StrapKind::Piercing => 50,
+            strapped::StrapKind::Coat => 100,
+            strapped::StrapKind::Scarf => 100,
+            strapped::StrapKind::Gloves => 100,
+            strapped::StrapKind::Gown => 100,
+            strapped::StrapKind::Belt => 200,
+        }
+    }
+
     fn push_errors(&mut self, mut items: Vec<String>) {
         if items.is_empty() {
             return;
