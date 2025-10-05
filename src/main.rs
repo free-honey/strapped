@@ -1,10 +1,4 @@
 use color_eyre::eyre::Result;
-use std::sync::OnceLock;
-use tracing_appender::rolling;
-use tracing_subscriber::{
-    EnvFilter,
-    fmt,
-};
 
 mod client;
 mod ui;
