@@ -289,6 +289,7 @@ mod _claim_rewards__can_receive_strap_token {
         ctx.advance_and_roll(seven_vrf_number).await;
 
         // given
+        let bet = 1_000;
         let bet_game_id = ctx
             .alice_contract()
             .methods()
@@ -298,9 +299,9 @@ mod _claim_rewards__can_receive_strap_token {
             .unwrap()
             .value;
         let generate_straps = generate_straps(seven_vrf_number);
-        let (roll, strap) = generate_straps.first().clone().unwrap();
+        let (roll, strap, cost) = generate_straps.first().clone().unwrap();
 
-        place_chip_bet(&ctx, roll.clone(), 100).await;
+        place_chip_bet(&ctx, roll.clone(), bet).await;
         let vrf_number = roll_to_vrf_number(&roll);
         ctx.advance_and_roll(vrf_number).await;
         ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
@@ -328,7 +329,8 @@ mod _claim_rewards__can_receive_strap_token {
             .await
             .unwrap();
 
-        let expected = balance_before + 1;
+        let won_straps = bet / cost;
+        let expected = balance_before + won_straps;
         if balance_after != expected {
             panic!(
                 "Failed to receive straps {:?}, with deets: seven_vrf_number: {:?}\n balance_before: {:?}, balance_after: {:?}",
@@ -347,7 +349,7 @@ async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards
 
     // given
-    let (roll, strap) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
+    let (roll, strap, cost) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
     place_chip_bet(&ctx, roll.clone(), 100).await;
     place_chip_bet(&ctx, roll.clone(), 100).await;
 

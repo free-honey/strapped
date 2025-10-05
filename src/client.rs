@@ -216,7 +216,7 @@ pub struct AppController {
     alice_claimed: HashSet<u64>,
     prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
     prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    strap_rewards_by_game: HashMap<u64, Vec<(strapped::Roll, strapped::Strap)>>,
+    strap_rewards_by_game: HashMap<u64, Vec<(strapped::Roll, strapped::Strap, u64)>>,
     active_modifiers_by_game:
         HashMap<u64, Vec<(strapped::Roll, strapped::Modifier, u64)>>,
     errors: Vec<String>,
@@ -433,7 +433,7 @@ impl AppController {
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
             // rewards for this roll (count available rewards, not wallet balance)
             let mut rewards: Vec<(strapped::Strap, u64)> = Vec::new();
-            for (_rr, s) in strap_rewards.iter().filter(|(rr, _)| rr == r) {
+            for (_rr, s, _) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
                 if let Some((_es, cnt)) = rewards.iter_mut().find(|(es, _)| es == s) {
                     *cnt += 1;
                 } else {
@@ -455,7 +455,7 @@ impl AppController {
         // Sum owned straps for known strap variants (from current bets/rewards + all known rewards by game)
         let mut unique_straps = unique_straps;
         for (_gid, list) in &self.strap_rewards_by_game {
-            for (_r, s) in list {
+            for (_r, s, _) in list {
                 if !unique_straps.iter().any(|es| *es == *s) {
                     unique_straps.push(s.clone());
                 }
@@ -723,7 +723,7 @@ impl AppController {
             .cloned()
             .unwrap_or_default();
         let mut strap_candidates: Vec<strapped::Strap> = Vec::new();
-        for (_roll, strap) in &strap_list {
+        for (_roll, strap, _) in &strap_list {
             if !strap_candidates.iter().any(|existing| existing == strap) {
                 strap_candidates.push(strap.clone());
             }
@@ -772,8 +772,8 @@ impl AppController {
                 .entry(game_id)
                 .or_insert_with(Vec::new);
             for (roll, strap) in &upgraded_straps {
-                if !entry.iter().any(|(_, existing)| existing == strap) {
-                    entry.push((roll.clone(), strap.clone()));
+                if !entry.iter().any(|(_, existing, _)| existing == strap) {
+                    entry.push((roll.clone(), strap.clone(), todo!()));
                 }
             }
         }

@@ -74,8 +74,8 @@ storage {
     current_game_id: GameId = 0,
     /// Bets placed by (game_id, identity, roll) -> Vec<(bet, amount, roll_index)>
     bets: StorageMap<(GameId, Identity, Roll), StorageVec<(Bet, Amount, RollIndex)>> = StorageMap {},
-    /// Straps to be rewarded for the current game when it ends
-    strap_rewards: StorageMap<GameId, StorageVec<(Roll, Strap)>> = StorageMap {},
+    /// Straps to be rewarded for the current game when it ends, and the cost in the chip asset per strap
+    strap_rewards: StorageMap<GameId, StorageVec<(Roll, Strap, u64)>> = StorageMap {},
     /// Triggers to add modifiers to shop, and whether they have been triggered this game
     /// 1. Roll that triggers the modifier
     /// 2. Roll that will add the modifier once purchased
@@ -152,7 +152,7 @@ abi Strapped {
 
     /// Get the straps to be rewarded for the current game
     #[storage(read)]
-    fn strap_rewards() -> Vec<(Roll, Strap)>;
+    fn strap_rewards() -> Vec<(Roll, Strap, u64)>;
 
     /// Get the modifier triggers
     #[storage(read)]
@@ -211,8 +211,8 @@ impl Strapped for Contract {
                 let new_straps = generate_straps(random_number);
                 storage.roll_index.write(0);
                 storage.modifier_triggers.clear();
-                for (roll, strap) in new_straps.iter() {
-                    storage.strap_rewards.get(new_game_id).push((roll, strap));
+                for (roll, strap, cost) in new_straps.iter() {
+                    storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
                 }
                 for (trigger_roll, modifier_roll, modifier) in modifier_triggers_for_roll(random_number).iter() {
                     storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
@@ -295,9 +295,9 @@ impl Strapped for Contract {
                         Bet::Chip => {
                             if !received_chip_reward_for_roll {
                                 let straps = storage.strap_rewards.get(game_id).load_vec();
-                                let roll_rewards = rewards_for_roll(straps, roll);
-                                for sub_id in roll_rewards.iter() {
-                                    rewards.push((sub_id, 1));
+                                let roll_rewards = rewards_for_roll(straps, roll, amount);
+                                for (sub_id, amount) in roll_rewards.iter() {
+                                    rewards.push((sub_id, amount));
                                     received_chip_reward_for_roll = true;
                                 }
                             }
@@ -360,7 +360,7 @@ impl Strapped for Contract {
     }
 
     #[storage(read)]
-    fn strap_rewards() -> Vec<(Roll, Strap)> {
+    fn strap_rewards() -> Vec<(Roll, Strap, u64)> {
         let current_game_id = storage.current_game_id.read();
         storage.strap_rewards.get(current_game_id).load_vec()
     }
@@ -410,14 +410,15 @@ fn eight_payout(principal: u64) -> u64 {
     principal * 2
 }
 
-fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
-    let mut straps: Vec<(Roll, Strap)> = Vec::new();
+fn generate_straps(seed: u64) -> Vec<(Roll, Strap, u64)> {
+    let mut straps: Vec<(Roll, Strap, u64)> = Vec::new();
     let mut multiple = 1;
     while seed % multiple == 0 && seed != 0{
         let inner = seed / multiple;
         let strap = u64_to_strap(inner);
         let slot = u64_to_slot(inner);
-        straps.push((slot, strap));
+        let cost = strap_to_cost(strap);
+        straps.push((slot, strap, cost));
         multiple = multiple * 2;
     }
     straps
@@ -485,12 +486,37 @@ fn u64_to_slot(num: u64) -> Roll {
     }
 }
 
-fn rewards_for_roll(available_straps: Vec<(Roll, Strap)>, roll: Roll) -> Vec<SubId> {
-    let mut rewards: Vec<SubId> = Vec::new();
-    for (reward_roll, strap) in available_straps.iter() {
+fn strap_to_cost(strap: Strap) -> u64 {
+    match strap.kind {
+        StrapKind::Shirt => 10,
+        StrapKind::Pants => 10,
+        StrapKind::Shoes => 10,
+        StrapKind::Dress => 10,
+        StrapKind::Hat => 20,
+        StrapKind::Glasses => 20,
+        StrapKind::Watch => 20,
+        StrapKind::Ring => 20,
+        StrapKind::Necklace => 50,
+        StrapKind::Earring => 50,
+        StrapKind::Bracelet => 50,
+        StrapKind::Tattoo => 50,
+        StrapKind::Skirt => 50,
+        StrapKind::Piercing => 50,
+        StrapKind::Coat => 100,
+        StrapKind::Scarf => 100,
+        StrapKind::Gloves => 100,
+        StrapKind::Gown => 100,
+        StrapKind::Belt => 200,
+    }
+}
+
+fn rewards_for_roll(available_straps: Vec<(Roll, Strap, u64)>, roll: Roll, bet_amount: u64) -> Vec<(SubId, u64)> {
+    let mut rewards: Vec<(SubId, u64)> = Vec::new();
+    for (reward_roll, strap, cost) in available_straps.iter() {
         if reward_roll == roll {
             let sub_id = strap.into_sub_id();
-            rewards.push(sub_id);
+            let amount = bet_amount / cost;
+            rewards.push((sub_id, amount));
         }
     }
     rewards
