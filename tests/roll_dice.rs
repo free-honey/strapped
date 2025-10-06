@@ -5,12 +5,7 @@ use fuels::prelude::{
     Execution,
 };
 use strapped_contract::{
-    strapped_types::{
-        Modifier,
-        Roll,
-        Strap,
-        StrapKind,
-    },
+    strapped_types::Roll,
     test_helpers::*,
 };
 
@@ -91,7 +86,7 @@ async fn roll_dice__if_seven_generates_new_modifier_triggers() {
     // given
     // when
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
-    let mut triggers = modifier_triggers_for_roll(SEVEN_VRF_NUMBER);
+    let triggers = modifier_triggers_for_roll(SEVEN_VRF_NUMBER);
 
     // then
     let actual = ctx
@@ -115,7 +110,7 @@ async fn roll_dice__if_hit_the_modifier_value_triggers_the_modifier_to_be_purcha
     // given
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
-    let mut triggers = modifier_triggers_for_roll(SEVEN_VRF_NUMBER);
+    let triggers = modifier_triggers_for_roll(SEVEN_VRF_NUMBER);
 
     let (trigger_roll, _, _) = triggers.first().unwrap().clone();
     let vrf_number = roll_to_vrf_number(&trigger_roll);

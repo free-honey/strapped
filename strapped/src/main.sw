@@ -287,19 +287,15 @@ impl Strapped for Contract {
         let mut rewards: Vec<(SubId, u64)> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
-            let mut received_chip_reward_for_roll = false;
             let mut bet_index = 0;
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
                         Bet::Chip => {
-                            if !received_chip_reward_for_roll {
-                                let straps = storage.strap_rewards.get(game_id).load_vec();
-                                let roll_rewards = rewards_for_roll(straps, roll, amount);
-                                for (sub_id, amount) in roll_rewards.iter() {
-                                    rewards.push((sub_id, amount));
-                                    received_chip_reward_for_roll = true;
-                                }
+                            let straps = storage.strap_rewards.get(game_id).load_vec();
+                            let roll_rewards = rewards_for_roll(straps, roll, amount);
+                            for (sub_id, amount) in roll_rewards.iter() {
+                                rewards.push((sub_id, amount));
                             }
                             let bet_winnings = storage.payouts.read().calculate_payout(amount, roll);
                             total_chips_winnings += bet_winnings; 
