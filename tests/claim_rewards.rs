@@ -300,23 +300,41 @@ mod _claim_rewards__can_receive_strap_token {
             .unwrap()
             .value;
         let generate_straps = generate_straps(seven_vrf_number);
+        let available_rewards = ctx
+            .owner_contract()
+            .methods()
+            .strap_rewards()
+            .simulate(Execution::StateReadOnly)
+            .await
+            .unwrap()
+            .value;
+        debug_assert_eq!(&generate_straps, &available_rewards);
+
         for (roll, _strap, _cost) in generate_straps.clone() {
             place_chip_bet(&ctx, roll.clone(), bet).await;
             let vrf_number = roll_to_vrf_number(&roll);
             ctx.advance_and_roll(vrf_number).await;
         }
 
+        let mut asset_id_to_strap = HashMap::new();
+
         ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
-        let expected_straps_rewards = generate_straps.iter().fold(
-            HashMap::new(),
-            |mut acc, (roll, strap, cost)| {
-                let strap_asset_id = strap_asset_id(&ctx, strap);
-                let won_straps = bet / cost;
-                *acc.entry(strap_asset_id).or_insert(0) += won_straps;
-                acc
-            },
-        );
+        let mut expected_straps_rewards = HashMap::new();
+        let rolls = generate_straps.iter().map(|(roll, _, _)| roll);
+        for roll in rolls {
+            for (target_roll, strap, cost) in &generate_straps {
+                if target_roll == roll {
+                    let strap_asset_id = strap_asset_id(&ctx, strap);
+                    asset_id_to_strap.insert(strap_asset_id.clone(), strap.clone());
+                    let won_straps = bet / cost;
+                    let entry = expected_straps_rewards
+                        .entry(strap_asset_id.clone())
+                        .or_insert(0);
+                    *entry += won_straps;
+                }
+            }
+        }
 
         let mut balances_before = HashMap::new();
         for (strap_asset_id, _) in expected_straps_rewards.iter() {
@@ -335,6 +353,7 @@ mod _claim_rewards__can_receive_strap_token {
 
         // then
         for (strap_asset_id, reward_amount) in expected_straps_rewards.iter() {
+            let strap = asset_id_to_strap.get(strap_asset_id).unwrap();
             let balance_before = balances_before.get(strap_asset_id).unwrap();
             let balance_after = ctx
                 .alice()
@@ -345,8 +364,13 @@ mod _claim_rewards__can_receive_strap_token {
             let expected = balance_before + reward_amount;
             if balance_after != expected {
                 panic!(
-                    "Failed to receive straps {:?}, with deets: seven_vrf_number: {:?}\n balance_before: {:?}, balance_after: {:?}",
-                    generate_straps, seven_vrf_number, expected, balance_after
+                    "Failed to receive straps {:?},\n particular strap {:?},\n with deets: seven_vrf_number: {:?}\n balance_before: {:?},\n expected_balance_after: {:?},\n balance_after: {:?}",
+                    generate_straps,
+                    strap,
+                    seven_vrf_number,
+                    balance_before,
+                    expected,
+                    balance_after
                 );
             } else {
                 tracing::error!(
