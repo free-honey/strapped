@@ -270,6 +270,23 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
     assert_eq!(balance_after_first, balance_after_second);
 }
 
+// because hashable
+fn roll_to_number(roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => 2,
+        Roll::Three => 3,
+        Roll::Four => 4,
+        Roll::Five => 5,
+        Roll::Six => 6,
+        Roll::Seven => 7,
+        Roll::Eight => 8,
+        Roll::Nine => 9,
+        Roll::Ten => 10,
+        Roll::Eleven => 11,
+        Roll::Twelve => 12,
+    }
+}
+
 mod _claim_rewards__can_receive_strap_token {
     use super::*;
     use std::collections::HashMap;
@@ -291,6 +308,7 @@ mod _claim_rewards__can_receive_strap_token {
 
         // given
         let bet = 1_000;
+        let mut bets_for_roll = HashMap::new();
         let bet_game_id = ctx
             .alice_contract()
             .methods()
@@ -312,6 +330,12 @@ mod _claim_rewards__can_receive_strap_token {
 
         for (roll, _strap, _cost) in generate_straps.clone() {
             place_chip_bet(&ctx, roll.clone(), bet).await;
+            let roll_number = roll_to_number(&roll);
+            let entry = bets_for_roll.entry(roll_number).or_insert(0);
+            *entry += bet;
+        }
+
+        for (roll, _strap, _cost) in generate_straps.clone() {
             let vrf_number = roll_to_vrf_number(&roll);
             ctx.advance_and_roll(vrf_number).await;
         }
@@ -327,7 +351,9 @@ mod _claim_rewards__can_receive_strap_token {
                 if target_roll == roll {
                     let strap_asset_id = strap_asset_id(&ctx, strap);
                     asset_id_to_strap.insert(strap_asset_id.clone(), strap.clone());
-                    let won_straps = bet / cost;
+                    let total_bet =
+                        bets_for_roll.get(&roll_to_number(roll)).cloned().unwrap();
+                    let won_straps = total_bet / cost;
                     let entry = expected_straps_rewards
                         .entry(strap_asset_id.clone())
                         .or_insert(0);
