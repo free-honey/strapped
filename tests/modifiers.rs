@@ -4,16 +4,10 @@ use fuels::prelude::{
     CallParameters,
     Execution,
 };
-use strapped_contract::{
-    strapped_types::{
-        Modifier,
-        Roll,
-    },
-    test_helpers::{
-        TestContext,
-        modifier_triggers_for_roll,
-        roll_to_vrf_number,
-    },
+use strapped_contract::test_helpers::{
+    TestContext,
+    modifier_triggers_for_roll,
+    roll_to_vrf_number,
 };
 
 pub const TWO_VRF_NUMBER: u64 = 0;

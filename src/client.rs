@@ -216,7 +216,7 @@ pub struct AppController {
     alice_claimed: HashSet<u64>,
     prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
     prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    strap_rewards_by_game: HashMap<u64, Vec<(strapped::Roll, strapped::Strap)>>,
+    strap_rewards_by_game: HashMap<u64, Vec<(strapped::Roll, strapped::Strap, u64)>>,
     active_modifiers_by_game:
         HashMap<u64, Vec<(strapped::Roll, strapped::Modifier, u64)>>,
     errors: Vec<String>,
@@ -432,12 +432,19 @@ impl AppController {
             }
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
             // rewards for this roll (count available rewards, not wallet balance)
-            let mut rewards: Vec<(strapped::Strap, u64)> = Vec::new();
-            for (_rr, s) in strap_rewards.iter().filter(|(rr, _)| rr == r) {
-                if let Some((_es, cnt)) = rewards.iter_mut().find(|(es, _)| es == s) {
-                    *cnt += 1;
+            let mut rewards: Vec<RewardInfo> = Vec::new();
+            for (_rr, s, cost) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
+                if let Some(existing) = rewards
+                    .iter_mut()
+                    .find(|info| info.strap == *s && info.cost == *cost)
+                {
+                    existing.count += 1;
                 } else {
-                    rewards.push((s.clone(), 1));
+                    rewards.push(RewardInfo {
+                        strap: s.clone(),
+                        cost: *cost,
+                        count: 1,
+                    });
                 }
                 if !unique_straps.iter().any(|es| *es == *s) {
                     unique_straps.push(s.clone());
@@ -455,7 +462,7 @@ impl AppController {
         // Sum owned straps for known strap variants (from current bets/rewards + all known rewards by game)
         let mut unique_straps = unique_straps;
         for (_gid, list) in &self.strap_rewards_by_game {
-            for (_r, s) in list {
+            for (_r, s, _) in list {
                 if !unique_straps.iter().any(|es| *es == *s) {
                     unique_straps.push(s.clone());
                 }
@@ -723,7 +730,7 @@ impl AppController {
             .cloned()
             .unwrap_or_default();
         let mut strap_candidates: Vec<strapped::Strap> = Vec::new();
-        for (_roll, strap) in &strap_list {
+        for (_roll, strap, _) in &strap_list {
             if !strap_candidates.iter().any(|existing| existing == strap) {
                 strap_candidates.push(strap.clone());
             }
@@ -772,8 +779,9 @@ impl AppController {
                 .entry(game_id)
                 .or_insert_with(Vec::new);
             for (roll, strap) in &upgraded_straps {
-                if !entry.iter().any(|(_, existing)| existing == strap) {
-                    entry.push((roll.clone(), strap.clone()));
+                if !entry.iter().any(|(_, existing, _)| existing == strap) {
+                    let cost = Self::strap_cost(strap);
+                    entry.push((roll.clone(), strap.clone(), cost));
                 }
             }
         }
@@ -951,6 +959,30 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
 }
 
 impl AppController {
+    fn strap_cost(strap: &strapped::Strap) -> u64 {
+        match strap.kind {
+            strapped::StrapKind::Shirt => 10,
+            strapped::StrapKind::Pants => 10,
+            strapped::StrapKind::Shoes => 10,
+            strapped::StrapKind::Dress => 10,
+            strapped::StrapKind::Hat => 20,
+            strapped::StrapKind::Glasses => 20,
+            strapped::StrapKind::Watch => 20,
+            strapped::StrapKind::Ring => 20,
+            strapped::StrapKind::Necklace => 50,
+            strapped::StrapKind::Earring => 50,
+            strapped::StrapKind::Bracelet => 50,
+            strapped::StrapKind::Tattoo => 50,
+            strapped::StrapKind::Skirt => 50,
+            strapped::StrapKind::Piercing => 50,
+            strapped::StrapKind::Coat => 100,
+            strapped::StrapKind::Scarf => 100,
+            strapped::StrapKind::Gloves => 100,
+            strapped::StrapKind::Gown => 100,
+            strapped::StrapKind::Belt => 200,
+        }
+    }
+
     fn push_errors(&mut self, mut items: Vec<String>) {
         if items.is_empty() {
             return;
@@ -991,7 +1023,14 @@ pub struct RollCell {
     pub chip_total: u64,
     pub strap_total: u64,
     pub straps: Vec<(strapped::Strap, u64)>,
-    pub rewards: Vec<(strapped::Strap, u64)>,
+    pub rewards: Vec<RewardInfo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RewardInfo {
+    pub strap: strapped::Strap,
+    pub cost: u64,
+    pub count: u64,
 }
 
 #[derive(Clone, Debug)]

@@ -270,13 +270,31 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
     assert_eq!(balance_after_first, balance_after_second);
 }
 
+// because hashable
+fn roll_to_number(roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => 2,
+        Roll::Three => 3,
+        Roll::Four => 4,
+        Roll::Five => 5,
+        Roll::Six => 6,
+        Roll::Seven => 7,
+        Roll::Eight => 8,
+        Roll::Nine => 9,
+        Roll::Ten => 10,
+        Roll::Eleven => 11,
+        Roll::Twelve => 12,
+    }
+}
+
 mod _claim_rewards__can_receive_strap_token {
     use super::*;
+    use std::collections::HashMap;
 
     proptest! {
         #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
         #[test]
-        fn claim_rewards__includes_modifier_in_strap_level_up(seven_vrf_number in seven_vrf_number()) {
+        fn claim_rewards__can_receive_strap_token(seven_vrf_number in seven_vrf_number()) {
             let rt = Runtime::new().unwrap();
             rt.block_on(async {
                 _claim_rewards__can_receive_strap_token(seven_vrf_number).await;
@@ -289,6 +307,8 @@ mod _claim_rewards__can_receive_strap_token {
         ctx.advance_and_roll(seven_vrf_number).await;
 
         // given
+        let bet = 1_000;
+        let mut bets_for_roll = HashMap::new();
         let bet_game_id = ctx
             .alice_contract()
             .methods()
@@ -298,19 +318,55 @@ mod _claim_rewards__can_receive_strap_token {
             .unwrap()
             .value;
         let generate_straps = generate_straps(seven_vrf_number);
-        let (roll, strap) = generate_straps.first().clone().unwrap();
+        let available_rewards = ctx
+            .owner_contract()
+            .methods()
+            .strap_rewards()
+            .simulate(Execution::StateReadOnly)
+            .await
+            .unwrap()
+            .value;
+        debug_assert_eq!(&generate_straps, &available_rewards);
 
-        place_chip_bet(&ctx, roll.clone(), 100).await;
-        let vrf_number = roll_to_vrf_number(&roll);
-        ctx.advance_and_roll(vrf_number).await;
+        for (roll, _strap, _cost) in generate_straps.clone() {
+            place_chip_bet(&ctx, roll.clone(), bet).await;
+            let roll_number = roll_to_number(&roll);
+            let entry = bets_for_roll.entry(roll_number).or_insert(0);
+            *entry += bet;
+        }
+
+        for (roll, _strap, _cost) in generate_straps.clone() {
+            let vrf_number = roll_to_vrf_number(&roll);
+            ctx.advance_and_roll(vrf_number).await;
+        }
+
+        let mut asset_id_to_strap = HashMap::new();
+
         ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
 
-        let strap_asset_id = strap_asset_id(&ctx, &strap);
-        let balance_before = ctx
-            .alice()
-            .get_asset_balance(&strap_asset_id)
-            .await
-            .unwrap();
+        let mut expected_straps_rewards = HashMap::new();
+        let rolls = generate_straps.iter().map(|(roll, _, _)| roll);
+        for roll in rolls {
+            for (target_roll, strap, cost) in &generate_straps {
+                if target_roll == roll {
+                    let strap_asset_id = strap_asset_id(&ctx, strap);
+                    asset_id_to_strap.insert(strap_asset_id.clone(), strap.clone());
+                    let total_bet =
+                        bets_for_roll.get(&roll_to_number(roll)).cloned().unwrap();
+                    let won_straps = total_bet / cost;
+                    let entry = expected_straps_rewards
+                        .entry(strap_asset_id.clone())
+                        .or_insert(0);
+                    *entry += won_straps;
+                }
+            }
+        }
+
+        let mut balances_before = HashMap::new();
+        for (strap_asset_id, _) in expected_straps_rewards.iter() {
+            let balance = ctx.alice().get_asset_balance(strap_asset_id).await.unwrap();
+            balances_before.insert(strap_asset_id.clone(), balance);
+        }
 
         // when
         ctx.alice_contract()
@@ -319,74 +375,40 @@ mod _claim_rewards__can_receive_strap_token {
             .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call()
             .await
-            .unwrap();
+            .expect(&format!(
+                "Failed to claim rewards with deets: seven_vrf_number: {:?}, generate_straps: {:?}",
+                seven_vrf_number, generate_straps
+            ));
 
         // then
-        let balance_after = ctx
-            .alice()
-            .get_asset_balance(&strap_asset_id)
-            .await
-            .unwrap();
+        for (strap_asset_id, reward_amount) in expected_straps_rewards.iter() {
+            let strap = asset_id_to_strap.get(strap_asset_id).unwrap();
+            let balance_before = balances_before.get(strap_asset_id).unwrap();
+            let balance_after = ctx
+                .alice()
+                .get_asset_balance(&strap_asset_id)
+                .await
+                .unwrap();
 
-        let expected = balance_before + 1;
-        if balance_after != expected {
-            panic!(
-                "Failed to receive straps {:?}, with deets: seven_vrf_number: {:?}\n balance_before: {:?}, balance_after: {:?}",
-                generate_straps, seven_vrf_number, expected, balance_after
-            );
-        } else {
-            tracing::error!("successfully received strap rewards: {:?}", generate_straps);
+            let expected = balance_before + reward_amount;
+            if balance_after != expected {
+                panic!(
+                    "Failed to receive straps {:?},\n particular strap {:?},\n with deets: seven_vrf_number: {:?}\n balance_before: {:?},\n expected_balance_after: {:?},\n balance_after: {:?}",
+                    generate_straps,
+                    strap,
+                    seven_vrf_number,
+                    balance_before,
+                    expected,
+                    balance_after
+                );
+            } else {
+                tracing::error!(
+                    "successfully received strap rewards: {:?}",
+                    generate_straps
+                );
+            }
         }
     }
-}
-
-#[tokio::test]
-async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
-    let ctx = TestContext::new().await;
-
-    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards
-
-    // given
-    let (roll, strap) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
-    place_chip_bet(&ctx, roll.clone(), 100).await;
-    place_chip_bet(&ctx, roll.clone(), 100).await;
-
-    let bet_game_id = ctx
-        .alice_contract()
-        .methods()
-        .current_game_id()
-        .simulate(Execution::StateReadOnly)
-        .await
-        .unwrap()
-        .value;
-
-    let vrf_number = roll_to_vrf_number(&roll);
-    ctx.advance_and_roll(vrf_number).await; // Eight
-    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
-
-    let strap_asset_id = strap_asset_id(&ctx, &strap);
-    let balance_before = ctx
-        .alice()
-        .get_asset_balance(&strap_asset_id)
-        .await
-        .unwrap();
-
-    // when
-    ctx.alice_contract()
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let balance_after = ctx
-        .alice()
-        .get_asset_balance(&strap_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(balance_after, balance_before + 1);
 }
 
 #[tokio::test]
@@ -529,7 +551,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             .await
             .unwrap()
             .value;
-        let mut seven_rolled = false;
         for (trigger_roll, modifier_roll, modifier) in available_triggers.clone().iter() {
             let vrf_number = roll_to_vrf_number(&trigger_roll);
             ctx.advance_and_roll(vrf_number).await; // trigger modifier
@@ -546,7 +567,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             let vrf_number = roll_to_vrf_number(&modifier_roll);
             ctx.advance_and_roll(vrf_number).await;
             if *modifier_roll == Roll::Seven {
-                seven_rolled = true;
                 break;
             }
         }

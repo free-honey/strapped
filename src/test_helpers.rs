@@ -71,12 +71,12 @@ impl TestContext {
             AssetConfig {
                 id: AssetId::zeroed(),
                 num_coins: 1,
-                coin_amount: 1_000_000_000,
+                coin_amount: 10_000_000_000,
             },
             AssetConfig {
                 id: chip_asset_id,
                 num_coins: 1,
-                coin_amount: 1_000_000_000,
+                coin_amount: 10_000_000_000,
             },
         ];
         base_assets.extend(extra_assets);
@@ -222,14 +222,15 @@ pub async fn get_wallet() -> WalletUnlocked {
     .unwrap();
     wallets.pop().unwrap()
 }
-pub fn generate_straps(seed: u64) -> Vec<(Roll, Strap)> {
-    let mut straps: Vec<(Roll, Strap)> = Vec::new();
+pub fn generate_straps(seed: u64) -> Vec<(Roll, Strap, u64)> {
+    let mut straps: Vec<(Roll, Strap, u64)> = Vec::new();
     let mut multiple = 1;
     while seed % multiple == 0 && seed != 0 {
         let inner = seed / multiple;
         let strap = u64_to_strap(inner);
         let slot = u64_to_slot(inner);
-        straps.push((slot, strap));
+        let cost = strap_to_cost(&strap);
+        straps.push((slot, strap, cost));
         multiple = multiple * 2;
     }
     straps
@@ -293,6 +294,30 @@ pub fn u64_to_slot(num: u64) -> Roll {
         7 => Roll::Ten,
         8 => Roll::Eleven,
         _ => Roll::Twelve,
+    }
+}
+
+fn strap_to_cost(strap: &Strap) -> u64 {
+    match strap.kind {
+        StrapKind::Shirt => 10,
+        StrapKind::Pants => 10,
+        StrapKind::Shoes => 10,
+        StrapKind::Dress => 10,
+        StrapKind::Hat => 20,
+        StrapKind::Glasses => 20,
+        StrapKind::Watch => 20,
+        StrapKind::Ring => 20,
+        StrapKind::Necklace => 50,
+        StrapKind::Earring => 50,
+        StrapKind::Bracelet => 50,
+        StrapKind::Tattoo => 50,
+        StrapKind::Skirt => 50,
+        StrapKind::Piercing => 50,
+        StrapKind::Coat => 100,
+        StrapKind::Scarf => 100,
+        StrapKind::Gloves => 100,
+        StrapKind::Gown => 100,
+        StrapKind::Belt => 200,
     }
 }
 
