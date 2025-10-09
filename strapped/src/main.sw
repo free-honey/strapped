@@ -4,6 +4,7 @@ pub mod contract_types;
 pub mod helpers;
 
 use std::storage::storage_vec::*;
+use std::storage::storage_map::*;
 use std::call_frames::msg_asset_id;
 use std::context::msg_amount;
 use std::asset::transfer;
@@ -295,7 +296,20 @@ impl Strapped for Contract {
                             let straps = storage.strap_rewards.get(game_id).load_vec();
                             let roll_rewards = rewards_for_roll(straps, roll, amount);
                             for (sub_id, amount) in roll_rewards.iter() {
-                                rewards.push((sub_id, amount));
+                                // rewards.push((sub_id, amount));
+                                let mut i = 0;
+                                let mut found = false;
+                                while i < rewards.len() {
+                                    let (existing_id, existing_amount) = rewards.get(i).unwrap();
+                                    if existing_id == sub_id {
+                                        rewards.set(i, (existing_id, existing_amount + amount));
+                                        found = true;
+                                    }
+                                    i += 1;
+                                }
+                                if !found {
+                                    rewards.push((sub_id, amount));
+                                }
                             }
                             let bet_winnings = storage.payouts.read().calculate_payout(amount, roll);
                             total_chips_winnings += bet_winnings; 
@@ -308,8 +322,19 @@ impl Strapped for Contract {
                             let new_strap = Strap::new(new_level, kind, modifier_for_roll);
                             let strap_sub_id = new_strap.into_sub_id();
                             let contract_id = ContractId::this();
-                            let asset_id = AssetId::new(contract_id, strap_sub_id);
-                            rewards.push((strap_sub_id, amount));
+                            let mut i = 0;
+                            let mut found = false; 
+                            while i < rewards.len() {
+                                let (existing_id, existing_amount) = rewards.get(i).unwrap();
+                                if existing_id == strap_sub_id {
+                                    rewards.set(i, (existing_id, existing_amount + amount));
+                                    found = true;
+                                }
+                                i += 1;
+                            }
+                            if !found {
+                                rewards.push((strap_sub_id, amount));
+                            }
                             //remove bet
                             storage.bets.get((game_id, identity, roll)).remove(bet_index);
                         }

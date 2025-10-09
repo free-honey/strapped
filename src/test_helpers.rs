@@ -71,12 +71,12 @@ impl TestContext {
             AssetConfig {
                 id: AssetId::zeroed(),
                 num_coins: 1,
-                coin_amount: 1_000_000_000,
+                coin_amount: 10_000_000_000,
             },
             AssetConfig {
                 id: chip_asset_id,
                 num_coins: 1,
-                coin_amount: 1_000_000_000,
+                coin_amount: 10_000_000_000,
             },
         ];
         base_assets.extend(extra_assets);

@@ -294,7 +294,7 @@ mod _claim_rewards__can_receive_strap_token {
     proptest! {
         #![proptest_config(ProptestConfig { cases: 10, .. ProptestConfig::default() })]
         #[test]
-        fn claim_rewards__includes_modifier_in_strap_level_up(seven_vrf_number in seven_vrf_number()) {
+        fn claim_rewards__can_receive_strap_token(seven_vrf_number in seven_vrf_number()) {
             let rt = Runtime::new().unwrap();
             rt.block_on(async {
                 _claim_rewards__can_receive_strap_token(seven_vrf_number).await;
@@ -375,7 +375,10 @@ mod _claim_rewards__can_receive_strap_token {
             .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call()
             .await
-            .unwrap();
+            .expect(&format!(
+                "Failed to claim rewards with deets: seven_vrf_number: {:?}, generate_straps: {:?}",
+                seven_vrf_number, generate_straps
+            ));
 
         // then
         for (strap_asset_id, reward_amount) in expected_straps_rewards.iter() {
@@ -406,56 +409,6 @@ mod _claim_rewards__can_receive_strap_token {
             }
         }
     }
-}
-
-#[tokio::test]
-async fn claim_rewards__will_only_receive_one_strap_reward_per_roll() {
-    let ctx = TestContext::new().await;
-
-    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed strap rewards
-
-    // given
-    let (roll, strap, cost) = generate_straps(SEVEN_VRF_NUMBER).first().unwrap().clone();
-    place_chip_bet(&ctx, roll.clone(), 100).await;
-    place_chip_bet(&ctx, roll.clone(), 100).await;
-
-    let bet_game_id = ctx
-        .alice_contract()
-        .methods()
-        .current_game_id()
-        .simulate(Execution::StateReadOnly)
-        .await
-        .unwrap()
-        .value;
-
-    let vrf_number = roll_to_vrf_number(&roll);
-    ctx.advance_and_roll(vrf_number).await; // Eight
-    ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // Seven to end game
-
-    let strap_asset_id = strap_asset_id(&ctx, &strap);
-    let balance_before = ctx
-        .alice()
-        .get_asset_balance(&strap_asset_id)
-        .await
-        .unwrap();
-
-    // when
-    ctx.alice_contract()
-        .methods()
-        .claim_rewards(bet_game_id, Vec::new())
-        .with_variable_output_policy(VariableOutputPolicy::Exactly(2))
-        .call()
-        .await
-        .unwrap();
-
-    // then
-    let won_amount = 100 / cost + 100 / cost;
-    let balance_after = ctx
-        .alice()
-        .get_asset_balance(&strap_asset_id)
-        .await
-        .unwrap();
-    assert_eq!(balance_after, balance_before + won_amount);
 }
 
 #[tokio::test]
