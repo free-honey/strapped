@@ -1,18 +1,12 @@
-use crate::strapped_types::{
-    Modifier,
-    Strap,
-    StrapKind,
-};
+use crate::strapped_types::{Modifier, Strap, StrapKind};
 use fuels::{
-    prelude::{
-        Contract,
-        ContractId,
-        LoadConfiguration,
-        TxPolicies,
-        WalletUnlocked,
-    },
+    prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked},
     types::Bytes32,
 };
+
+pub mod deployment;
+
+pub mod wallets;
 
 pub mod test_helpers;
 

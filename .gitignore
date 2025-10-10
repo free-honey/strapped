@@ -5,3 +5,5 @@
 .idea
 
 trace.log
+.deployments/local/
+.deployments/local

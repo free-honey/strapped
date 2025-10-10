@@ -155,6 +155,14 @@ abi Strapped {
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap, u64)>;
 
+    /// Get the chip asset id used for betting
+    #[storage(read)]
+    fn current_chip_asset_id() -> AssetId;
+
+    /// Get the configured VRF contract id
+    #[storage(read)]
+    fn current_vrf_contract_id() -> b256;
+
     /// Get the modifier triggers
     #[storage(read)]
     fn modifier_triggers() -> Vec<(Roll, Roll, Modifier, bool)>;
@@ -384,6 +392,16 @@ impl Strapped for Contract {
     fn strap_rewards() -> Vec<(Roll, Strap, u64)> {
         let current_game_id = storage.current_game_id.read();
         storage.strap_rewards.get(current_game_id).load_vec()
+    }
+
+    #[storage(read)]
+    fn current_chip_asset_id() -> AssetId {
+        storage.chip_asset_id.read()
+    }
+
+    #[storage(read)]
+    fn current_vrf_contract_id() -> b256 {
+        storage.vrf_contract_id.read()
     }
 
     #[storage(read)]
