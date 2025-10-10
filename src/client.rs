@@ -66,14 +66,9 @@ use tracing::error;
 pub const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
 pub const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
 pub const DEFAULT_LOCAL_RPC_URL: &str = "http://localhost:4000/";
-const STRAPPED_BIN_CANDIDATES: [&str; 2] = [
-    "strapped/out/release/strapped.bin",
-    "strapped/out/debug/strapped.bin",
-];
-const VRF_BIN_CANDIDATES: [&str; 2] = [
-    "pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin",
-    "pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin",
-];
+const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/release/strapped.bin"];
+const VRF_BIN_CANDIDATES: [&str; 1] =
+    ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VrfMode {
@@ -210,7 +205,7 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
 
     let (vrf_client, vrf_contract_id): (VrfClient, ContractId) = match vrf_mode {
         VrfMode::Fake => {
-            let vrf_bin = "fake-vrf-contract/out/debug/fake-vrf-contract.bin";
+            let vrf_bin = "fake-vrf-contract/out/release/fake-vrf-contract.bin";
             let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
                 .deploy(&owner, TxPolicies::default())
                 .await?;
@@ -475,8 +470,11 @@ impl AppController {
                 return Err(eyre!(summary));
             }
 
-            let default_chip_asset_id =
-                *provider.consensus_parameters().await?.base_asset_id();
+            let consensus_parameters = provider.consensus_parameters().await?;
+            let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
+            let safe_script_limit =
+                max_gas_per_tx.saturating_sub(max_gas_per_tx / 10).max(1);
+            let default_chip_asset_id = *consensus_parameters.base_asset_id();
             let chip_asset_id = prompt_chip_asset_id(default_chip_asset_id)?;
 
             let (clients, record) = Self::deploy_new_remote_contract(
@@ -500,6 +498,9 @@ impl AppController {
                 vrf_instance
                     .methods()
                     .set_entropy(entropy)
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_script_limit),
+                    )
                     .call()
                     .await
                     .wrap_err(format!("vrf contract id: {:?}", vrf_contract_id))?;
@@ -510,7 +511,8 @@ impl AppController {
                 .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
                 .call()
                 .await?;
-            let fund_call = CallParameters::new(1_000_000u64, chip_asset_id, 1_000_000);
+            let fund_call =
+                CallParameters::new(1_000_000u64, chip_asset_id, safe_script_limit);
             clients
                 .owner
                 .methods()
