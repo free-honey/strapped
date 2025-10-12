@@ -8,8 +8,7 @@ dependencies = [
 
 [[package]]
 name = "std"
-version = "0.69.1"
-source = "registry+std?0.69.1#QmbPunScay4xpfHKpxQ71dFKXSiyJuPP8P8YhgX5Dkmzm9!"
+source = "git+https://github.com/fuellabs/sway?tag=v0.68.0#cbe8005a2388ec481d557aa4a58d7df96be9cad0"
 
 [[package]]
 name = "vrf_abi"
