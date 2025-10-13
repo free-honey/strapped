@@ -480,14 +480,17 @@ impl AppController {
         };
         let consensus_parameters = provider.consensus_parameters().await?;
         let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
-        let limit_from_chain = (max_gas_per_tx / 4).max(1);
-        let safe_script_gas_limit =
-            std::cmp::min(DEFAULT_SAFE_SCRIPT_GAS_LIMIT, limit_from_chain);
+        let safe_script_gas_limit = std::cmp::max(
+            1,
+            std::cmp::min(
+                DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
+                max_gas_per_tx.saturating_sub(1),
+            ),
+        );
         tracing::info!(
-            "Using safe script gas limit {} (max_gas_per_tx={}, chain quarter={})",
+            "Using safe script gas limit {} (max_gas_per_tx={})",
             safe_script_gas_limit,
-            max_gas_per_tx,
-            limit_from_chain
+            max_gas_per_tx
         );
         let default_chip_asset_id = *consensus_parameters.base_asset_id();
         let chip_asset_id = prompt_chip_asset_id(default_chip_asset_id)?;
@@ -1297,8 +1300,12 @@ impl AppController {
             .methods()
             .next_roll_height()
             .with_tx_policies(self.script_policies())
-            .simulate(Execution::StateReadOnly)
-            .await?
+            .simulate(Execution::Realistic)
+            .await
+            .wrap_err(format!(
+                "with gas limit: {}",
+                self.clients.safe_script_gas_limit
+            ))?
             .value
             .ok_or_else(|| eyre!("Next roll height not scheduled"))?;
         let provider = self
@@ -1335,6 +1342,10 @@ impl AppController {
         // Roll using owner instance but allow any wallet to trigger.
         match &self.clients.vrf {
             Some(VrfClient::Fake(vrf)) => {
+                tracing::info!(
+                    "Rolling (fake VRF) with script gas limit {}",
+                    self.clients.safe_script_gas_limit
+                );
                 self.clients
                     .owner
                     .methods()
@@ -1345,6 +1356,10 @@ impl AppController {
                     .await?;
             }
             Some(VrfClient::Pseudo(vrf)) => {
+                tracing::info!(
+                    "Rolling (pseudo VRF) with script gas limit {}",
+                    self.clients.safe_script_gas_limit
+                );
                 self.clients
                     .owner
                     .methods()

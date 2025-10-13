@@ -193,9 +193,9 @@ fn parse_cli_args() -> Result<client::AppConfig> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .try_init();
+    // let _ = tracing_subscriber::fmt()
+    //     .with_max_level(tracing::Level::INFO)
+    //     .try_init();
     tracing::info!("starting strapped-contract client");
     color_eyre::install()?;
     deployment::ensure_structure()?;
