@@ -21,7 +21,6 @@ use fuels::{
         Execution,
         LoadConfiguration,
         Provider,
-        Transaction,
         TxPolicies,
         VariableOutputPolicy,
         WalletUnlocked,
@@ -607,7 +606,7 @@ impl AppController {
             panic!("Deployment record is missing chip asset id");
         };
 
-        let (vrf_client, vrf_contract_id) = if let Some(vrf_id) =
+        let (vrf_client, _vrf_contract_id) = if let Some(vrf_id) =
             selected.vrf_contract_id.as_ref()
         {
             tracing::info!("ka");
@@ -684,7 +683,7 @@ impl AppController {
 
         let (
             vrf_client,
-            vrf_contract_id,
+            _vrf_contract_id,
             vrf_salt_hex,
             vrf_contract_bech32,
             vrf_bytecode_hash,

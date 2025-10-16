@@ -295,7 +295,6 @@ impl Strapped for Contract {
         let mut index = 0;
         let mut rewards: Vec<(SubId, u64)> = Vec::new();
         for roll in rolls.iter() {
-            let _ = __dbg("beep");
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
             let mut bet_index = 0;
             for (bet, amount, roll_index) in bets.iter() {
@@ -368,7 +367,6 @@ impl Strapped for Contract {
         storage.bets.get((game_id, identity, Roll::Twelve)).clear();
 
         if total_chips_winnings > 0 || rewards.len() > 0 {
-            let _ = __dbg("boop");
             let chip_asset_id = storage.chip_asset_id.read();
             if total_chips_winnings > 0 {
                transfer(identity, chip_asset_id, total_chips_winnings);
