@@ -21,6 +21,7 @@ use fuels::{
         Execution,
         LoadConfiguration,
         Provider,
+        Transaction,
         TxPolicies,
         VariableOutputPolicy,
         WalletUnlocked,
@@ -67,9 +68,11 @@ pub const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
 pub const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
 pub const DEFAULT_LOCAL_RPC_URL: &str = "http://localhost:4000/";
 const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/release/strapped.bin"];
+// const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/debug/strapped.bin"];
 const VRF_BIN_CANDIDATES: [&str; 1] =
     ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
-const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 30_000_000;
+// ["pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
+const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VrfMode {
@@ -234,7 +237,7 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
     tracing::info!("initializing strapped contract...");
     owner_instance
         .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
+        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 1)
         .call()
         .await?;
 
@@ -543,7 +546,7 @@ impl AppController {
             clients
                 .owner
                 .methods()
-                .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
+                .initialize(Bits256(*vrf_contract_id), chip_asset_id, 1)
                 .with_tx_policies(
                     TxPolicies::default().with_script_gas_limit(safe_script_gas_limit),
                 )
@@ -598,7 +601,7 @@ impl AppController {
             //     .with_tx_policies(
             //         TxPolicies::default().with_script_gas_limit(safe_script_limit),
             //     )
-            //     .simulate(Execution::StateReadOnly)
+            //     .simulate(Execution::Realistic)
             //     .await?
             //     .value
             panic!("Deployment record is missing chip asset id");
@@ -625,7 +628,7 @@ impl AppController {
                 .with_tx_policies(
                     TxPolicies::default().with_script_gas_limit(safe_script_gas_limit),
                 )
-                .simulate(Execution::StateReadOnly)
+                .simulate(Execution::Realistic)
                 .await?
                 .value;
             let id = ContractId::new(vrf_bits.0);
@@ -1246,7 +1249,7 @@ impl AppController {
             .methods()
             .modifier_triggers()
             .with_tx_policies(self.script_policies())
-            .simulate(Execution::StateReadOnly)
+            .simulate(Execution::Realistic)
             .await?
             .value;
         if let Some((_, target, modifier, _triggered)) = triggers

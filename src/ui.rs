@@ -1,10 +1,25 @@
-use crate::client::{AppSnapshot, PreviousGameSummary, VrfMode};
+use crate::client::{
+    AppSnapshot,
+    PreviousGameSummary,
+    VrfMode,
+};
 use color_eyre::eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode},
+    event::{
+        self,
+        Event,
+        KeyCode,
+        KeyEventKind,
+    },
+    terminal::{
+        disable_raw_mode,
+        enable_raw_mode,
+    },
 };
-use ratatui::{prelude::*, widgets::*};
+use ratatui::{
+    prelude::*,
+    widgets::*,
+};
 use std::io::stdout;
 use strapped_contract::strapped_types as strapped;
 
@@ -694,7 +709,7 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
 fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Length(3)])
+        .constraints([Constraint::Length(16), Constraint::Length(3)])
         .split(area);
 
     let status_widget = if snap.errors.is_empty() {
@@ -736,9 +751,13 @@ fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         _ => "Alice",
     };
     let straps_line = format_owned_strap_summary(&snap.owned_straps);
+
+    const DECIMAL_SPACES: u32 = 9;
+    let chips_balance = snap.chip_balance;
+    let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
     let text = format!(
         "Wallet: {} | Chips: {} | Straps: {}",
-        wallet, snap.chip_balance, straps_line
+        wallet, format_chips_balance, straps_line
     );
     let widget = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title("Wallet"));
@@ -774,6 +793,21 @@ fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let widget =
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Game"));
     f.render_widget(widget, area);
+}
+
+fn chips_balance_formated(chips_balance: u64, decimal_places: u32) -> String {
+    let one_unit = 10i64.saturating_pow(decimal_places) as u64;
+    let whole = chips_balance / one_unit;
+    let fractional = chips_balance % one_unit;
+    if fractional == 0 {
+        format!("{}", whole)
+    } else {
+        format!(
+            "{}.{}",
+            whole,
+            format!("{:09}", fractional).trim_end_matches('0')
+        )
+    }
 }
 
 fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {

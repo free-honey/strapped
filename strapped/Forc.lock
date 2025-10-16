@@ -1,6 +1,7 @@
 [[package]]
 name = "std"
-source = "git+https://github.com/fuellabs/sway?tag=v0.68.0#cbe8005a2388ec481d557aa4a58d7df96be9cad0"
+version = "0.70.1"
+source = "registry+std?0.70.1#QmU7w9Aqa6jvQcj72HS8uqfFk3ieiC74WsZGaRfUrW1u41!"
 
 [[package]]
 name = "strapped"
