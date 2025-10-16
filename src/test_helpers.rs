@@ -37,7 +37,7 @@ pub async fn get_vrf_contract_instance(
     wallet: WalletUnlocked,
 ) -> (FakeVRFContract<WalletUnlocked>, ContractId) {
     let id = Contract::load_from(
-        "fake-vrf-contract/out/debug/fake-vrf-contract.bin",
+        "fake-vrf-contract/out/release/fake-vrf-contract.bin",
         LoadConfiguration::default(),
     )
     .unwrap()

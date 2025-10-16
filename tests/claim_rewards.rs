@@ -2,27 +2,13 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{
-        AssetConfig,
-        AssetId,
-        CallParameters,
-        Execution,
-        VariableOutputPolicy,
-    },
+    prelude::{AssetConfig, AssetId, CallParameters, Execution, VariableOutputPolicy},
     tx::ContractIdExt,
 };
 use proptest::prelude::*;
 use strapped_contract::{
-    contract_id,
-    strap_to_sub_id,
-    strapped_types::{
-        self,
-        Bet,
-        Modifier,
-        Roll,
-        Strap,
-        StrapKind,
-    },
+    contract_id, strap_to_sub_id,
+    strapped_types::{self, Bet, Modifier, Roll, Strap, StrapKind},
     test_helpers::*,
 };
 use tokio::runtime::Runtime;
@@ -605,7 +591,7 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
                 leveled_strap, deets
             );
             if modifier_roll == Roll::Seven {
-                break
+                break;
             }
         }
     }

@@ -1,6 +1,12 @@
-use crate::ui;
+use crate::{
+    deployment,
+    ui,
+    wallets,
+};
+use chrono::Utc;
 use color_eyre::eyre::{
     Result,
+    WrapErr,
     eyre,
 };
 use fuels::{
@@ -21,16 +27,33 @@ use fuels::{
         WalletsConfig,
         launch_custom_provider_and_get_wallets,
     },
+    programs::contract::{
+        Contract as LoadedContract,
+        Regular,
+    },
     tx::ContractIdExt,
     types::Bits256,
 };
+use futures::future::try_join_all;
 use rand::Rng;
 use std::{
     collections::{
         HashMap,
         HashSet,
     },
-    time::Duration,
+    io::{
+        self,
+        Write,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
+    str::FromStr,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 use strapped_contract::{
     pseudo_vrf_types as pseudo_vrf,
@@ -40,10 +63,26 @@ use strapped_contract::{
 use tokio::time;
 use tracing::error;
 
+pub const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
+pub const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
+pub const DEFAULT_LOCAL_RPC_URL: &str = "http://localhost:4000/";
+const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/release/strapped.bin"];
+// const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/debug/strapped.bin"];
+const VRF_BIN_CANDIDATES: [&str; 1] =
+    ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
+// ["pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
+const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VrfMode {
     Fake,
     Pseudo,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkKind {
+    InMemory,
+    Remote,
 }
 
 #[derive(Clone)]
@@ -92,10 +131,12 @@ pub struct AppSnapshot {
 pub struct Clients {
     pub owner: strapped::MyContract<WalletUnlocked>,
     pub alice: strapped::MyContract<WalletUnlocked>,
-    pub vrf: VrfClient,
+    pub vrf: Option<VrfClient>,
     pub vrf_mode: VrfMode,
     pub contract_id: ContractId,
     pub chip_asset_id: AssetId,
+    pub network: NetworkKind,
+    pub safe_script_gas_limit: u64,
 }
 
 impl Clients {
@@ -105,6 +146,32 @@ impl Clients {
             WalletKind::Alice => &self.alice,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum NetworkTarget {
+    InMemory,
+    Testnet { url: String },
+    Devnet { url: String },
+    LocalNode { url: String },
+}
+
+#[derive(Clone, Debug)]
+pub enum WalletConfig {
+    Generated,
+    ForcKeystore {
+        owner: String,
+        player: String,
+        dir: PathBuf,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct AppConfig {
+    pub vrf_mode: VrfMode,
+    pub network: NetworkTarget,
+    pub wallets: WalletConfig,
+    pub deploy_if_missing: bool,
 }
 
 pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
@@ -120,6 +187,7 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
         num_coins: 1,
         coin_amount: 1_000_000_000,
     };
+    let safe_script_gas_limit = DEFAULT_SAFE_SCRIPT_GAS_LIMIT;
 
     let mut wallets = launch_custom_provider_and_get_wallets(
         WalletsConfig::new_multiple_assets(2, vec![base_asset, chip_asset]),
@@ -132,8 +200,8 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
     let alice = wallets.pop().ok_or_else(|| eyre!("missing alice wallet"))?;
 
     // Deploy strapped
-    let strapped_bin = "strapped/out/debug/strapped.bin";
-    let strapped_id = Contract::load_from(strapped_bin, LoadConfiguration::default())?
+    let strap_bin = choose_binary(&STRAPPED_BIN_CANDIDATES)?;
+    let strapped_id = Contract::load_from(strap_bin, LoadConfiguration::default())?
         .deploy(&owner, TxPolicies::default())
         .await?;
     let contract_id: ContractId = strapped_id.clone().into();
@@ -142,7 +210,7 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
 
     let (vrf_client, vrf_contract_id): (VrfClient, ContractId) = match vrf_mode {
         VrfMode::Fake => {
-            let vrf_bin = "fake-vrf-contract/out/debug/fake-vrf-contract.bin";
+            let vrf_bin = "fake-vrf-contract/out/release/fake-vrf-contract.bin";
             let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
                 .deploy(&owner, TxPolicies::default())
                 .await?;
@@ -151,7 +219,7 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
             (VrfClient::Fake(instance), vrf_id.into())
         }
         VrfMode::Pseudo => {
-            let vrf_bin = "pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin";
+            let vrf_bin = choose_binary(&VRF_BIN_CANDIDATES)?;
             let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
                 .deploy(&owner, TxPolicies::default())
                 .await?;
@@ -165,14 +233,17 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
     };
 
     // Initialize strapped contract
+    tracing::info!("initializing strapped contract...");
     owner_instance
         .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
+        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 1)
         .call()
         .await?;
 
     // Fund contract with initial chips so claims can be paid
-    let fund_call = CallParameters::new(1_000_000u64, chip_asset_id, 1_000_000);
+    let fund_call =
+        CallParameters::new(1_000_000u64, chip_asset_id, safe_script_gas_limit);
+    tracing::info!("funding strapped contract...");
     owner_instance
         .methods()
         .fund()
@@ -183,10 +254,12 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
     Ok(Clients {
         owner: owner_instance,
         alice: alice_instance,
-        vrf: vrf_client,
+        vrf: Some(vrf_client),
         vrf_mode,
         contract_id,
         chip_asset_id,
+        network: NetworkKind::InMemory,
+        safe_script_gas_limit,
     })
 }
 
@@ -220,34 +293,13 @@ pub struct AppController {
     active_modifiers_by_game:
         HashMap<u64, Vec<(strapped::Roll, strapped::Modifier, u64)>>,
     errors: Vec<String>,
+    last_snapshot: Option<AppSnapshot>,
+    last_snapshot_time: Option<Instant>,
 }
 
 impl AppController {
-    async fn fetch_bets_for(
-        &self,
-        who: WalletKind,
-    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
-        let me = self.clients.instance(who);
-        let rolls = all_rolls();
-        let mut out = Vec::with_capacity(rolls.len());
-        for r in &rolls {
-            let bets = me
-                .methods()
-                .get_my_bets(r.clone())
-                .simulate(Execution::Realistic)
-                .await?
-                .value;
-            out.push((r.clone(), bets));
-        }
-        Ok(out)
-    }
-    pub async fn new_local(vrf_mode: VrfMode) -> Result<Self> {
-        let clients = init_local(vrf_mode).await?;
-        let initial_vrf = match vrf_mode {
-            VrfMode::Fake => 19,
-            VrfMode::Pseudo => 0,
-        };
-        Ok(Self {
+    fn from_clients(clients: Clients, initial_vrf: u64) -> Self {
+        Self {
             clients,
             wallet: WalletKind::Alice,
             selected_roll: strapped::Roll::Six,
@@ -266,10 +318,468 @@ impl AppController {
             strap_rewards_by_game: HashMap::new(),
             active_modifiers_by_game: HashMap::new(),
             errors: Vec::new(),
-        })
+            last_snapshot: None,
+            last_snapshot_time: None,
+        }
     }
 
-    pub async fn snapshot(&mut self) -> Result<AppSnapshot> {
+    fn poll_interval(&self) -> Duration {
+        match self.clients.network {
+            NetworkKind::Remote => Duration::from_secs(5),
+            NetworkKind::InMemory => Duration::from_secs(1),
+        }
+    }
+
+    fn refresh_ttl(&self) -> Duration {
+        self.poll_interval()
+    }
+
+    fn invalidate_cache(&mut self) {
+        self.last_snapshot = None;
+        self.last_snapshot_time = None;
+    }
+
+    pub async fn new(config: AppConfig) -> Result<Self> {
+        let AppConfig {
+            vrf_mode,
+            network,
+            wallets,
+            deploy_if_missing,
+        } = config;
+        match network {
+            NetworkTarget::InMemory => Self::new_local(vrf_mode).await,
+            NetworkTarget::Devnet { url } => {
+                tracing::info!("Connecting to devnet at URL: {url}");
+                Self::new_remote(
+                    vrf_mode,
+                    deployment::DeploymentEnv::Dev,
+                    url,
+                    wallets,
+                    deploy_if_missing,
+                )
+                .await
+            }
+            NetworkTarget::Testnet { url } => {
+                tracing::info!("Connecting to testnet at URL: {}", url);
+                Self::new_remote(
+                    vrf_mode,
+                    deployment::DeploymentEnv::Test,
+                    url,
+                    wallets,
+                    deploy_if_missing,
+                )
+                .await
+            }
+            NetworkTarget::LocalNode { url } => {
+                tracing::info!("Connecting to local node at URL: {url}");
+                Self::new_remote(
+                    vrf_mode,
+                    deployment::DeploymentEnv::Local,
+                    url,
+                    wallets,
+                    deploy_if_missing,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn fetch_bets_for(
+        &self,
+        who: WalletKind,
+    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+        let contract = self.clients.instance(who).clone();
+        let safe_limit = self.clients.safe_script_gas_limit;
+        let futures = all_rolls()
+            .into_iter()
+            .map(move |roll| {
+                let contract = contract.clone();
+                async move {
+                    let bets = contract
+                        .methods()
+                        .get_my_bets(roll.clone())
+                        .with_tx_policies(
+                            TxPolicies::default().with_script_gas_limit(safe_limit),
+                        )
+                        .simulate(Execution::Realistic)
+                        .await?
+                        .value;
+                    Ok::<_, color_eyre::eyre::Report>((roll, bets))
+                }
+            })
+            .collect::<Vec<_>>();
+        let results = try_join_all(futures).await?;
+        Ok(results)
+    }
+
+    pub async fn new_local(vrf_mode: VrfMode) -> Result<Self> {
+        let clients = init_local(vrf_mode).await?;
+        let initial_vrf = match vrf_mode {
+            VrfMode::Fake => 19,
+            VrfMode::Pseudo => 0,
+        };
+        Ok(Self::from_clients(clients, initial_vrf))
+    }
+    pub async fn new_remote(
+        vrf_mode: VrfMode,
+        env: deployment::DeploymentEnv,
+        url: String,
+        wallet_config: WalletConfig,
+        deploy_if_missing: bool,
+    ) -> Result<Self> {
+        if matches!(vrf_mode, VrfMode::Fake) {
+            return Err(eyre!(
+                "Fake VRF mode is only supported in in-memory deployments"
+            ));
+        }
+
+        tracing::info!("a");
+        let provider = Provider::connect(&url)
+            .await
+            .wrap_err_with(|| format!("Failed to connect to provider at {url}"))?;
+
+        tracing::info!("b");
+        let (owner_name, player_name, wallet_dir) = match wallet_config {
+            WalletConfig::ForcKeystore { owner, player, dir } => (owner, player, dir),
+            WalletConfig::Generated => {
+                return Err(eyre!(
+                    "Remote networks require forc-wallet keystore selection"
+                ));
+            }
+        };
+
+        tracing::info!("c");
+        let owner_descriptor = wallets::find_wallet(&wallet_dir, &owner_name)
+            .wrap_err("Unable to locate owner wallet")?;
+        let owner_wallet = wallets::unlock_wallet(&owner_descriptor, &provider)?;
+
+        tracing::info!("d");
+        let alice_wallet = if player_name == owner_name {
+            owner_wallet.clone()
+        } else {
+            let player_descriptor = wallets::find_wallet(&wallet_dir, &player_name)
+                .wrap_err("Unable to locate player wallet")?;
+            wallets::unlock_wallet(&player_descriptor, &provider)?
+        };
+
+        tracing::info!("e");
+        let store = deployment::DeploymentStore::new(env)?;
+        let records = store.load()?;
+        let strap_binary = choose_binary(&STRAPPED_BIN_CANDIDATES)?;
+        let bytecode_hash = deployment::compute_bytecode_hash(strap_binary)?;
+
+        tracing::info!("f");
+        let mut compatible: Vec<_> = records
+            .iter()
+            .cloned()
+            .filter(|record| record.is_compatible_with_hash(&bytecode_hash))
+            .collect();
+
+        tracing::info!("g");
+        let initial_vrf = match vrf_mode {
+            VrfMode::Fake => 19,
+            VrfMode::Pseudo => 0,
+        };
+        let consensus_parameters = provider.consensus_parameters().await?;
+        let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
+        let safe_script_gas_limit = std::cmp::max(
+            1,
+            std::cmp::min(
+                DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
+                max_gas_per_tx.saturating_sub(1),
+            ),
+        );
+        tracing::info!(
+            "Using safe script gas limit {} (max_gas_per_tx={})",
+            safe_script_gas_limit,
+            max_gas_per_tx
+        );
+        let default_chip_asset_id = *consensus_parameters.base_asset_id();
+        let chip_asset_id = prompt_chip_asset_id(default_chip_asset_id)?;
+
+        tracing::info!("h");
+        if compatible.is_empty() {
+            if !deploy_if_missing {
+                let summary = format_deployment_summary(
+                    env,
+                    &url,
+                    &store,
+                    &records,
+                    &bytecode_hash,
+                )?;
+                return Err(eyre!(summary));
+            }
+
+            let (clients, record) = Self::deploy_new_remote_contract(
+                &url,
+                vrf_mode,
+                owner_wallet.clone(),
+                alice_wallet.clone(),
+                chip_asset_id,
+                &bytecode_hash,
+                safe_script_gas_limit,
+            )
+            .await?;
+            // let vrf_contract_id: ContractId = record.vrf_contract_id.unwrap().into();
+            let vrf_contract_id =
+                Bech32ContractId::from_str(&record.clone().vrf_contract_id.unwrap());
+            let vrf_contract_id = ContractId::from(vrf_contract_id.unwrap());
+
+            // Initialize contracts
+            if let Some(VrfClient::Pseudo(vrf_instance)) = &clients.vrf {
+                let mut random_gen = rand::rng();
+                let entropy = random_gen.random();
+                tracing::info!("setting initial entropy on vrf contract...");
+                vrf_instance
+                    .methods()
+                    .set_entropy(entropy)
+                    .with_tx_policies(
+                        TxPolicies::default()
+                            .with_script_gas_limit(safe_script_gas_limit),
+                    )
+                    .call()
+                    .await
+                    .wrap_err(format!("vrf contract id: {:?}", vrf_contract_id))?;
+            }
+            tracing::info!("initializing strapped contract...");
+            clients
+                .owner
+                .methods()
+                .initialize(Bits256(*vrf_contract_id), chip_asset_id, 1)
+                .with_tx_policies(
+                    TxPolicies::default().with_script_gas_limit(safe_script_gas_limit),
+                )
+                .call()
+                .await?;
+            let fund_call =
+                CallParameters::new(1_000_000u64, chip_asset_id, safe_script_gas_limit);
+            tracing::info!("funding strapped contract...");
+            clients
+                .owner
+                .methods()
+                .fund()
+                .with_tx_policies(
+                    TxPolicies::default().with_script_gas_limit(safe_script_gas_limit),
+                )
+                .call_params(fund_call)?
+                .call()
+                .await?;
+            tracing::info!("past the fund call");
+
+            store.append(record)?;
+            // initialize contracts
+            return Ok(Self::from_clients(clients, initial_vrf));
+        }
+
+        tracing::info!("i");
+
+        compatible.sort_by(|a, b| a.deployed_at.cmp(&b.deployed_at));
+        let selected = compatible
+            .last()
+            .expect("compatible deployments list should not be empty")
+            .clone();
+
+        let contract_bech32 = Bech32ContractId::from_str(&selected.contract_id)
+            .wrap_err("Deployment record contains an invalid contract id")?;
+        let contract_id: ContractId = contract_bech32.clone().into();
+
+        tracing::info!("j");
+        let owner_instance =
+            strapped::MyContract::new(contract_bech32.clone(), owner_wallet.clone());
+        let alice_instance =
+            strapped::MyContract::new(contract_bech32.clone(), alice_wallet.clone());
+
+        let chip_asset_id = if let Some(id_hex) = selected.chip_asset_id.as_ref() {
+            AssetId::from_str(id_hex).map_err(|e| {
+                eyre!("Deployment record contains an invalid chip asset id: {e}")
+            })?
+        } else {
+            // owner_instance
+            //     .methods()
+            //     .current_chip_asset_id()
+            //     .with_tx_policies(
+            //         TxPolicies::default().with_script_gas_limit(safe_script_limit),
+            //     )
+            //     .simulate(Execution::Realistic)
+            //     .await?
+            //     .value
+            panic!("Deployment record is missing chip asset id");
+        };
+
+        let (vrf_client, _vrf_contract_id) = if let Some(vrf_id) =
+            selected.vrf_contract_id.as_ref()
+        {
+            tracing::info!("ka");
+            let vrf_bech32 = Bech32ContractId::from_str(vrf_id)
+                .wrap_err("Deployment record contains an invalid VRF contract id")?;
+            (
+                Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
+                    vrf_bech32.clone(),
+                    owner_wallet.clone(),
+                ))),
+                ContractId::from(vrf_bech32),
+            )
+        } else {
+            tracing::info!("kb");
+            let vrf_bits = owner_instance
+                .methods()
+                .current_vrf_contract_id()
+                .with_tx_policies(
+                    TxPolicies::default().with_script_gas_limit(safe_script_gas_limit),
+                )
+                .simulate(Execution::Realistic)
+                .await?
+                .value;
+            let id = ContractId::new(vrf_bits.0);
+            let vrf_client = if vrf_bits.0 == [0u8; 32] {
+                None
+            } else {
+                let vrf_bech32: Bech32ContractId = id.into();
+                Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
+                    vrf_bech32,
+                    owner_wallet.clone(),
+                )))
+            };
+            (vrf_client, id)
+        };
+        tracing::info!("l");
+        let clients = Clients {
+            owner: owner_instance,
+            alice: alice_instance,
+            vrf: vrf_client,
+            vrf_mode,
+            contract_id,
+            chip_asset_id,
+            network: NetworkKind::Remote,
+            safe_script_gas_limit,
+        };
+
+        Ok(Self::from_clients(clients, initial_vrf))
+    }
+
+    async fn deploy_new_remote_contract(
+        url: &str,
+        vrf_mode: VrfMode,
+        owner_wallet: WalletUnlocked,
+        alice_wallet: WalletUnlocked,
+        chip_asset_id: AssetId,
+        bytecode_hash: &str,
+        safe_script_gas_limit: u64,
+    ) -> Result<(Clients, deployment::DeploymentRecord)> {
+        tracing::info!("No compatible deployment found, deploying new contract...");
+        let strap_salt = rand::rng().random::<[u8; 32]>();
+        let strapped = load_contract(&STRAPPED_BIN_CANDIDATES, strap_salt)?;
+        tracing::info!("deploying strapped contract...");
+        let strapped_id = strapped
+            .clone()
+            .smart_deploy(&owner_wallet, TxPolicies::default(), 4_096)
+            .await?;
+        let contract_id: ContractId = strapped_id.clone().into();
+
+        let owner_instance =
+            strapped::MyContract::new(strapped_id.clone(), owner_wallet.clone());
+        let alice_instance =
+            strapped::MyContract::new(strapped_id.clone(), alice_wallet.clone());
+
+        let (
+            vrf_client,
+            _vrf_contract_id,
+            vrf_salt_hex,
+            vrf_contract_bech32,
+            vrf_bytecode_hash,
+        ) = match vrf_mode {
+            VrfMode::Fake => {
+                return Err(eyre!(
+                    "Fake VRF mode is only supported in in-memory deployments"
+                ));
+            }
+            VrfMode::Pseudo => {
+                let vrf_salt = rand::rng().random::<[u8; 32]>();
+                let vrf_contract = load_contract(&VRF_BIN_CANDIDATES, vrf_salt)?;
+                let vrf_contract = vrf_contract
+                    .clone()
+                    .deploy(&owner_wallet, TxPolicies::default())
+                    .await?;
+                let vrf_instance = pseudo_vrf::PseudoVRFContract::new(
+                    vrf_contract.clone(),
+                    owner_wallet.clone(),
+                );
+                // let mut random_gen = rand::rng();
+                // let entropy = random_gen.random();
+                // vrf_instance.methods().set_entropy(entropy).call().await?;
+                let vrf_contract_id: ContractId = vrf_contract.clone().into();
+                tracing::info!("VRF contract deployed: {:?}", vrf_contract_id);
+                let vrf_contract_bech32: Bech32ContractId =
+                    vrf_contract_id.clone().into();
+                let vrf_hash_hex = choose_binary(&VRF_BIN_CANDIDATES)
+                    .and_then(|path| deployment::compute_bytecode_hash(path))
+                    .ok()
+                    .map(|hash| format!("0x{}", hash));
+                (
+                    Some(VrfClient::Pseudo(vrf_instance)),
+                    vrf_contract_id,
+                    Some(format!("0x{}", hex::encode(vrf_salt))),
+                    Some(vrf_contract_bech32.to_string()),
+                    vrf_hash_hex,
+                )
+            }
+        };
+
+        // owner_instance
+        //     .methods()
+        //     .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
+        //     .call()
+        //     .await?;
+
+        // let fund_call = CallParameters::new(1_000_000u64, chip_asset_id, 1_000_000);
+        // owner_instance
+        //     .methods()
+        //     .fund()
+        //     .call_params(fund_call)?
+        //     .call()
+        //     .await?;
+
+        let record = deployment::DeploymentRecord {
+            deployed_at: Utc::now().to_rfc3339(),
+            contract_id: strapped_id.to_string(),
+            bytecode_hash: bytecode_hash.to_string(),
+            network_url: url.to_string(),
+            chip_asset_id: Some(format!(
+                "0x{}",
+                hex::encode::<[u8; 32]>(chip_asset_id.into())
+            )),
+            contract_salt: Some(format!("0x{}", hex::encode(strap_salt))),
+            vrf_salt: vrf_salt_hex,
+            vrf_contract_id: vrf_contract_bech32,
+            vrf_bytecode_hash,
+        };
+
+        let clients = Clients {
+            owner: owner_instance,
+            alice: alice_instance,
+            vrf: vrf_client,
+            vrf_mode,
+            contract_id,
+            chip_asset_id,
+            network: NetworkKind::Remote,
+            safe_script_gas_limit,
+        };
+
+        Ok((clients, record))
+    }
+
+    pub async fn snapshot(&mut self, force_refresh: bool) -> Result<AppSnapshot> {
+        tracing::info!("Taking snapshot (force_refresh={})", force_refresh);
+        if !force_refresh {
+            if let (Some(last), Some(cache)) =
+                (self.last_snapshot_time, self.last_snapshot.clone())
+            {
+                if last.elapsed() < self.refresh_ttl() {
+                    return Ok(cache);
+                }
+            }
+        }
+
         let who = self.wallet;
         let me = self.clients.instance(who);
         let provider = me
@@ -277,66 +787,162 @@ impl AppController {
             .provider()
             .ok_or_else(|| eyre!("no provider"))?
             .clone();
+        let safe_limit = self.clients.safe_script_gas_limit;
 
-        let current_block_height = provider.latest_block_height().await?;
-        let next_roll_height = self
-            .clients
-            .owner
-            .methods()
-            .next_roll_height()
-            .simulate(Execution::StateReadOnly)
-            .await?
-            .value;
+        let provider_for_height = provider.clone();
+        let owner_for_next = self.clients.owner.clone();
+        let me_for_game = me.clone();
+        let me_for_history = me.clone();
+        let me_for_rewards = me.clone();
+        let me_for_modifiers = me.clone();
+        let me_for_active = me.clone();
 
-        let current_game_id = me
-            .methods()
-            .current_game_id()
-            .simulate(Execution::StateReadOnly)
-            .await?
-            .value;
-        let roll_history = me
-            .methods()
-            .roll_history()
-            .simulate(Execution::StateReadOnly)
-            .await?
-            .value;
-        let strap_rewards = me
-            .methods()
-            .strap_rewards()
-            .simulate(Execution::StateReadOnly)
-            .await?
-            .value;
-        let modifier_triggers = me
-            .methods()
-            .modifier_triggers()
-            .simulate(Execution::StateReadOnly)
-            .await?
-            .value;
-        let active_modifiers = me
-            .methods()
-            .active_modifiers()
-            .simulate(Execution::StateReadOnly)
-            .await?
-            .value;
+        let (
+            current_block_height,
+            next_roll_height,
+            current_game_id,
+            roll_history,
+            strap_rewards,
+            modifier_triggers,
+            active_modifiers,
+        ) = tokio::try_join!(
+            async move {
+                provider_for_height
+                    .latest_block_height()
+                    .await
+                    .map_err(color_eyre::eyre::Report::from)
+            },
+            async move {
+                let res = owner_for_next
+                    .methods()
+                    .next_roll_height()
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await
+                    .map(|r| r.value)
+                    .map_err(color_eyre::eyre::Report::from)
+                    .wrap_err("next_roll_height call failed");
+                if let Err(ref e) = res {
+                    error!(error = %e, "next_roll_height simulate failed");
+                }
+                res.wrap_err("next_roll_height call failed")
+            },
+            async move {
+                let res = me_for_game
+                    .methods()
+                    .current_game_id()
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await
+                    .map(|r| r.value)
+                    .map_err(color_eyre::eyre::Report::from)
+                    .wrap_err(format!(
+                        "current_game_id call failed with gas limit: {safe_limit:?}"
+                    ));
+                if let Err(ref e) = res {
+                    error!(error = %e, "current_game_id simulate failed");
+                }
+                res
+            },
+            async move {
+                let res = me_for_history
+                    .methods()
+                    .roll_history()
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await
+                    .map(|r| r.value)
+                    .map_err(color_eyre::eyre::Report::from);
+                if let Err(ref e) = res {
+                    error!(error = %e, "roll_history simulate failed");
+                }
+                res.wrap_err(format!(
+                    "roll_history call failed with gas limit: {safe_limit:?}"
+                ))
+            },
+            async move {
+                let res = me_for_rewards
+                    .methods()
+                    .strap_rewards()
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await
+                    .map(|r| r.value)
+                    .map_err(color_eyre::eyre::Report::from);
+                if let Err(ref e) = res {
+                    error!(error = %e, "strap_rewards simulate failed");
+                }
+                res.wrap_err(format!(
+                    "strap_rewards call failed with gas limit: {safe_limit:?}"
+                ))
+            },
+            async move {
+                let res = me_for_modifiers
+                    .methods()
+                    .modifier_triggers()
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await
+                    .map(|r| r.value)
+                    .map_err(color_eyre::eyre::Report::from)
+                    .wrap_err("modifier_triggers call failed");
+                if let Err(ref e) = res {
+                    error!(error = %e, "modifier_triggers simulate failed");
+                }
+                res.wrap_err("modifier_triggers call failed")
+            },
+            async move {
+                let res = me_for_active
+                    .methods()
+                    .active_modifiers()
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await
+                    .map(|r| r.value)
+                    .map_err(color_eyre::eyre::Report::from)
+                    .wrap_err("active_modifiers call failed");
+                if let Err(ref e) = res {
+                    error!(error = %e, "active_modifiers simulate failed");
+                }
+                res.wrap_err("active_modifiers call failed")
+            }
+        )?;
+
         self.active_modifiers_by_game
             .insert(current_game_id, active_modifiers.clone());
 
         // My bets by roll
+        let my_bets = self
+            .fetch_bets_for(self.wallet)
+            .await
+            .wrap_err("fetching bets for active wallet failed")?;
         let all_rolls = all_rolls();
-        let mut my_bets = Vec::with_capacity(all_rolls.len());
-        for r in &all_rolls {
-            let bets = me
-                .methods()
-                .get_my_bets(r.clone())
-                .simulate(Execution::Realistic)
-                .await?
-                .value;
-            my_bets.push((r.clone(), bets));
-        }
 
         // Refresh current bets for both users on each tick so rollover can snapshot both reliably
-        let new_owner_bets = self.fetch_bets_for(WalletKind::Owner).await?;
-        let new_alice_bets = self.fetch_bets_for(WalletKind::Alice).await?;
+        let (new_owner_bets, new_alice_bets) = tokio::try_join!(
+            async {
+                self.fetch_bets_for(WalletKind::Owner)
+                    .await
+                    .wrap_err("fetching owner bets failed")
+            },
+            async {
+                self.fetch_bets_for(WalletKind::Alice)
+                    .await
+                    .wrap_err("fetching alice bets failed")
+            }
+        )?;
 
         // Remember strap rewards for this current game (for later claim delta display)
         self.strap_rewards_by_game
@@ -393,12 +999,14 @@ impl AppController {
             &self.clients.contract_id,
             &self.clients.chip_asset_id,
         )
-        .await?;
+        .await
+        .wrap_err("fetching pot balance failed")?;
 
         let chip_balance = me
             .account()
             .get_asset_balance(&self.clients.chip_asset_id)
-            .await?;
+            .await
+            .wrap_err("fetching wallet chip balance failed")?;
 
         // update shared rolls (one game globally)
         // update shared rolls (one game globally)
@@ -542,7 +1150,7 @@ impl AppController {
         }
         let previous_games = summaries;
 
-        Ok(AppSnapshot {
+        let snapshot = AppSnapshot {
             wallet: self.wallet,
             current_game_id,
             roll_history,
@@ -560,11 +1168,17 @@ impl AppController {
             cells,
             previous_games,
             errors: self.errors.iter().rev().take(5).cloned().collect(),
-        })
+        };
+
+        self.last_snapshot = Some(snapshot.clone());
+        self.last_snapshot_time = Some(Instant::now());
+
+        Ok(snapshot)
     }
 
     pub fn set_wallet(&mut self, w: WalletKind) {
         self.wallet = w;
+        self.invalidate_cache();
     }
     pub fn select_next_roll(&mut self) {
         self.selected_roll = next_roll(self.selected_roll.clone());
@@ -581,13 +1195,19 @@ impl AppController {
 
     pub async fn place_chip_bet(&mut self, amount: u64) -> Result<()> {
         let me = self.clients.instance(self.wallet);
-        let call = CallParameters::new(amount, self.clients.chip_asset_id, 1_000_000);
+        let call = CallParameters::new(
+            amount,
+            self.clients.chip_asset_id,
+            self.clients.safe_script_gas_limit,
+        );
         me.methods()
             .place_bet(self.selected_roll.clone(), strapped::Bet::Chip, amount)
             .call_params(call)?
+            .with_tx_policies(self.script_policies())
             .call()
             .await?;
         self.status = format!("Placed {} chip(s) on {:?}", amount, self.selected_roll);
+        self.invalidate_cache();
         Ok(())
     }
 
@@ -599,7 +1219,8 @@ impl AppController {
         let me = self.clients.instance(self.wallet);
         let sub = strapped_contract::strap_to_sub_id(&strap);
         let asset_id = self.clients.contract_id.asset_id(&sub);
-        let call = CallParameters::new(amount, asset_id, 1_000_000);
+        let call =
+            CallParameters::new(amount, asset_id, self.clients.safe_script_gas_limit);
         me.methods()
             .place_bet(
                 self.selected_roll.clone(),
@@ -607,6 +1228,7 @@ impl AppController {
                 amount,
             )
             .call_params(call)?
+            .with_tx_policies(self.script_policies())
             .call()
             .await?;
         self.status = format!(
@@ -615,6 +1237,7 @@ impl AppController {
             super_compact_strap(&strap),
             self.selected_roll
         );
+        self.invalidate_cache();
         Ok(())
     }
 
@@ -624,38 +1247,50 @@ impl AppController {
         let triggers = me
             .methods()
             .modifier_triggers()
-            .simulate(Execution::StateReadOnly)
+            .with_tx_policies(self.script_policies())
+            .simulate(Execution::Realistic)
             .await?
             .value;
         if let Some((_, target, modifier, _triggered)) = triggers
             .into_iter()
             .find(|(_, target, _, triggered)| *target == self.selected_roll && *triggered)
         {
-            let call = CallParameters::new(cost, self.clients.chip_asset_id, 1_000_000);
+            let call = CallParameters::new(
+                cost,
+                self.clients.chip_asset_id,
+                self.clients.safe_script_gas_limit,
+            );
             me.methods()
                 .purchase_modifier(target.clone(), modifier.clone())
                 .call_params(call)?
+                .with_tx_policies(self.script_policies())
                 .call()
                 .await?;
             self.status = format!("Purchased {:?} for {:?}", modifier, target);
         } else {
             self.status = String::from("No triggered modifier for selected roll");
         }
+        self.invalidate_cache();
         Ok(())
     }
 
     pub async fn set_vrf_number(&mut self, n: u64) -> Result<()> {
         match &self.clients.vrf {
-            VrfClient::Fake(vrf) => {
+            Some(VrfClient::Fake(vrf)) => {
                 vrf.methods().set_number(n).call().await?;
                 self.vrf_number = n;
                 self.status = format!("VRF set to {}", n);
             }
-            VrfClient::Pseudo(_) => {
+            Some(VrfClient::Pseudo(_)) => {
                 self.status =
                     String::from("Pseudo VRF mode does not support manual adjustment");
             }
+            None => {
+                self.status =
+                    String::from("VRF controls are unavailable on this network");
+            }
         }
+        self.invalidate_cache();
         Ok(())
     }
 
@@ -666,10 +1301,15 @@ impl AppController {
             .owner
             .methods()
             .next_roll_height()
-            .simulate(Execution::StateReadOnly)
-            .await?
+            .with_tx_policies(self.script_policies())
+            .simulate(Execution::Realistic)
+            .await
+            .wrap_err(format!(
+                "with gas limit: {}",
+                self.clients.safe_script_gas_limit
+            ))?
             .value
-            .unwrap();
+            .ok_or_else(|| eyre!("Next roll height not scheduled"))?;
         let provider = self
             .clients
             .owner
@@ -677,36 +1317,67 @@ impl AppController {
             .provider()
             .ok_or_else(|| eyre!("no provider"))?
             .clone();
-        let current_height = provider.latest_block_height().await.unwrap();
+        let current_height = provider
+            .latest_block_height()
+            .await
+            .wrap_err("Failed to fetch latest block height")?;
+
         if current_height < next_roll_height {
-            let blocks_to_advance = next_roll_height.saturating_sub(current_height);
-            provider
-                .produce_blocks(blocks_to_advance, None)
-                .await
-                .unwrap();
+            match self.clients.network {
+                NetworkKind::InMemory => {
+                    let blocks_to_advance =
+                        next_roll_height.saturating_sub(current_height);
+                    provider
+                        .produce_blocks(blocks_to_advance, None)
+                        .await
+                        .wrap_err("Failed to produce blocks in local provider")?;
+                }
+                NetworkKind::Remote => {
+                    self.status = format!(
+                        "Waiting for block {} (current height {}) before rolling",
+                        next_roll_height, current_height
+                    );
+                    return Ok(());
+                }
+            }
         }
         // Roll using owner instance but allow any wallet to trigger.
         match &self.clients.vrf {
-            VrfClient::Fake(vrf) => {
+            Some(VrfClient::Fake(vrf)) => {
+                tracing::info!(
+                    "Rolling (fake VRF) with script gas limit {}",
+                    self.clients.safe_script_gas_limit
+                );
                 self.clients
                     .owner
                     .methods()
                     .roll_dice()
                     .with_contracts(&[vrf])
+                    .with_tx_policies(self.script_policies())
                     .call()
                     .await?;
             }
-            VrfClient::Pseudo(vrf) => {
+            Some(VrfClient::Pseudo(vrf)) => {
+                tracing::info!(
+                    "Rolling (pseudo VRF) with script gas limit {}",
+                    self.clients.safe_script_gas_limit
+                );
                 self.clients
                     .owner
                     .methods()
                     .roll_dice()
                     .with_contracts(&[vrf])
+                    .with_tx_policies(self.script_policies())
                     .call()
                     .await?;
+            }
+            None => {
+                self.status = String::from("VRF contract unavailable; cannot roll");
+                return Ok(());
             }
         }
         self.status = String::from("Rolled dice");
+        self.invalidate_cache();
         Ok(())
     }
 
@@ -753,6 +1424,7 @@ impl AppController {
             .methods()
             .claim_rewards(game_id, enabled.clone())
             .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
+            .with_tx_policies(self.script_policies())
             .call()
             .await
         {
@@ -821,6 +1493,7 @@ impl AppController {
             game_id, chip_delta, strap_part
         );
         self.push_errors(errs);
+        self.invalidate_cache();
         Ok(())
     }
 
@@ -908,13 +1581,19 @@ impl AppController {
         cost: u64,
     ) -> Result<()> {
         let me = self.clients.instance(self.wallet);
-        let call = CallParameters::new(cost, self.clients.chip_asset_id, 1_000_000);
+        let call = CallParameters::new(
+            cost,
+            self.clients.chip_asset_id,
+            self.clients.safe_script_gas_limit,
+        );
         me.methods()
             .purchase_modifier(target.clone(), modifier.clone())
             .call_params(call)?
+            .with_tx_policies(self.script_policies())
             .call()
             .await?;
         self.status = format!("Purchased {:?} for {:?}", modifier, target);
+        self.invalidate_cache();
         Ok(())
     }
 }
@@ -981,6 +1660,10 @@ impl AppController {
             strapped::StrapKind::Gown => 100,
             strapped::StrapKind::Belt => 200,
         }
+    }
+
+    fn script_policies(&self) -> TxPolicies {
+        TxPolicies::default().with_script_gas_limit(self.clients.safe_script_gas_limit)
     }
 
     fn push_errors(&mut self, mut items: Vec<String>) {
@@ -1050,12 +1733,125 @@ struct SharedGame {
     modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
 }
 
-pub async fn run_app(vrf_mode: VrfMode) -> Result<()> {
-    let mut controller = AppController::new_local(vrf_mode).await?;
+fn format_deployment_summary(
+    env: deployment::DeploymentEnv,
+    url: &str,
+    store: &deployment::DeploymentStore,
+    records: &[deployment::DeploymentRecord],
+    current_hash: &str,
+) -> Result<String> {
+    let mut message = format!(
+        "No compatible deployments recorded for {env} at {url}.\n\nRecorded deployments for {env}:",
+    );
+
+    if records.is_empty() {
+        message.push_str("\n  (none recorded)");
+    } else {
+        for record in records {
+            let compat = if record.is_compatible_with_hash(current_hash) {
+                " [compatible]"
+            } else {
+                ""
+            };
+            let asset_info = record.chip_asset_id.as_deref().unwrap_or("(unknown asset)");
+            let contract_salt =
+                record.contract_salt.as_deref().unwrap_or("(unknown salt)");
+            let vrf_salt = record.vrf_salt.as_deref().unwrap_or("(unknown vrf salt)");
+            let vrf_contract = record
+                .vrf_contract_id
+                .as_deref()
+                .unwrap_or("(unknown vrf id)");
+            let vrf_hash = record
+                .vrf_bytecode_hash
+                .as_deref()
+                .unwrap_or("(unknown vrf hash)");
+            message.push_str(&format!(
+                "\n  {} - {} @ {} (hash {}){} asset {} contract_salt {} vrf_salt {} vrf_contract {} vrf_hash {}",
+                record.deployed_at,
+                record.contract_id,
+                record.network_url,
+                hash_preview(&record.bytecode_hash),
+                compat,
+                asset_info,
+                contract_salt,
+                vrf_salt,
+                vrf_contract,
+                vrf_hash,
+            ));
+        }
+    }
+
+    message.push_str(&format!(
+        "\n\nCurrent local bytecode hash: {}",
+        hash_preview(current_hash)
+    ));
+    message.push_str(&format!(
+        "\nDeployment records file: {}",
+        store.path().display()
+    ));
+
+    message
+        .push_str("\n\nRun again with --deploy to publish a new compatible deployment.");
+
+    Ok(message)
+}
+
+fn hash_preview(hash: &str) -> String {
+    let preview_len = hash.len().min(16);
+    let mut preview = hash[..preview_len].to_string();
+    if hash.len() > preview_len {
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn prompt_chip_asset_id(default: AssetId) -> Result<AssetId> {
+    let default_bytes: [u8; 32] = default.into();
+    let default_hex = format!("0x{}", hex::encode(default_bytes));
+    print!("Enter chip asset id to use [{}]: ", default_hex);
+    io::stdout()
+        .flush()
+        .wrap_err("Failed to flush prompt to stdout")?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .wrap_err("Failed to read chip asset id")?;
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(default);
+    }
+    let cleaned = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if cleaned.len() != 64 {
+        return Err(eyre!("Asset id must be 32-byte hex string (64 characters)"));
+    }
+    let mut bytes = [0u8; 32];
+    hex::decode_to_slice(cleaned, &mut bytes as &mut [u8])
+        .map_err(|_| eyre!("Invalid hex string for asset id"))?;
+    Ok(AssetId::from(bytes))
+}
+
+fn choose_binary<'a>(paths: &'a [&str]) -> Result<&'a str> {
+    paths
+        .iter()
+        .find(|p| Path::new(p).exists())
+        .copied()
+        .ok_or_else(|| eyre!("Contract binary not found. Tried {:?}", paths))
+}
+
+fn load_contract(paths: &[&str], salt: [u8; 32]) -> Result<LoadedContract<Regular>> {
+    let path = choose_binary(paths)?;
+    Contract::load_from(path, LoadConfiguration::default().with_salt(salt))
+        .wrap_err_with(|| format!("Failed to load contract binary from {path}"))
+}
+
+pub async fn run_app(config: AppConfig) -> Result<()> {
+    let mut controller = AppController::new(config).await?;
     let mut ui_state = ui::UiState::default();
 
+    tracing::info!("Starting UI");
     // UI bootstrap
     ui::terminal_enter(&mut ui_state)?;
+    tracing::info!("UI ready");
     let res = run_loop(&mut controller, &mut ui_state).await;
     ui::terminal_exit()?;
     res
@@ -1065,42 +1861,149 @@ async fn run_loop(
     controller: &mut AppController,
     ui_state: &mut ui::UiState,
 ) -> Result<()> {
-    let mut ticker = time::interval(Duration::from_millis(1000));
-    let mut last_snapshot = controller.snapshot().await?;
-    ui::draw(ui_state, &last_snapshot)?;
+    tracing::info!("Running app loop");
+    let mut ticker = time::interval(controller.poll_interval());
+    let mut last_snapshot = controller
+        .snapshot(true)
+        .await
+        .wrap_err("initial snapshot failed")?;
+    ui::draw(ui_state, &last_snapshot).wrap_err("initial draw failed")?;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { break; }
             _ = ticker.tick() => {
-                last_snapshot = controller.snapshot().await?;
-                ui::draw(ui_state, &last_snapshot)?;
+                last_snapshot = controller
+                    .snapshot(false)
+                    .await
+                    .wrap_err("periodic snapshot failed")?;
+                ui::draw(ui_state, &last_snapshot).wrap_err("periodic draw failed")?;
             }
             ev = ui::next_event(ui_state) => {
-                match ev? {
+                let mut force_refresh = false;
+                match ev.wrap_err("UI event polling failed")? {
                     ui::UserEvent::Quit => break,
-                    ui::UserEvent::NextRoll => controller.select_next_roll(),
-                    ui::UserEvent::PrevRoll => controller.select_prev_roll(),
-                    ui::UserEvent::Owner => controller.set_wallet(WalletKind::Owner),
-                    ui::UserEvent::Alice => controller.set_wallet(WalletKind::Alice),
-                    ui::UserEvent::PlaceBetAmount(amount) => { let _ = controller.place_chip_bet(amount).await; },
-                    ui::UserEvent::Purchase => { let _ = controller.purchase_triggered_modifier(1).await; },
-                    ui::UserEvent::ConfirmStrapBet { strap, amount } => { let _ = controller.place_strap_bet(strap, amount).await; },
-                    ui::UserEvent::Roll => { let _ = controller.roll().await; },
-                    ui::UserEvent::VRFInc => { controller.inc_vrf(); let _ = controller.set_vrf_number(controller.vrf_number).await; },
-                    ui::UserEvent::VRFDec => { controller.dec_vrf(); let _ = controller.set_vrf_number(controller.vrf_number).await; },
-                    ui::UserEvent::SetVrf(n) => { let _ = controller.set_vrf_number(n).await; },
-                    ui::UserEvent::ConfirmClaim { game_id, enabled } => { let _ = controller.claim_game(game_id, enabled).await; },
-                    ui::UserEvent::OpenShop => { ui::draw(ui_state, &last_snapshot)?; continue; },
-                    ui::UserEvent::ConfirmShopPurchase { roll, modifier } => { let _ = controller.purchase_modifier_for(roll, modifier, 1).await; },
+                    ui::UserEvent::NextRoll => {
+                        controller.select_next_roll();
+                        if let Some(cache) = controller.last_snapshot.as_mut() {
+                            cache.selected_roll = controller.selected_roll.clone();
+                        }
+                        last_snapshot.selected_roll = controller.selected_roll.clone();
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw after NextRoll failed")?;
+                        continue;
+                    }
+                    ui::UserEvent::PrevRoll => {
+                        controller.select_prev_roll();
+                        if let Some(cache) = controller.last_snapshot.as_mut() {
+                            cache.selected_roll = controller.selected_roll.clone();
+                        }
+                        last_snapshot.selected_roll = controller.selected_roll.clone();
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw after PrevRoll failed")?;
+                        continue;
+                    }
+                    ui::UserEvent::Owner => {
+                        controller.set_wallet(WalletKind::Owner);
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::Alice => {
+                        controller.set_wallet(WalletKind::Alice);
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::PlaceBetAmount(amount) => {
+                        controller
+                            .place_chip_bet(amount)
+                            .await
+                            .wrap_err_with(|| {
+                                format!("placing chip bet of {} failed", amount)
+                            })?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::Purchase => {
+                        controller
+                            .purchase_triggered_modifier(1)
+                            .await
+                            .wrap_err("purchasing triggered modifier failed")?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::ConfirmStrapBet { strap, amount } => {
+                        controller
+                            .place_strap_bet(strap.clone(), amount)
+                            .await
+                            .wrap_err_with(|| {
+                                format!(
+                                    "placing strap bet of {} on {:?} failed",
+                                    amount, strap
+                                )
+                            })?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::Roll => {
+                        controller.roll().await.wrap_err("roll failed")?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::VRFInc => {
+                        controller.inc_vrf();
+                        controller
+                            .set_vrf_number(controller.vrf_number)
+                            .await
+                            .wrap_err("setting VRF number (inc) failed")?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::VRFDec => {
+                        controller.dec_vrf();
+                        controller
+                            .set_vrf_number(controller.vrf_number)
+                            .await
+                            .wrap_err("setting VRF number (dec) failed")?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::SetVrf(n) => {
+                        controller
+                            .set_vrf_number(n)
+                            .await
+                            .wrap_err_with(|| format!("setting VRF number to {} failed", n))?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::ConfirmClaim { game_id, enabled } => {
+                        controller
+                            .claim_game(game_id, enabled.clone())
+                            .await
+                            .wrap_err_with(|| {
+                                format!("claiming game {} with modifiers failed", game_id)
+                            })?;
+                        force_refresh = true;
+                    }
+                    ui::UserEvent::OpenShop => { ui::draw(ui_state, &last_snapshot).wrap_err("draw after OpenShop failed")?; continue; }
+                    ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
+                        controller
+                            .purchase_modifier_for(roll, modifier, 1)
+                            .await
+                            .wrap_err("shop purchase failed")?;
+                        force_refresh = true;
+                    }
                     ui::UserEvent::OpenBetModal | ui::UserEvent::OpenClaimModal | ui::UserEvent::OpenVrfModal | ui::UserEvent::Redraw => {
                         // UI-only update; redraw without hitting the chain
-                        ui::draw(ui_state, &last_snapshot)?;
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw during modal/redraw failed")?;
                         continue;
                     }
                     _ => {}
                 }
-                last_snapshot = controller.snapshot().await?;
-                ui::draw(ui_state, &last_snapshot)?;
+                if force_refresh {
+                    controller.invalidate_cache();
+                    last_snapshot = controller
+                        .snapshot(true)
+                        .await
+                        .wrap_err("forced snapshot refresh failed")?;
+                } else {
+                    last_snapshot = controller
+                        .snapshot(false)
+                        .await
+                        .wrap_err("snapshot refresh failed")?;
+                }
+                ui::draw(ui_state, &last_snapshot)
+                    .wrap_err("draw after snapshot refresh failed")?;
             }
         }
     }

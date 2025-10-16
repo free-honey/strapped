@@ -14,6 +14,10 @@ use fuels::{
     types::Bytes32,
 };
 
+pub mod deployment;
+
+pub mod wallets;
+
 pub mod test_helpers;
 
 pub mod strapped_types {
@@ -21,7 +25,7 @@ pub mod strapped_types {
 
     abigen!(Contract(
         name = "MyContract",
-        abi = "strapped/out/debug/strapped-abi.json"
+        abi = "strapped/out/release/strapped-abi.json" /* abi = "strapped/out/debug/strapped-abi.json" */
     ));
 }
 
@@ -30,7 +34,7 @@ pub mod vrf_types {
 
     abigen!(Contract(
         name = "FakeVRFContract",
-        abi = "fake-vrf-contract/out/debug/fake-vrf-contract-abi.json"
+        abi = "fake-vrf-contract/out/release/fake-vrf-contract-abi.json" /* abi = "fake-vrf-contract/out/debug/fake-vrf-contract-abi.json" */
     ));
 }
 
@@ -39,13 +43,14 @@ pub mod pseudo_vrf_types {
 
     abigen!(Contract(
         name = "PseudoVRFContract",
-        abi = "pseudo-vrf-contract/out/debug/pseudo-vrf-contract-abi.json"
+        abi = "pseudo-vrf-contract/out/release/pseudo-vrf-contract-abi.json" /* abi = "pseudo-vrf-contract/out/debug/pseudo-vrf-contract-abi.json" */
     ));
 }
 
 pub fn contract_id() -> ContractId {
     Contract::load_from(
-        "strapped/out/debug/strapped.bin",
+        "strapped/out/release/strapped.bin",
+        // "strapped/out/debug/strapped.bin",
         LoadConfiguration::default(),
     )
     .unwrap()
@@ -56,7 +61,8 @@ pub async fn get_contract_instance(
     wallet: WalletUnlocked,
 ) -> (strapped_types::MyContract<WalletUnlocked>, ContractId) {
     let id = Contract::load_from(
-        "strapped/out/debug/strapped.bin",
+        "strapped/out/release/strapped.bin",
+        // "strapped/out/debug/strapped.bin",
         LoadConfiguration::default(),
     )
     .unwrap()

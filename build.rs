@@ -9,6 +9,7 @@ fn build_strapped() {
     // run forc build command
     let output = std::process::Command::new("forc")
         .arg("build")
+        .arg("--release")
         .current_dir(PATH)
         .output()
         .expect("failed to execute process");
@@ -25,6 +26,7 @@ fn build_pseudo_vrf() {
     const PATH: &str = "pseudo-vrf-contract/";
     let output = std::process::Command::new("forc")
         .arg("build")
+        .arg("--release")
         .current_dir(PATH)
         .output()
         .expect("failed to execute process");
@@ -42,6 +44,7 @@ fn build_vrf() {
     // run forc build command
     let output = std::process::Command::new("forc")
         .arg("build")
+        .arg("--release")
         .current_dir(PATH)
         .output()
         .expect("failed to execute process");
