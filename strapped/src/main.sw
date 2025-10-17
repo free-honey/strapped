@@ -130,6 +130,8 @@ abi Strapped {
     /// Get the history of rolls for the current game
     #[storage(read)]
     fn roll_history() -> Vec<Roll>;
+    #[storage(read)]
+    fn roll_history_for_game(game_id: GameId) -> Vec<Roll>;
 
     /// Place a bet on a specific roll with a specific bet type and amount
     #[storage(read, write), payable]
@@ -138,6 +140,8 @@ abi Strapped {
     /// Get the caller's bets for a specific roll in the current game
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, u64, RollIndex)>;
+    #[storage(read)]
+    fn get_my_bets_for_game(game_id: GameId) -> Vec<(Roll, Vec<(Bet, Amount, RollIndex)>)>;
 
     /// Get the current game ID
     #[storage(read)]
@@ -154,6 +158,8 @@ abi Strapped {
     /// Get the straps to be rewarded for the current game
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap, u64)>;
+    #[storage(read)]
+    fn strap_rewards_for_game(game_id: GameId) -> Vec<(Roll, Strap, u64)>;
 
     /// Get the chip asset id used for betting
     #[storage(read)]
@@ -174,6 +180,8 @@ abi Strapped {
     /// Get the active modifiers for the current game
     #[storage(read)]
     fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)>;
+    #[storage(read)]
+    fn active_modifiers_for_game(game_id: GameId) -> Vec<(Roll, Modifier, RollIndex)>;
 
     /// Get payout configuration
     #[storage(read)]
@@ -250,6 +258,11 @@ impl Strapped for Contract {
         storage.roll_history.get(current_game_id).load_vec()
     }
 
+    #[storage(read)]
+    fn roll_history_for_game(game_id: GameId) -> Vec<Roll> {
+        storage.roll_history.get(game_id).load_vec()
+    }
+
     #[storage(read, write), payable]
     fn place_bet(roll: Roll, bet: Bet, amount: u64) {
         // check
@@ -278,6 +291,90 @@ impl Strapped for Contract {
         let caller = msg_sender().unwrap();
         let key = (storage.current_game_id.read(), caller, roll);
         storage.bets.get(key).load_vec()
+    }
+
+    #[storage(read)]
+    fn get_my_bets_for_game(game_id: GameId) -> Vec<(Roll, Vec<(Bet, Amount, RollIndex)>)> {
+        let caller = msg_sender().unwrap();
+        let mut result: Vec<(Roll, Vec<(Bet, Amount, RollIndex)>)> = Vec::new();
+        result.push((
+            Roll::Two,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Two))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Three,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Three))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Four,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Four))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Five,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Five))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Six,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Six))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Seven,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Seven))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Eight,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Eight))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Nine,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Nine))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Ten,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Ten))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Eleven,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Eleven))
+                .load_vec(),
+        ));
+        result.push((
+            Roll::Twelve,
+            storage
+                .bets
+                .get((game_id, caller, Roll::Twelve))
+                .load_vec(),
+        ));
+        result
     }
 
     #[storage(read)]
@@ -396,6 +493,11 @@ impl Strapped for Contract {
     }
 
     #[storage(read)]
+    fn strap_rewards_for_game(game_id: GameId) -> Vec<(Roll, Strap, u64)> {
+        storage.strap_rewards.get(game_id).load_vec()
+    }
+
+    #[storage(read)]
     fn current_chip_asset_id() -> AssetId {
         storage.chip_asset_id.read()
     }
@@ -433,6 +535,11 @@ impl Strapped for Contract {
     #[storage(read)]
     fn active_modifiers() -> Vec<(Roll, Modifier, RollIndex)> {
         let game_id = storage.current_game_id.read();
+        storage.active_modifiers.get(game_id).load_vec()
+    }
+
+    #[storage(read)]
+    fn active_modifiers_for_game(game_id: GameId) -> Vec<(Roll, Modifier, RollIndex)> {
         storage.active_modifiers.get(game_id).load_vec()
     }
 

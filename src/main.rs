@@ -1,7 +1,4 @@
-use color_eyre::eyre::{
-    Result,
-    eyre,
-};
+use color_eyre::eyre::{Result, eyre};
 
 mod client;
 mod deployment;

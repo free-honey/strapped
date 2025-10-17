@@ -10,6 +10,7 @@ use std::{
 
 pub const DEPLOYMENTS_ROOT: &str = ".deployments";
 const DEPLOYMENTS_FILE: &str = "deployments.json";
+const HISTORY_FILE: &str = "history.json";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeploymentEnv {
@@ -132,6 +133,7 @@ pub fn ensure_structure() -> Result<()> {
         DeploymentEnv::Local,
     ] {
         let _ = ensure_store(env)?;
+        let _ = ensure_history(env)?;
     }
     Ok(())
 }
@@ -180,4 +182,104 @@ fn write_records(path: impl AsRef<Path>, records: &[DeploymentRecord]) -> Result
         .wrap_err("Failed to serialize deployment records")?;
     fs::write(path.as_ref(), json).wrap_err("Failed to write deployment records")?;
     Ok(())
+}
+
+fn ensure_history(env: DeploymentEnv) -> Result<PathBuf> {
+    let root = Path::new(DEPLOYMENTS_ROOT).join(env.dir_name());
+    if !root.exists() {
+        fs::create_dir_all(&root).wrap_err_with(|| {
+            format!("Failed to create history directory for {}", env.dir_name())
+        })?;
+    }
+    let file_path = root.join(HISTORY_FILE);
+    if !file_path.exists() {
+        let mut file = fs::File::create(&file_path).wrap_err_with(|| {
+            format!(
+                "Failed to create history record file for {} at {:?}",
+                env, file_path
+            )
+        })?;
+        file.write_all(b"[]").wrap_err_with(|| {
+            format!("Failed to initialize history record file for {}", env)
+        })?;
+    }
+    Ok(file_path)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredStrap {
+    pub level: u8,
+    pub kind: String,
+    pub modifier: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredStrapReward {
+    pub roll: String,
+    pub strap: StoredStrap,
+    pub cost: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredModifier {
+    pub roll: String,
+    pub modifier: String,
+    pub roll_index: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredBet {
+    pub bet_type: String,
+    pub amount: u64,
+    pub roll_index: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strap: Option<StoredStrap>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredRollBets {
+    pub roll: String,
+    pub bets: Vec<StoredBet>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StoredGameHistory {
+    pub game_id: u64,
+    pub rolls: Vec<String>,
+    pub modifiers: Vec<StoredModifier>,
+    pub owner_bets: Vec<StoredRollBets>,
+    pub alice_bets: Vec<StoredRollBets>,
+    pub strap_rewards: Vec<StoredStrapReward>,
+    pub owner_claimed: bool,
+    pub alice_claimed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct HistoryStore {
+    path: PathBuf,
+}
+
+impl HistoryStore {
+    pub fn new(env: DeploymentEnv) -> Result<Self> {
+        let path = ensure_history(env)?;
+        Ok(Self { path })
+    }
+
+    pub fn load(&self) -> Result<Vec<StoredGameHistory>> {
+        let data =
+            fs::read(&self.path).wrap_err("Failed to read game history records")?;
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        let records = serde_json::from_slice::<Vec<StoredGameHistory>>(&data)
+            .wrap_err("Failed to parse game history JSON")?;
+        Ok(records)
+    }
+
+    pub fn save(&self, records: &[StoredGameHistory]) -> Result<()> {
+        let json = serde_json::to_vec_pretty(records)
+            .wrap_err("Failed to serialize game history records")?;
+        fs::write(&self.path, json).wrap_err("Failed to write game history records")?;
+        Ok(())
+    }
 }
