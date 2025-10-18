@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "deployed_at": "2025-10-18T16:34:34.070735+00:00",
+    "contract_id": "fuel1q3qadghzp280u63f3n3qtrxmehd3rvgk82xu2m0ykwcs9mdteglqkzvj6c",
+    "bytecode_hash": "41778e9243ca8e0bf694596f49c477dea79e6eb320febb5731321dbe497a22a6",
+    "network_url": "https://devnet.fuel.network",
+    "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+    "contract_salt": "0xef7443b461459b5fb584c5454f70b21bafdadcd805e0edf3e01ba80e23a0760f",
+    "vrf_salt": "0x9842e05c63bc0846fa7b55000aa74fc1ba8327f7f4653c0c94f3a9800de98f6a",
+    "vrf_contract_id": "fuel1rnr2hj59u5ukcv9wfhv5ympf2u3ulklf23c0exx7nqmg25yg8phs6gnhl3",
+    "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c"
+  }
+]
