@@ -133,7 +133,7 @@ pub fn ensure_structure() -> Result<()> {
         DeploymentEnv::Local,
     ] {
         let _ = ensure_store(env)?;
-        let _ = ensure_history(env)?;
+        let _ = ensure_history(env, None)?;
     }
     Ok(())
 }
@@ -184,14 +184,45 @@ fn write_records(path: impl AsRef<Path>, records: &[DeploymentRecord]) -> Result
     Ok(())
 }
 
-fn ensure_history(env: DeploymentEnv) -> Result<PathBuf> {
+fn history_file_name(profile: Option<&str>) -> String {
+    match profile.and_then(|p| {
+        let sanitized = sanitize_profile_tag(p);
+        if sanitized.is_empty() {
+            None
+        } else {
+            Some(sanitized)
+        }
+    }) {
+        Some(tag) => format!("history-{}.json", tag),
+        None => HISTORY_FILE.to_string(),
+    }
+}
+
+fn sanitize_profile_tag(input: &str) -> String {
+    let mut result = String::new();
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            result.push(ch.to_ascii_lowercase());
+        } else if ch == '-' {
+            result.push('-');
+        } else if ch.is_ascii_whitespace() || ch == '_' {
+            if !result.ends_with('_') {
+                result.push('_');
+            }
+        }
+    }
+    result.trim_matches('_').to_string()
+}
+
+fn ensure_history(env: DeploymentEnv, profile: Option<&str>) -> Result<PathBuf> {
     let root = Path::new(DEPLOYMENTS_ROOT).join(env.dir_name());
     if !root.exists() {
         fs::create_dir_all(&root).wrap_err_with(|| {
             format!("Failed to create history directory for {}", env.dir_name())
         })?;
     }
-    let file_path = root.join(HISTORY_FILE);
+    let filename = history_file_name(profile);
+    let file_path = root.join(filename);
     if !file_path.exists() {
         let mut file = fs::File::create(&file_path).wrap_err_with(|| {
             format!(
@@ -260,8 +291,8 @@ pub struct HistoryStore {
 }
 
 impl HistoryStore {
-    pub fn new(env: DeploymentEnv) -> Result<Self> {
-        let path = ensure_history(env)?;
+    pub fn new(env: DeploymentEnv, profile: Option<&str>) -> Result<Self> {
+        let path = ensure_history(env, profile)?;
         Ok(Self { path })
     }
 

@@ -1,73 +1,34 @@
 use crate::{
     deployment::{
-        self,
-        HistoryStore,
-        StoredBet,
-        StoredGameHistory,
-        StoredModifier,
-        StoredRollBets,
-        StoredStrap,
-        StoredStrapReward,
+        self, HistoryStore, StoredBet, StoredGameHistory, StoredModifier, StoredRollBets,
+        StoredStrap, StoredStrapReward,
     },
-    ui,
-    wallets,
+    ui, wallets,
 };
 use chrono::Utc;
-use color_eyre::eyre::{
-    Result,
-    WrapErr,
-    eyre,
-};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig,
-        AssetId,
-        Bech32ContractId,
-        CallParameters,
-        Contract,
-        ContractId,
-        Execution,
-        LoadConfiguration,
-        Provider,
-        TxPolicies,
-        VariableOutputPolicy,
-        WalletUnlocked,
-        WalletsConfig,
-        launch_custom_provider_and_get_wallets,
+        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
+        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
+        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
     },
-    programs::contract::{
-        Contract as LoadedContract,
-        Regular,
-    },
+    programs::contract::{Contract as LoadedContract, Regular},
     tx::ContractIdExt,
     types::Bits256,
 };
 use futures::future::try_join_all;
 use rand::Rng;
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
-    io::{
-        self,
-        Write,
-    },
-    path::{
-        Path,
-        PathBuf,
-    },
+    collections::{HashMap, HashSet},
+    io::{self, Write},
+    path::{Path, PathBuf},
     str::FromStr,
-    time::{
-        Duration,
-        Instant,
-    },
+    time::{Duration, Instant},
 };
 use strapped_contract::{
-    pseudo_vrf_types as pseudo_vrf,
-    strapped_types as strapped,
-    vrf_types as fake_vrf,
+    pseudo_vrf_types as pseudo_vrf, strapped_types as strapped, vrf_types as fake_vrf,
 };
 use tokio::time;
 use tracing::error;
@@ -81,7 +42,7 @@ const VRF_BIN_CANDIDATES: [&str; 1] =
     ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
 // ["pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
-const GAME_HISTORY_DEPTH: usize = 5;
+const GAME_HISTORY_DEPTH: usize = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VrfMode {
@@ -711,7 +672,7 @@ impl AppController {
             VrfMode::Pseudo => 0,
         };
         let history_store =
-            deployment::HistoryStore::new(deployment::DeploymentEnv::Local)?;
+            deployment::HistoryStore::new(deployment::DeploymentEnv::Local, None)?;
         let mut controller = Self::from_clients(clients, initial_vrf, history_store);
         controller.load_history_from_disk()?;
         let _ = controller.backfill_recent_games().await?;
@@ -745,6 +706,7 @@ impl AppController {
                 ));
             }
         };
+        let history_profile = format!("owner-{owner_name}-player-{player_name}");
 
         tracing::info!("c");
         let owner_descriptor = wallets::find_wallet(&wallet_dir, &owner_name)
@@ -762,7 +724,8 @@ impl AppController {
 
         tracing::info!("e");
         let store = deployment::DeploymentStore::new(env)?;
-        let history_store = deployment::HistoryStore::new(env)?;
+        let history_store =
+            deployment::HistoryStore::new(env, Some(history_profile.as_str()))?;
         let records = store.load()?;
         let strap_binary = choose_binary(&STRAPPED_BIN_CANDIDATES)?;
         let bytecode_hash = deployment::compute_bytecode_hash(strap_binary)?;
@@ -1514,6 +1477,7 @@ impl AppController {
         );
         me.methods()
             .place_bet(self.selected_roll.clone(), strapped::Bet::Chip, amount)
+            .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call_params(call)?
             .with_tx_policies(self.script_policies())
             .call()
@@ -1539,6 +1503,7 @@ impl AppController {
                 strapped::Bet::Strap(strap.clone()),
                 amount,
             )
+            // .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call_params(call)?
             .with_tx_policies(self.script_policies())
             .call()
