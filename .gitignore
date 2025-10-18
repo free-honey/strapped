@@ -7,3 +7,5 @@
 trace.log
 .deployments/local/
 .deployments/local
+.deployments/*/history.json
+.deployments/*/history-*.json

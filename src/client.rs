@@ -1,64 +1,34 @@
 use crate::{
-    deployment,
-    ui,
-    wallets,
+    deployment::{
+        self, HistoryStore, StoredBet, StoredGameHistory, StoredModifier, StoredRollBets,
+        StoredStrap, StoredStrapReward,
+    },
+    ui, wallets,
 };
 use chrono::Utc;
-use color_eyre::eyre::{
-    Result,
-    WrapErr,
-    eyre,
-};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig,
-        AssetId,
-        Bech32ContractId,
-        CallParameters,
-        Contract,
-        ContractId,
-        Execution,
-        LoadConfiguration,
-        Provider,
-        TxPolicies,
-        VariableOutputPolicy,
-        WalletUnlocked,
-        WalletsConfig,
-        launch_custom_provider_and_get_wallets,
+        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
+        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
+        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
     },
-    programs::contract::{
-        Contract as LoadedContract,
-        Regular,
-    },
+    programs::contract::{Contract as LoadedContract, Regular},
     tx::ContractIdExt,
     types::Bits256,
 };
 use futures::future::try_join_all;
 use rand::Rng;
 use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
-    io::{
-        self,
-        Write,
-    },
-    path::{
-        Path,
-        PathBuf,
-    },
+    collections::{HashMap, HashSet},
+    io::{self, Write},
+    path::{Path, PathBuf},
     str::FromStr,
-    time::{
-        Duration,
-        Instant,
-    },
+    time::{Duration, Instant},
 };
 use strapped_contract::{
-    pseudo_vrf_types as pseudo_vrf,
-    strapped_types as strapped,
-    vrf_types as fake_vrf,
+    pseudo_vrf_types as pseudo_vrf, strapped_types as strapped, vrf_types as fake_vrf,
 };
 use tokio::time;
 use tracing::error;
@@ -72,6 +42,7 @@ const VRF_BIN_CANDIDATES: [&str; 1] =
     ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
 // ["pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
+const GAME_HISTORY_DEPTH: usize = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VrfMode {
@@ -295,10 +266,15 @@ pub struct AppController {
     errors: Vec<String>,
     last_snapshot: Option<AppSnapshot>,
     last_snapshot_time: Option<Instant>,
+    history_store: HistoryStore,
 }
 
 impl AppController {
-    fn from_clients(clients: Clients, initial_vrf: u64) -> Self {
+    fn from_clients(
+        clients: Clients,
+        initial_vrf: u64,
+        history_store: HistoryStore,
+    ) -> Self {
         Self {
             clients,
             wallet: WalletKind::Alice,
@@ -320,6 +296,7 @@ impl AppController {
             errors: Vec::new(),
             last_snapshot: None,
             last_snapshot_time: None,
+            history_store,
         }
     }
 
@@ -337,6 +314,154 @@ impl AppController {
     fn invalidate_cache(&mut self) {
         self.last_snapshot = None;
         self.last_snapshot_time = None;
+    }
+
+    fn load_history_from_disk(&mut self) -> Result<()> {
+        let records = self.history_store.load()?;
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        self.shared_prev_games.clear();
+        self.owner_bets_hist.clear();
+        self.alice_bets_hist.clear();
+        self.owner_claimed.clear();
+        self.alice_claimed.clear();
+
+        for record in records {
+            self.apply_stored_history_record(record)?;
+        }
+
+        self.shared_prev_games
+            .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+        if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
+            self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+        }
+        Ok(())
+    }
+
+    fn apply_stored_history_record(&mut self, record: StoredGameHistory) -> Result<()> {
+        let rolls = record
+            .rolls
+            .iter()
+            .map(|r| roll_from_key(r))
+            .collect::<Result<Vec<_>>>()?;
+        let modifiers = record
+            .modifiers
+            .iter()
+            .map(|m| {
+                Ok((
+                    roll_from_key(&m.roll)?,
+                    modifier_from_key(&m.modifier)?,
+                    m.roll_index,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let strap_rewards = record
+            .strap_rewards
+            .iter()
+            .map(|sr| {
+                Ok((
+                    roll_from_key(&sr.roll)?,
+                    stored_to_strap(&sr.strap)?,
+                    sr.cost,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let owner_bets = stored_bets_to_runtime(&record.owner_bets)?;
+        let alice_bets = stored_bets_to_runtime(&record.alice_bets)?;
+
+        self.strap_rewards_by_game
+            .insert(record.game_id, strap_rewards);
+        self.active_modifiers_by_game
+            .insert(record.game_id, modifiers.clone());
+        self.owner_bets_hist.insert(record.game_id, owner_bets);
+        self.alice_bets_hist.insert(record.game_id, alice_bets);
+        if record.owner_claimed {
+            self.owner_claimed.insert(record.game_id);
+        }
+        if record.alice_claimed {
+            self.alice_claimed.insert(record.game_id);
+        }
+        self.upsert_shared_game(record.game_id, rolls, modifiers);
+        Ok(())
+    }
+
+    fn persist_history(&self) -> Result<()> {
+        let mut records = Vec::new();
+        for shared in self.shared_prev_games.iter().take(GAME_HISTORY_DEPTH) {
+            let rolls = shared
+                .rolls
+                .iter()
+                .map(|r| roll_to_key(r).to_string())
+                .collect::<Vec<_>>();
+            let modifiers = shared
+                .modifiers
+                .iter()
+                .map(|(r, m, idx)| StoredModifier {
+                    roll: roll_to_key(r).to_string(),
+                    modifier: modifier_to_key(m).to_string(),
+                    roll_index: *idx,
+                })
+                .collect::<Vec<_>>();
+            let strap_rewards = self
+                .strap_rewards_by_game
+                .get(&shared.game_id)
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|(roll, strap, cost)| StoredStrapReward {
+                    roll: roll_to_key(roll).to_string(),
+                    strap: strap_to_stored(strap),
+                    cost: *cost,
+                })
+                .collect::<Vec<_>>();
+            let owner_bets_vec = self
+                .owner_bets_hist
+                .get(&shared.game_id)
+                .cloned()
+                .unwrap_or_else(empty_bets_template);
+            let alice_bets_vec = self
+                .alice_bets_hist
+                .get(&shared.game_id)
+                .cloned()
+                .unwrap_or_else(empty_bets_template);
+            let owner_bets = runtime_bets_to_store(owner_bets_vec);
+            let alice_bets = runtime_bets_to_store(alice_bets_vec);
+            records.push(StoredGameHistory {
+                game_id: shared.game_id,
+                rolls,
+                modifiers,
+                owner_bets,
+                alice_bets,
+                strap_rewards,
+                owner_claimed: self.owner_claimed.contains(&shared.game_id),
+                alice_claimed: self.alice_claimed.contains(&shared.game_id),
+            });
+        }
+        self.history_store.save(&records)
+    }
+
+    fn upsert_shared_game(
+        &mut self,
+        game_id: u64,
+        rolls: Vec<strapped::Roll>,
+        modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
+    ) {
+        if let Some(existing) = self
+            .shared_prev_games
+            .iter_mut()
+            .find(|g| g.game_id == game_id)
+        {
+            existing.rolls = rolls;
+            existing.modifiers = modifiers;
+        } else {
+            self.shared_prev_games.push(SharedGame {
+                game_id,
+                rolls,
+                modifiers,
+            });
+        }
     }
 
     pub async fn new(config: AppConfig) -> Result<Self> {
@@ -412,13 +537,147 @@ impl AppController {
         Ok(results)
     }
 
+    async fn fetch_bets_for_game(
+        &self,
+        who: WalletKind,
+        game_id: u64,
+    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+        let contract = self.clients.instance(who).clone();
+        let safe_limit = self.clients.safe_script_gas_limit;
+        let bets = contract
+            .methods()
+            .get_my_bets_for_game(game_id)
+            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
+            .simulate(Execution::Realistic)
+            .await?
+            .value;
+        Ok(bets)
+    }
+
+    async fn backfill_recent_games(&mut self) -> Result<bool> {
+        let owner_contract = self.clients.owner.clone();
+        let safe_limit = self.clients.safe_script_gas_limit;
+        let current_game_id = owner_contract
+            .methods()
+            .current_game_id()
+            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
+            .simulate(Execution::Realistic)
+            .await?
+            .value;
+        if current_game_id == 0 {
+            return Ok(false);
+        }
+
+        let mut updated_any = false;
+        let start = current_game_id.saturating_sub(GAME_HISTORY_DEPTH as u64);
+        for game_id in start..current_game_id {
+            let mut game_updated = false;
+            if !self.shared_prev_games.iter().any(|g| g.game_id == game_id) {
+                let rolls = owner_contract
+                    .methods()
+                    .roll_history_for_game(game_id)
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await?
+                    .value;
+                if rolls.is_empty() {
+                    continue;
+                }
+                let modifiers = owner_contract
+                    .methods()
+                    .active_modifiers_for_game(game_id)
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await?
+                    .value;
+                self.active_modifiers_by_game
+                    .insert(game_id, modifiers.clone());
+                self.upsert_shared_game(game_id, rolls, modifiers);
+                game_updated = true;
+            } else if !self.active_modifiers_by_game.contains_key(&game_id) {
+                let modifiers = owner_contract
+                    .methods()
+                    .active_modifiers_for_game(game_id)
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await?
+                    .value;
+                self.active_modifiers_by_game.insert(game_id, modifiers);
+                game_updated = true;
+            }
+
+            if !self.strap_rewards_by_game.contains_key(&game_id) {
+                let strap_rewards = owner_contract
+                    .methods()
+                    .strap_rewards_for_game(game_id)
+                    .with_tx_policies(
+                        TxPolicies::default().with_script_gas_limit(safe_limit),
+                    )
+                    .simulate(Execution::Realistic)
+                    .await?
+                    .value;
+                if !strap_rewards.is_empty() {
+                    self.strap_rewards_by_game.insert(game_id, strap_rewards);
+                    game_updated = true;
+                }
+            }
+
+            if !self.owner_bets_hist.contains_key(&game_id) {
+                let owner_bets =
+                    self.fetch_bets_for_game(WalletKind::Owner, game_id).await?;
+                let owner_claimed = owner_bets.iter().all(|(_, bets)| bets.is_empty());
+                self.owner_bets_hist.insert(game_id, owner_bets);
+                if owner_claimed {
+                    self.owner_claimed.insert(game_id);
+                }
+                game_updated = true;
+            }
+            if !self.alice_bets_hist.contains_key(&game_id) {
+                let alice_bets =
+                    self.fetch_bets_for_game(WalletKind::Alice, game_id).await?;
+                let alice_claimed = alice_bets.iter().all(|(_, bets)| bets.is_empty());
+                self.alice_bets_hist.insert(game_id, alice_bets);
+                if alice_claimed {
+                    self.alice_claimed.insert(game_id);
+                }
+                game_updated = true;
+            }
+
+            if game_updated {
+                updated_any = true;
+            }
+        }
+
+        if updated_any {
+            self.shared_prev_games
+                .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+            if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
+                self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+            }
+        }
+
+        Ok(updated_any)
+    }
+
     pub async fn new_local(vrf_mode: VrfMode) -> Result<Self> {
         let clients = init_local(vrf_mode).await?;
         let initial_vrf = match vrf_mode {
             VrfMode::Fake => 19,
             VrfMode::Pseudo => 0,
         };
-        Ok(Self::from_clients(clients, initial_vrf))
+        let history_store =
+            deployment::HistoryStore::new(deployment::DeploymentEnv::Local, None)?;
+        let mut controller = Self::from_clients(clients, initial_vrf, history_store);
+        controller.load_history_from_disk()?;
+        let _ = controller.backfill_recent_games().await?;
+        controller.persist_history()?;
+        Ok(controller)
     }
     pub async fn new_remote(
         vrf_mode: VrfMode,
@@ -447,6 +706,7 @@ impl AppController {
                 ));
             }
         };
+        let history_profile = format!("owner-{owner_name}-player-{player_name}");
 
         tracing::info!("c");
         let owner_descriptor = wallets::find_wallet(&wallet_dir, &owner_name)
@@ -464,6 +724,8 @@ impl AppController {
 
         tracing::info!("e");
         let store = deployment::DeploymentStore::new(env)?;
+        let history_store =
+            deployment::HistoryStore::new(env, Some(history_profile.as_str()))?;
         let records = store.load()?;
         let strap_binary = choose_binary(&STRAPPED_BIN_CANDIDATES)?;
         let bytecode_hash = deployment::compute_bytecode_hash(strap_binary)?;
@@ -568,7 +830,12 @@ impl AppController {
 
             store.append(record)?;
             // initialize contracts
-            return Ok(Self::from_clients(clients, initial_vrf));
+            let mut controller =
+                Self::from_clients(clients, initial_vrf, history_store.clone());
+            controller.load_history_from_disk()?;
+            let _ = controller.backfill_recent_games().await?;
+            controller.persist_history()?;
+            return Ok(controller);
         }
 
         tracing::info!("i");
@@ -654,7 +921,11 @@ impl AppController {
             safe_script_gas_limit,
         };
 
-        Ok(Self::from_clients(clients, initial_vrf))
+        let mut controller = Self::from_clients(clients, initial_vrf, history_store);
+        controller.load_history_from_disk()?;
+        let _ = controller.backfill_recent_games().await?;
+        controller.persist_history()?;
+        Ok(controller)
     }
 
     async fn deploy_new_remote_contract(
@@ -781,7 +1052,7 @@ impl AppController {
         }
 
         let who = self.wallet;
-        let me = self.clients.instance(who);
+        let me = self.clients.instance(who).clone();
         let provider = me
             .account()
             .provider()
@@ -956,7 +1227,6 @@ impl AppController {
         };
         if let Some(prev) = last_seen_opt {
             if current_game_id > prev {
-                // Build shared game entry and bets for both users so rolls persist and bets differ
                 let owner_bets = self.prev_owner_bets.clone();
                 let alice_bets = self.prev_alice_bets.clone();
                 let mut completed_rolls = self.shared_last_roll_history.clone();
@@ -967,21 +1237,26 @@ impl AppController {
                 {
                     completed_rolls.push(strapped::Roll::Seven);
                 }
-                self.shared_prev_games.insert(
-                    0,
-                    SharedGame {
-                        game_id: prev,
-                        rolls: completed_rolls,
-                        modifiers: self
-                            .active_modifiers_by_game
-                            .get(&prev)
-                            .cloned()
-                            .unwrap_or_default(),
-                    },
-                );
-                self.owner_bets_hist.insert(prev, owner_bets);
-                self.alice_bets_hist.insert(prev, alice_bets);
-                // Reset both last seen ids to current so we won't insert twice on switch
+                let modifiers_for_prev = self
+                    .active_modifiers_by_game
+                    .get(&prev)
+                    .cloned()
+                    .unwrap_or_default();
+                self.upsert_shared_game(prev, completed_rolls, modifiers_for_prev);
+                self.owner_bets_hist.insert(prev, owner_bets.clone());
+                self.alice_bets_hist.insert(prev, alice_bets.clone());
+                if owner_bets.iter().all(|(_, bets)| bets.is_empty()) {
+                    self.owner_claimed.insert(prev);
+                }
+                if alice_bets.iter().all(|(_, bets)| bets.is_empty()) {
+                    self.alice_claimed.insert(prev);
+                }
+                self.persist_history()?;
+                self.shared_prev_games
+                    .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+                if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
+                    self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+                }
                 self.last_seen_game_id_owner = Some(current_game_id);
                 self.last_seen_game_id_alice = Some(current_game_id);
             }
@@ -1202,6 +1477,7 @@ impl AppController {
         );
         me.methods()
             .place_bet(self.selected_roll.clone(), strapped::Bet::Chip, amount)
+            .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call_params(call)?
             .with_tx_policies(self.script_policies())
             .call()
@@ -1227,6 +1503,7 @@ impl AppController {
                 strapped::Bet::Strap(strap.clone()),
                 amount,
             )
+            // .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call_params(call)?
             .with_tx_policies(self.script_policies())
             .call()
@@ -1493,6 +1770,7 @@ impl AppController {
             game_id, chip_delta, strap_part
         );
         self.push_errors(errs);
+        self.persist_history()?;
         self.invalidate_cache();
         Ok(())
     }
@@ -1698,6 +1976,214 @@ fn prev_roll(r: strapped::Roll) -> strapped::Roll {
     let rolls = all_rolls();
     let idx = rolls.iter().position(|x| *x == r).unwrap_or(0);
     rolls[(idx + rolls.len() - 1) % rolls.len()].clone()
+}
+
+fn empty_bets_template() -> Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)> {
+    all_rolls().into_iter().map(|r| (r, Vec::new())).collect()
+}
+
+fn roll_to_key(roll: &strapped::Roll) -> &'static str {
+    match roll {
+        strapped::Roll::Two => "Two",
+        strapped::Roll::Three => "Three",
+        strapped::Roll::Four => "Four",
+        strapped::Roll::Five => "Five",
+        strapped::Roll::Six => "Six",
+        strapped::Roll::Seven => "Seven",
+        strapped::Roll::Eight => "Eight",
+        strapped::Roll::Nine => "Nine",
+        strapped::Roll::Ten => "Ten",
+        strapped::Roll::Eleven => "Eleven",
+        strapped::Roll::Twelve => "Twelve",
+    }
+}
+
+fn roll_from_key(key: &str) -> Result<strapped::Roll> {
+    match key {
+        "Two" => Ok(strapped::Roll::Two),
+        "Three" => Ok(strapped::Roll::Three),
+        "Four" => Ok(strapped::Roll::Four),
+        "Five" => Ok(strapped::Roll::Five),
+        "Six" => Ok(strapped::Roll::Six),
+        "Seven" => Ok(strapped::Roll::Seven),
+        "Eight" => Ok(strapped::Roll::Eight),
+        "Nine" => Ok(strapped::Roll::Nine),
+        "Ten" => Ok(strapped::Roll::Ten),
+        "Eleven" => Ok(strapped::Roll::Eleven),
+        "Twelve" => Ok(strapped::Roll::Twelve),
+        other => Err(eyre!("Unknown roll variant: {other}")),
+    }
+}
+
+fn kind_to_key(kind: &strapped::StrapKind) -> &'static str {
+    match kind {
+        strapped::StrapKind::Shirt => "Shirt",
+        strapped::StrapKind::Pants => "Pants",
+        strapped::StrapKind::Shoes => "Shoes",
+        strapped::StrapKind::Dress => "Dress",
+        strapped::StrapKind::Hat => "Hat",
+        strapped::StrapKind::Glasses => "Glasses",
+        strapped::StrapKind::Watch => "Watch",
+        strapped::StrapKind::Ring => "Ring",
+        strapped::StrapKind::Necklace => "Necklace",
+        strapped::StrapKind::Earring => "Earring",
+        strapped::StrapKind::Bracelet => "Bracelet",
+        strapped::StrapKind::Tattoo => "Tattoo",
+        strapped::StrapKind::Skirt => "Skirt",
+        strapped::StrapKind::Piercing => "Piercing",
+        strapped::StrapKind::Coat => "Coat",
+        strapped::StrapKind::Scarf => "Scarf",
+        strapped::StrapKind::Gloves => "Gloves",
+        strapped::StrapKind::Gown => "Gown",
+        strapped::StrapKind::Belt => "Belt",
+    }
+}
+
+fn kind_from_key(key: &str) -> Result<strapped::StrapKind> {
+    match key {
+        "Shirt" => Ok(strapped::StrapKind::Shirt),
+        "Pants" => Ok(strapped::StrapKind::Pants),
+        "Shoes" => Ok(strapped::StrapKind::Shoes),
+        "Dress" => Ok(strapped::StrapKind::Dress),
+        "Hat" => Ok(strapped::StrapKind::Hat),
+        "Glasses" => Ok(strapped::StrapKind::Glasses),
+        "Watch" => Ok(strapped::StrapKind::Watch),
+        "Ring" => Ok(strapped::StrapKind::Ring),
+        "Necklace" => Ok(strapped::StrapKind::Necklace),
+        "Earring" => Ok(strapped::StrapKind::Earring),
+        "Bracelet" => Ok(strapped::StrapKind::Bracelet),
+        "Tattoo" => Ok(strapped::StrapKind::Tattoo),
+        "Skirt" => Ok(strapped::StrapKind::Skirt),
+        "Piercing" => Ok(strapped::StrapKind::Piercing),
+        "Coat" => Ok(strapped::StrapKind::Coat),
+        "Scarf" => Ok(strapped::StrapKind::Scarf),
+        "Gloves" => Ok(strapped::StrapKind::Gloves),
+        "Gown" => Ok(strapped::StrapKind::Gown),
+        "Belt" => Ok(strapped::StrapKind::Belt),
+        other => Err(eyre!("Unknown strap kind: {other}")),
+    }
+}
+
+fn modifier_to_key(modifier: &strapped::Modifier) -> &'static str {
+    match modifier {
+        strapped::Modifier::Nothing => "Nothing",
+        strapped::Modifier::Burnt => "Burnt",
+        strapped::Modifier::Lucky => "Lucky",
+        strapped::Modifier::Holy => "Holy",
+        strapped::Modifier::Holey => "Holey",
+        strapped::Modifier::Scotch => "Scotch",
+        strapped::Modifier::Soaked => "Soaked",
+        strapped::Modifier::Moldy => "Moldy",
+        strapped::Modifier::Starched => "Starched",
+        strapped::Modifier::Evil => "Evil",
+        strapped::Modifier::Groovy => "Groovy",
+        strapped::Modifier::Delicate => "Delicate",
+    }
+}
+
+fn modifier_from_key(key: &str) -> Result<strapped::Modifier> {
+    match key {
+        "Nothing" => Ok(strapped::Modifier::Nothing),
+        "Burnt" => Ok(strapped::Modifier::Burnt),
+        "Lucky" => Ok(strapped::Modifier::Lucky),
+        "Holy" => Ok(strapped::Modifier::Holy),
+        "Holey" => Ok(strapped::Modifier::Holey),
+        "Scotch" => Ok(strapped::Modifier::Scotch),
+        "Soaked" => Ok(strapped::Modifier::Soaked),
+        "Moldy" => Ok(strapped::Modifier::Moldy),
+        "Starched" => Ok(strapped::Modifier::Starched),
+        "Evil" => Ok(strapped::Modifier::Evil),
+        "Groovy" => Ok(strapped::Modifier::Groovy),
+        "Delicate" => Ok(strapped::Modifier::Delicate),
+        other => Err(eyre!("Unknown modifier: {other}")),
+    }
+}
+
+fn strap_to_stored(strap: &strapped::Strap) -> StoredStrap {
+    StoredStrap {
+        level: strap.level,
+        kind: kind_to_key(&strap.kind).to_string(),
+        modifier: modifier_to_key(&strap.modifier).to_string(),
+    }
+}
+
+fn stored_to_strap(stored: &StoredStrap) -> Result<strapped::Strap> {
+    Ok(strapped::Strap {
+        level: stored.level,
+        kind: kind_from_key(&stored.kind)?,
+        modifier: modifier_from_key(&stored.modifier)?,
+    })
+}
+
+fn runtime_bets_to_store(
+    bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
+) -> Vec<StoredRollBets> {
+    let mut stored = Vec::new();
+    for roll in all_rolls() {
+        let entries = bets
+            .iter()
+            .find(|(r, _)| r == &roll)
+            .map(|(_, list)| list.clone())
+            .unwrap_or_default();
+        let bets = entries
+            .into_iter()
+            .map(|(bet, amount, roll_index)| {
+                let (bet_type, strap) = match &bet {
+                    strapped::Bet::Chip => ("Chip".to_string(), None),
+                    strapped::Bet::Strap(strap) => {
+                        ("Strap".to_string(), Some(strap_to_stored(strap)))
+                    }
+                };
+                StoredBet {
+                    bet_type,
+                    amount,
+                    roll_index,
+                    strap,
+                }
+            })
+            .collect::<Vec<_>>();
+        stored.push(StoredRollBets {
+            roll: roll_to_key(&roll).to_string(),
+            bets,
+        });
+    }
+    stored
+}
+
+fn stored_bets_to_runtime(
+    entries: &[StoredRollBets],
+) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+    let mut result = Vec::new();
+    for roll in all_rolls() {
+        let bets = entries
+            .iter()
+            .find(|entry| entry.roll == roll_to_key(&roll))
+            .map(|entry| {
+                entry
+                    .bets
+                    .iter()
+                    .map(|stored| {
+                        let bet = match stored.bet_type.as_str() {
+                            "Chip" => strapped::Bet::Chip,
+                            "Strap" => {
+                                let strap = stored.strap.as_ref().ok_or_else(|| {
+                                    eyre!("Stored strap bet missing strap details")
+                                })?;
+                                strapped::Bet::Strap(stored_to_strap(strap)?)
+                            }
+                            other => {
+                                return Err(eyre!("Unknown bet type: {other}"));
+                            }
+                        };
+                        Ok((bet, stored.amount, stored.roll_index))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        result.push((roll, bets));
+    }
+    Ok(result)
 }
 
 #[derive(Clone, Debug)]
