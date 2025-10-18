@@ -2,6 +2,7 @@ contract;
 
 pub mod contract_types;
 pub mod helpers;
+pub mod events;
 
 use std::storage::storage_vec::*;
 use std::storage::storage_map::*;
@@ -13,8 +14,9 @@ use std::block::height;
 
 use vrf_abi::VRF;
 
-use ::contract_types::*;
+pub use ::contract_types::*;
 use ::helpers::*;
+use ::events::*;
 
 type GameId = u64;
 type Amount = u64;
@@ -196,6 +198,7 @@ impl Strapped for Contract {
         storage.roll_frequency.write(roll_frequency);
         let current_height = height();
         storage.next_roll_block_height.write(Some(current_height + roll_frequency));
+        log_initialized_event(vrf_contract_id, chip_asset_id, roll_frequency, current_height);
     }
 
     #[storage(read)]
@@ -216,11 +219,13 @@ impl Strapped for Contract {
         let rng_contract_id = storage.vrf_contract_id.read();
         let current_game_id = storage.current_game_id.read();
         let old_roll_index = storage.roll_index.read();
-        storage.roll_index.write(old_roll_index + 1);
+        let new_roll_index = old_roll_index + 1;
+        storage.roll_index.write(new_roll_index);
         let rng_abi = abi(VRF, rng_contract_id);
         let random_number = rng_abi.get_random(roll_height);
         let roll = u64_to_roll(random_number);
         storage.roll_history.get(current_game_id).push(roll);
+        log_roll_event(current_game_id, new_roll_index, roll);
         match roll {
             Roll::Seven => {
                 let new_game_id = current_game_id + 1;
@@ -228,12 +233,14 @@ impl Strapped for Contract {
                 let new_straps = generate_straps(random_number);
                 storage.roll_index.write(0);
                 storage.modifier_triggers.clear();
+                let new_modifiers = modifier_triggers_for_roll(random_number);
                 for (roll, strap, cost) in new_straps.iter() {
                     storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
                 }
-                for (trigger_roll, modifier_roll, modifier) in modifier_triggers_for_roll(random_number).iter() {
+                for (trigger_roll, modifier_roll, modifier) in new_modifiers.iter() {
                     storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
                 }
+                log_new_game_event(new_game_id, new_straps, new_modifiers);
             }
             _ => {
                 let modifier_triggers = storage.modifier_triggers.load_vec();
@@ -241,6 +248,7 @@ impl Strapped for Contract {
                 for (trigger_roll, modifier_roll, modifier, triggered) in modifier_triggers.iter() {
                     if !triggered && trigger_roll == roll {
                         storage.modifier_triggers.set(index, (trigger_roll, modifier_roll, modifier, true));
+                        log_modifier_triggered(current_game_id, new_roll_index, roll, modifier_roll, modifier);
                     }
                     index += 1;
                 }
@@ -270,12 +278,14 @@ impl Strapped for Contract {
             Bet::Chip => {
                 let chip_asset_id = storage.chip_asset_id.read();
                 require(msg_asset_id() == chip_asset_id, "Must bet with chips");
+
             },
             Bet::Strap(strap) => {
                 let strap_sub_id = strap.into_sub_id();
                 let contract_id = ContractId::this();
                 let asset_id = AssetId::new(contract_id, strap_sub_id);
                 require(msg_asset_id() == asset_id, "Must bet with the correct strap");
+
             }
         }
         require(msg_amount() == amount, "Must send the correct amount of chips");
@@ -284,6 +294,14 @@ impl Strapped for Contract {
         let roll_index = storage.roll_index.read();
         let key = (current_game_id, caller, roll);
         storage.bets.get(key).push((bet, amount, roll_index));
+        match bet {
+            Bet::Chip => {
+                log_place_chip_bet_event(current_game_id, roll_index, caller, roll, amount);
+            },
+            Bet::Strap(strap) => {
+                log_place_strap_bet_event(current_game_id, roll_index, caller, strap, amount);
+            }
+        }
     }
 
     #[storage(read)]
@@ -451,6 +469,7 @@ impl Strapped for Contract {
             index += 1;
         }
         // clear all bets for this game
+    
         storage.bets.get((game_id, identity, Roll::Two)).clear();
         storage.bets.get((game_id, identity, Roll::Three)).clear();
         storage.bets.get((game_id, identity, Roll::Four)).clear();
@@ -471,8 +490,8 @@ impl Strapped for Contract {
             for (sub_id, amount) in rewards.iter() {
                 mint_to(identity, sub_id, amount);
             }
+            log_claim_rewards_event(game_id, identity, enabled_modifiers, total_chips_winnings, rewards);
         } else {
-            let _ = __dbg("bap");
             require(false, "No winnings to claim");
         }
     }
@@ -484,6 +503,7 @@ impl Strapped for Contract {
         let amount = msg_amount();
         require(amount > 0, "Must send some amount to fund the house pot");
         storage.house_pot.write(storage.house_pot.read() + amount);
+        log_fund_pot_event(amount, msg_sender().unwrap());
     }
 
     #[storage(read)]
@@ -530,6 +550,7 @@ impl Strapped for Contract {
         let roll_index = storage.roll_index.read();
         let game_id = storage.current_game_id.read();
         storage.active_modifiers.get(game_id).push((expected_roll, expected_modifier, roll_index));
+        log_purchase_modifier_event(expected_roll, expected_modifier, msg_sender().unwrap());
     }
 
     #[storage(read)]
