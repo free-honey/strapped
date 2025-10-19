@@ -1,6 +1,16 @@
-use crate::strapped_types::{Modifier, Strap, StrapKind};
+use crate::strapped_types::{
+    Modifier,
+    Strap,
+    StrapKind,
+};
 use fuels::{
-    prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked},
+    prelude::{
+        Contract,
+        ContractId,
+        LoadConfiguration,
+        TxPolicies,
+        WalletUnlocked,
+    },
     types::Bytes32,
 };
 
@@ -39,7 +49,7 @@ pub mod pseudo_vrf_types {
 
 pub fn contract_id() -> ContractId {
     Contract::load_from(
-        "strapped/out/release/strapped.bin",
+        "../../strapped/out/release/strapped.bin",
         // "strapped/out/debug/strapped.bin",
         LoadConfiguration::default(),
     )
@@ -51,7 +61,7 @@ pub async fn get_contract_instance(
     wallet: WalletUnlocked,
 ) -> (strapped_types::MyContract<WalletUnlocked>, ContractId) {
     let id = Contract::load_from(
-        "strapped/out/release/strapped.bin",
+        "../../strapped/out/release/strapped.bin",
         // "strapped/out/debug/strapped.bin",
         LoadConfiguration::default(),
     )

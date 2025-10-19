@@ -1,34 +1,73 @@
 use crate::{
     deployment::{
-        self, HistoryStore, StoredBet, StoredGameHistory, StoredModifier, StoredRollBets,
-        StoredStrap, StoredStrapReward,
+        self,
+        HistoryStore,
+        StoredBet,
+        StoredGameHistory,
+        StoredModifier,
+        StoredRollBets,
+        StoredStrap,
+        StoredStrapReward,
     },
-    ui, wallets,
+    ui,
+    wallets,
 };
 use chrono::Utc;
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{
+    Result,
+    WrapErr,
+    eyre,
+};
 use fuels::{
     accounts::ViewOnlyAccount,
     prelude::{
-        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
-        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
-        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
+        AssetConfig,
+        AssetId,
+        Bech32ContractId,
+        CallParameters,
+        Contract,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        Provider,
+        TxPolicies,
+        VariableOutputPolicy,
+        WalletUnlocked,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
     },
-    programs::contract::{Contract as LoadedContract, Regular},
+    programs::contract::{
+        Contract as LoadedContract,
+        Regular,
+    },
     tx::ContractIdExt,
     types::Bits256,
 };
 use futures::future::try_join_all;
 use rand::Rng;
 use std::{
-    collections::{HashMap, HashSet},
-    io::{self, Write},
-    path::{Path, PathBuf},
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    io::{
+        self,
+        Write,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
     str::FromStr,
-    time::{Duration, Instant},
+    time::{
+        Duration,
+        Instant,
+    },
 };
 use strapped_contract::{
-    pseudo_vrf_types as pseudo_vrf, strapped_types as strapped, vrf_types as fake_vrf,
+    pseudo_vrf_types as pseudo_vrf,
+    strapped_types as strapped,
+    vrf_types as fake_vrf,
 };
 use tokio::time;
 use tracing::error;
@@ -36,10 +75,10 @@ use tracing::error;
 pub const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
 pub const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
 pub const DEFAULT_LOCAL_RPC_URL: &str = "http://localhost:4000/";
-const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/release/strapped.bin"];
+const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["./strapped/out/release/strapped.bin"];
 // const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/debug/strapped.bin"];
 const VRF_BIN_CANDIDATES: [&str; 1] =
-    ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
+    ["./pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
 // ["pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
 const GAME_HISTORY_DEPTH: usize = 10;
