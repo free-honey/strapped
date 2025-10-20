@@ -2,7 +2,7 @@
 members = [
     "rust-apps/tui",
 ]
-default-members = ["rust-apps/tui"]
+default-members = []
 resolver = "2"
 
 [workspace.package]
