@@ -359,6 +359,11 @@ impl AppController {
         self.last_snapshot_time = None;
     }
 
+    fn set_status(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.errors.clear();
+    }
+
     fn load_history_from_disk(&mut self) -> Result<()> {
         let records = self.history_store.load()?;
         if records.is_empty() {
@@ -1525,7 +1530,10 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.status = format!("Placed {} chip(s) on {:?}", amount, self.selected_roll);
+        self.set_status(format!(
+            "Placed {} chip(s) on {:?}",
+            amount, self.selected_roll
+        ));
         self.invalidate_cache();
         Ok(())
     }
@@ -1551,12 +1559,12 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.status = format!(
+        self.set_status(format!(
             "Placed {} of {} on {:?}",
             amount,
             super_compact_strap(&strap),
             self.selected_roll
-        );
+        ));
         self.invalidate_cache();
         Ok(())
     }
@@ -1586,9 +1594,9 @@ impl AppController {
                 .with_tx_policies(self.script_policies())
                 .call()
                 .await?;
-            self.status = format!("Purchased {:?} for {:?}", modifier, target);
+            self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
         } else {
-            self.status = String::from("No triggered modifier for selected roll");
+            self.set_status("No triggered modifier for selected roll");
         }
         self.invalidate_cache();
         Ok(())
@@ -1599,15 +1607,13 @@ impl AppController {
             Some(VrfClient::Fake(vrf)) => {
                 vrf.methods().set_number(n).call().await?;
                 self.vrf_number = n;
-                self.status = format!("VRF set to {}", n);
+                self.set_status(format!("VRF set to {}", n));
             }
             Some(VrfClient::Pseudo(_)) => {
-                self.status =
-                    String::from("Pseudo VRF mode does not support manual adjustment");
+                self.set_status("Pseudo VRF mode does not support manual adjustment");
             }
             None => {
-                self.status =
-                    String::from("VRF controls are unavailable on this network");
+                self.set_status("VRF controls are unavailable on this network");
             }
         }
         self.invalidate_cache();
@@ -1653,10 +1659,10 @@ impl AppController {
                         .wrap_err("Failed to produce blocks in local provider")?;
                 }
                 NetworkKind::Remote => {
-                    self.status = format!(
+                    self.set_status(format!(
                         "Waiting for block {} (current height {}) before rolling",
                         next_roll_height, current_height
-                    );
+                    ));
                     return Ok(());
                 }
             }
@@ -1692,11 +1698,11 @@ impl AppController {
                     .await?;
             }
             None => {
-                self.status = String::from("VRF contract unavailable; cannot roll");
+                self.set_status("VRF contract unavailable; cannot roll");
                 return Ok(());
             }
         }
-        self.status = String::from("Rolled dice");
+        self.set_status("Rolled dice");
         self.invalidate_cache();
         Ok(())
     }
@@ -1808,10 +1814,10 @@ impl AppController {
         } else {
             format!(" | Straps: {}", strap_deltas.join(" "))
         };
-        self.status = format!(
+        self.set_status(format!(
             "Claimed game {} | Chips +{}{}",
             game_id, chip_delta, strap_part
-        );
+        ));
         self.push_errors(errs);
         self.persist_history()?;
         self.invalidate_cache();
@@ -1913,7 +1919,7 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.status = format!("Purchased {:?} for {:?}", modifier, target);
+        self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
         self.invalidate_cache();
         Ok(())
     }
