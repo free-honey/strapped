@@ -1,12 +1,23 @@
 #![allow(non_snake_case)]
 
 use fuels::{
-    prelude::{AssetConfig, CallParameters, Execution},
+    prelude::{
+        AssetConfig,
+        CallParameters,
+        Execution,
+    },
     tx::ContractIdExt,
 };
-use strapped_contract::{
-    contract_id, strap_to_sub_id,
-    strapped_types::{Bet, Modifier, Roll, Strap, StrapKind},
+use generated_abi::{
+    contract_id,
+    strap_to_sub_id,
+    strapped_types::{
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
     test_helpers::TestContext,
 };
 

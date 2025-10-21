@@ -1,0 +1,10 @@
+[package]
+name = "indexer"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "indexer"
+path = "src/main.rs"
+
+[dependencies]

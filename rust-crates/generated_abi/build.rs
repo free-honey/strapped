@@ -5,7 +5,7 @@ fn main() {
 }
 
 fn build_strapped() {
-    const PATH: &str = "../../strapped/";
+    const PATH: &str = "../../sway-projects/strapped/";
     // run forc build command
     let output = std::process::Command::new("forc")
         .arg("build")
@@ -23,7 +23,7 @@ fn build_strapped() {
 }
 
 fn build_pseudo_vrf() {
-    const PATH: &str = "../../pseudo-vrf-contract/";
+    const PATH: &str = "../../sway-projects/pseudo-vrf-contract/";
     let output = std::process::Command::new("forc")
         .arg("build")
         .arg("--release")
@@ -40,7 +40,7 @@ fn build_pseudo_vrf() {
 }
 
 fn build_vrf() {
-    const PATH: &str = "../../fake-vrf-contract/";
+    const PATH: &str = "../../sway-projects/fake-vrf-contract/";
     // run forc build command
     let output = std::process::Command::new("forc")
         .arg("build")

@@ -2,15 +2,29 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{AssetConfig, AssetId, CallParameters, Execution, VariableOutputPolicy},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Execution,
+        VariableOutputPolicy,
+    },
     tx::ContractIdExt,
 };
-use proptest::prelude::*;
-use strapped_contract::{
-    contract_id, strap_to_sub_id,
-    strapped_types::{self, Bet, Modifier, Roll, Strap, StrapKind},
+use generated_abi::{
+    contract_id,
+    strap_to_sub_id,
+    strapped_types::{
+        self,
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
     test_helpers::*,
 };
+use proptest::prelude::*;
 use tokio::runtime::Runtime;
 
 pub const SIX_VRF_NUMBER: u64 = 10;

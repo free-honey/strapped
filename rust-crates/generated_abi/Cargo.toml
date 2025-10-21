@@ -1,0 +1,11 @@
+[package]
+name = "generated_abi"
+edition.workspace = true
+version.workspace = true
+
+[features]
+default = []
+test-helpers = []
+
+[dependencies]
+fuels.workspace = true

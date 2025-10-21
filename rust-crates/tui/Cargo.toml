@@ -9,11 +9,12 @@ path = "src/lib.rs"
 
 [features]
 default = []
+test-helpers = ["generated_abi/test-helpers"]
 
 [dependencies]
 color-eyre = "0.6.5"
 crossterm = "0.29.0"
-fuels = "0.70.0"
+fuels = { workspace = true }
 ratatui = "0.29.0"
 rand = "0.9.2"
 tokio = { version = "1.12", features = ["rt", "macros"] }
@@ -32,11 +33,7 @@ shellexpand = "3.1"
 hex = "0.4"
 eth-keystore = "0.5"
 futures = "0.3"
+generated_abi = { path = "../generated_abi" }
 
 [dev-dependencies]
 proptest = { version = "1.4", default-features = false, features = ["std"] }
-
-[[test]]
-name = "integration_tests"
-path = "tests/harness.rs"
-required-features = ["test-helpers"]

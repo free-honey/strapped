@@ -1,0 +1,14 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dev-dependencies]
+generated_abi = { path = "../rust-crates/generated_abi", features = ["test-helpers"] }
+fuels = { workspace = true }
+tokio = { version = "1.12", features = ["rt", "macros"] }
+proptest = { version = "1.4", default-features = false, features = ["std"] }
+
+[dependencies]
+tracing = { workspace = true }
