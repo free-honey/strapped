@@ -8,6 +8,8 @@ name = "indexer"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = { workspace = true }
+fuels = { workspace = true }
 generated_abi = { workspace = true }
 tokio = { version = "1.48.0", features = ["macros", "rt"] }
 

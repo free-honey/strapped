@@ -1,50 +1,55 @@
 use crate::{
-    Error,
     Result,
-    events::Event,
+    app::{
+        event_source::EventSource,
+        query_api::QueryAPI,
+        snapshot_storage::{
+            MetadataStorage,
+            SnapshotStorage,
+        },
+    },
     snapshot::Snapshot,
 };
+use std::fs::Metadata;
 
-pub struct App<Events, API, Storage> {
+pub mod event_source;
+pub mod query_api;
+pub mod snapshot_storage;
+
+pub struct App<Events, API, Snapshots, Metadata> {
     events: Events,
     api: API,
-    storage: Storage,
+    snapshots: Snapshots,
+    metadata: Metadata,
 }
 
 #[cfg(test)]
 mod tests;
 
-pub trait EventSource {
-    fn next_event(&self) -> impl Future<Output = Result<(Event, u32)>>;
-}
-
-pub trait QueryAPI {
-    fn query(&self) -> impl Future<Output = Result<Query>>;
-}
-
-pub enum Query {}
-
-pub trait SnapshotStorage {
-    fn latest_snapshot(&self) -> Result<(Snapshot, u32)>;
-    fn get_snapshot_at(&self, height: u32) -> Result<Snapshot>;
-    fn update_snapshot(&mut self, snapshot: &Snapshot, height: u32) -> Result<()>;
-    fn roll_back_snapshot(&mut self, to_height: u32) -> Result<()>;
-}
-
-impl<Events, API, Storage> App<Events, API, Storage> {
-    pub fn new(events: Events, api: API, storage: Storage) -> Self {
+impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
+    pub fn new(
+        events: Events,
+        api: API,
+        snapshots: Snapshots,
+        metadata: Metadata,
+    ) -> Self {
         Self {
             events,
             api,
-            storage,
+            snapshots,
+            metadata,
         }
     }
 }
 
-impl<Events: EventSource, API: QueryAPI, Storage: SnapshotStorage>
-    App<Events, API, Storage>
+impl<
+    Events: EventSource,
+    API: QueryAPI,
+    Snapshots: SnapshotStorage,
+    Metadata: MetadataStorage,
+> App<Events, API, Snapshots, Metadata>
 {
-    pub async fn run(&self) {
+    pub async fn run(&mut self) {
         tokio::select! {
             event = self.events.next_event() => {
                 match event {
