@@ -15,3 +15,5 @@ version = "0.1.0"
 [workspace.dependencies]
 fuels = "0.70.0"
 tracing = "0.1.41"
+
+generated_abi = { path = "rust-crates/generated_abi" }

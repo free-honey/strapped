@@ -49,7 +49,7 @@ pub fn log_new_game_event(game_id: u64, new_straps: Vec<(Roll, Strap, u64)>, new
     log(event);
 }
 
-pub struct ModifierTriggered {
+pub struct ModifierTriggeredEvent {
     game_id: u64,
     roll_index: u64,
     trigger_roll: Roll,
@@ -58,7 +58,7 @@ pub struct ModifierTriggered {
 }
 
 pub fn log_modifier_triggered(game_id: u64, roll_index: u64, trigger_roll: Roll, modifier_roll: Roll, modifier: Modifier) {
-    let event = ModifierTriggered {
+    let event = ModifierTriggeredEvent {
         game_id,
         roll_index,
         trigger_roll,
