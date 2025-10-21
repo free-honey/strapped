@@ -1,34 +1,75 @@
 use crate::{
     deployment::{
-        self, HistoryStore, StoredBet, StoredGameHistory, StoredModifier, StoredRollBets,
-        StoredStrap, StoredStrapReward,
+        self,
+        HistoryStore,
+        StoredBet,
+        StoredGameHistory,
+        StoredModifier,
+        StoredRollBets,
+        StoredStrap,
+        StoredStrapReward,
     },
-    ui, wallets,
+    ui,
+    wallets,
 };
 use chrono::Utc;
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{
+    Result,
+    WrapErr,
+    eyre,
+};
 use fuels::{
-    accounts::ViewOnlyAccount,
-    prelude::{
-        AssetConfig, AssetId, Bech32ContractId, CallParameters, Contract, ContractId,
-        Execution, LoadConfiguration, Provider, TxPolicies, VariableOutputPolicy,
-        WalletUnlocked, WalletsConfig, launch_custom_provider_and_get_wallets,
+    accounts::{
+        wallet::WalletUnlocked,
+        ViewOnlyAccount,
     },
-    programs::contract::{Contract as LoadedContract, Regular},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        Bech32ContractId,
+        CallParameters,
+        ContractId,
+        Execution,
+        LoadConfiguration,
+        Provider,
+        TxPolicies,
+        VariableOutputPolicy,
+        WalletsConfig,
+        launch_custom_provider_and_get_wallets,
+    },
+    programs::contract::{
+        Contract,
+        Contract as LoadedContract,
+        Regular,
+    },
     tx::ContractIdExt,
     types::Bits256,
 };
 use futures::future::try_join_all;
 use rand::Rng;
 use std::{
-    collections::{HashMap, HashSet},
-    io::{self, Write},
-    path::{Path, PathBuf},
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    io::{
+        self,
+        Write,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
     str::FromStr,
-    time::{Duration, Instant},
+    time::{
+        Duration,
+        Instant,
+    },
 };
 use strapped_contract::{
-    pseudo_vrf_types as pseudo_vrf, strapped_types as strapped, vrf_types as fake_vrf,
+    pseudo_vrf_types as pseudo_vrf,
+    strapped_types as strapped,
+    vrf_types as fake_vrf,
 };
 use tokio::time;
 use tracing::error;
@@ -36,11 +77,13 @@ use tracing::error;
 pub const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
 pub const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
 pub const DEFAULT_LOCAL_RPC_URL: &str = "http://localhost:4000/";
-const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/release/strapped.bin"];
-// const STRAPPED_BIN_CANDIDATES: [&str; 1] = ["strapped/out/debug/strapped.bin"];
+const STRAPPED_BIN_CANDIDATES: [&str; 1] =
+    ["./sway-projects/strapped/out/release/strapped.bin"];
+// const STRAPPED_BIN_CANDIDATES: [&str; 1] =
+//     ["./sway-projects/strapped/out/debug/strapped.bin"];
 const VRF_BIN_CANDIDATES: [&str; 1] =
-    ["pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
-// ["pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
+    ["./sway-projects/pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
+// ["./sway-projects/pseudo-vrf-contract/out/debug/pseudo-vrf-contract.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
 const GAME_HISTORY_DEPTH: usize = 10;
 
@@ -314,6 +357,11 @@ impl AppController {
     fn invalidate_cache(&mut self) {
         self.last_snapshot = None;
         self.last_snapshot_time = None;
+    }
+
+    fn set_status(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.errors.clear();
     }
 
     fn load_history_from_disk(&mut self) -> Result<()> {
@@ -1482,7 +1530,10 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.status = format!("Placed {} chip(s) on {:?}", amount, self.selected_roll);
+        self.set_status(format!(
+            "Placed {} chip(s) on {:?}",
+            amount, self.selected_roll
+        ));
         self.invalidate_cache();
         Ok(())
     }
@@ -1508,12 +1559,12 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.status = format!(
+        self.set_status(format!(
             "Placed {} of {} on {:?}",
             amount,
             super_compact_strap(&strap),
             self.selected_roll
-        );
+        ));
         self.invalidate_cache();
         Ok(())
     }
@@ -1543,9 +1594,9 @@ impl AppController {
                 .with_tx_policies(self.script_policies())
                 .call()
                 .await?;
-            self.status = format!("Purchased {:?} for {:?}", modifier, target);
+            self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
         } else {
-            self.status = String::from("No triggered modifier for selected roll");
+            self.set_status("No triggered modifier for selected roll");
         }
         self.invalidate_cache();
         Ok(())
@@ -1556,15 +1607,13 @@ impl AppController {
             Some(VrfClient::Fake(vrf)) => {
                 vrf.methods().set_number(n).call().await?;
                 self.vrf_number = n;
-                self.status = format!("VRF set to {}", n);
+                self.set_status(format!("VRF set to {}", n));
             }
             Some(VrfClient::Pseudo(_)) => {
-                self.status =
-                    String::from("Pseudo VRF mode does not support manual adjustment");
+                self.set_status("Pseudo VRF mode does not support manual adjustment");
             }
             None => {
-                self.status =
-                    String::from("VRF controls are unavailable on this network");
+                self.set_status("VRF controls are unavailable on this network");
             }
         }
         self.invalidate_cache();
@@ -1610,10 +1659,10 @@ impl AppController {
                         .wrap_err("Failed to produce blocks in local provider")?;
                 }
                 NetworkKind::Remote => {
-                    self.status = format!(
+                    self.set_status(format!(
                         "Waiting for block {} (current height {}) before rolling",
                         next_roll_height, current_height
-                    );
+                    ));
                     return Ok(());
                 }
             }
@@ -1649,11 +1698,11 @@ impl AppController {
                     .await?;
             }
             None => {
-                self.status = String::from("VRF contract unavailable; cannot roll");
+                self.set_status("VRF contract unavailable; cannot roll");
                 return Ok(());
             }
         }
-        self.status = String::from("Rolled dice");
+        self.set_status("Rolled dice");
         self.invalidate_cache();
         Ok(())
     }
@@ -1765,10 +1814,10 @@ impl AppController {
         } else {
             format!(" | Straps: {}", strap_deltas.join(" "))
         };
-        self.status = format!(
+        self.set_status(format!(
             "Claimed game {} | Chips +{}{}",
             game_id, chip_delta, strap_part
-        );
+        ));
         self.push_errors(errs);
         self.persist_history()?;
         self.invalidate_cache();
@@ -1870,7 +1919,7 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.status = format!("Purchased {:?} for {:?}", modifier, target);
+        self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
         self.invalidate_cache();
         Ok(())
     }

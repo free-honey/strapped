@@ -1658,6 +1658,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "generated_abi"
+version = "0.1.0"
+dependencies = [
+ "fuels",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2197,6 +2204,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964de6e86d545b246d84badc0fef527924ace5134f30641c203ef52ba83f58d5"
 
 [[package]]
+name = "indexer"
+version = "0.1.0"
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2245,6 +2256,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "integration-tests"
+version = "0.1.0"
+dependencies = [
+ "fuels",
+ "generated_abi",
+ "proptest",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3917,34 +3939,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "strapped-contract"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "color-eyre",
- "crossterm 0.29.0",
- "eth-keystore",
- "fakeit",
- "fuels",
- "futures",
- "hex",
- "itertools 0.10.5",
- "proptest",
- "rand 0.9.2",
- "ratatui",
- "rpassword",
- "serde",
- "serde_json",
- "sha2",
- "shellexpand",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "unicode-width 0.2.0",
-]
-
-[[package]]
 name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4459,6 +4453,35 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "color-eyre",
+ "crossterm 0.29.0",
+ "eth-keystore",
+ "fakeit",
+ "fuels",
+ "futures",
+ "generated_abi",
+ "hex",
+ "itertools 0.10.5",
+ "proptest",
+ "rand 0.9.2",
+ "ratatui",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shellexpand",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "unicode-width 0.2.0",
+]
 
 [[package]]
 name = "typenum"

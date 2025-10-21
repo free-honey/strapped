@@ -1,78 +1,91 @@
-use crate::strapped_types::{Modifier, Strap, StrapKind};
-use fuels::{
-    prelude::{Contract, ContractId, LoadConfiguration, TxPolicies, WalletUnlocked},
-    types::Bytes32,
+use std::path::{
+    Path,
+    PathBuf,
 };
 
-pub mod deployment;
-
-pub mod wallets;
-
-pub mod test_helpers;
+use fuels::{
+    accounts::wallet::WalletUnlocked,
+    macros::abigen,
+    programs::contract::Contract,
+    types::{
+        Bytes32,
+        ContractId,
+    },
+};
 
 pub mod strapped_types {
-    use fuels::macros::abigen;
+    use super::*;
 
     abigen!(Contract(
         name = "MyContract",
-        abi = "strapped/out/release/strapped-abi.json" /* abi = "strapped/out/debug/strapped-abi.json" */
+        abi = "sway-projects/strapped/out/release/strapped-abi.json"
     ));
 }
 
 pub mod vrf_types {
-    use fuels::macros::abigen;
+    use super::*;
 
     abigen!(Contract(
         name = "FakeVRFContract",
-        abi = "fake-vrf-contract/out/release/fake-vrf-contract-abi.json" /* abi = "fake-vrf-contract/out/debug/fake-vrf-contract-abi.json" */
+        abi = "sway-projects/fake-vrf-contract/out/release/fake-vrf-contract-abi.json"
     ));
 }
 
 pub mod pseudo_vrf_types {
-    use fuels::macros::abigen;
+    use super::*;
 
     abigen!(Contract(
         name = "PseudoVRFContract",
-        abi = "pseudo-vrf-contract/out/release/pseudo-vrf-contract-abi.json" /* abi = "pseudo-vrf-contract/out/debug/pseudo-vrf-contract-abi.json" */
+        abi =
+            "sway-projects/pseudo-vrf-contract/out/release/pseudo-vrf-contract-abi.json"
     ));
 }
 
+#[cfg(feature = "test-helpers")]
+pub mod test_helpers;
+
+pub(crate) fn manifest_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
+
+fn strapped_bin_path() -> PathBuf {
+    manifest_path("../../sway-projects/strapped/out/release/strapped.bin")
+}
+
 pub fn contract_id() -> ContractId {
-    Contract::load_from(
-        "strapped/out/release/strapped.bin",
-        // "strapped/out/debug/strapped.bin",
-        LoadConfiguration::default(),
-    )
-    .unwrap()
-    .contract_id()
+    Contract::load_from(strapped_bin_path(), Default::default())
+        .expect("failed to load strapped contract binary")
+        .contract_id()
 }
 
 pub async fn get_contract_instance(
     wallet: WalletUnlocked,
 ) -> (strapped_types::MyContract<WalletUnlocked>, ContractId) {
-    let id = Contract::load_from(
-        "strapped/out/release/strapped.bin",
-        // "strapped/out/debug/strapped.bin",
-        LoadConfiguration::default(),
-    )
-    .unwrap()
-    .deploy(&wallet, TxPolicies::default())
-    .await
-    .unwrap();
+    let contract = Contract::load_from(strapped_bin_path(), Default::default())
+        .expect("failed to load strapped contract binary");
+    let contract_id = contract
+        .deploy(&wallet, Default::default())
+        .await
+        .expect("failed to deploy strapped contract");
 
-    let instance = strapped_types::MyContract::new(id.clone(), wallet);
+    let instance = strapped_types::MyContract::new(contract_id.clone(), wallet);
 
-    (instance, id.into())
+    (instance, contract_id.into())
 }
 
 pub async fn separate_contract_instance(
     id: &ContractId,
     wallet: WalletUnlocked,
 ) -> strapped_types::MyContract<WalletUnlocked> {
-    strapped_types::MyContract::new(id.clone(), wallet)
+    strapped_types::MyContract::new(*id, wallet)
 }
 
-pub fn strap_to_sub_id(strap: &Strap) -> Bytes32 {
+pub fn strap_to_sub_id(strap: &strapped_types::Strap) -> Bytes32 {
+    use strapped_types::{
+        Modifier,
+        StrapKind,
+    };
+
     let level_bytes = strap.level;
     let kind_bytes = match strap.kind {
         StrapKind::Shirt => 0u8,

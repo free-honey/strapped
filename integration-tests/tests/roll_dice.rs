@@ -1,7 +1,13 @@
 #![allow(non_snake_case)]
 
-use fuels::prelude::{CallParameters, Execution};
-use strapped_contract::{strapped_types::Roll, test_helpers::*};
+use fuels::prelude::{
+    CallParameters,
+    Execution,
+};
+use generated_abi::{
+    strapped_types::Roll,
+    test_helpers::*,
+};
 
 pub const TWO_VRF_NUMBER: u64 = 0;
 pub const SIX_VRF_NUMBER: u64 = 10;

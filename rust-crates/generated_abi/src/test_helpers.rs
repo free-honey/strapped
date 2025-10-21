@@ -1,38 +1,56 @@
-use crate::{
-    get_contract_instance, separate_contract_instance, strapped_types,
-    strapped_types::{Modifier, Roll, Strap, StrapKind},
-    vrf_types,
-};
 use fuels::{
+    accounts::wallet::WalletUnlocked,
     prelude::{
-        AssetConfig, AssetId, CallParameters, Contract, ContractId, Execution,
-        LoadConfiguration, TxPolicies, WalletUnlocked, WalletsConfig,
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Contract,
+        ContractId,
+        LoadConfiguration,
+        TxPolicies,
+        WalletsConfig,
         launch_custom_provider_and_get_wallets,
     },
+    programs::calls::Execution,
     types::Bits256,
 };
-use strapped_types::MyContract;
-use vrf_types::FakeVRFContract;
+
+use crate::{
+    get_contract_instance,
+    separate_contract_instance,
+    strapped_types::{
+        self,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
+    vrf_types,
+};
 
 const CHIP_ASSET_BYTES: [u8; 32] = [1u8; 32];
 const DEFAULT_ROLL_FREQUENCY: u32 = 10;
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000;
 
+fn fake_vrf_bin_path() -> std::path::PathBuf {
+    super::manifest_path(
+        "../../sway-projects/fake-vrf-contract/out/release/fake-vrf-contract.bin",
+    )
+}
+
 pub async fn get_vrf_contract_instance(
     wallet: WalletUnlocked,
-) -> (FakeVRFContract<WalletUnlocked>, ContractId) {
-    let id = Contract::load_from(
-        "fake-vrf-contract/out/release/fake-vrf-contract.bin",
-        LoadConfiguration::default(),
-    )
-    .unwrap()
-    .deploy(&wallet, TxPolicies::default())
-    .await
-    .unwrap();
+) -> (vrf_types::FakeVRFContract<WalletUnlocked>, ContractId) {
+    let contract = Contract::load_from(fake_vrf_bin_path(), LoadConfiguration::default())
+        .expect("failed to load fake VRF contract binary");
+    let contract_id = contract
+        .deploy(&wallet, TxPolicies::default())
+        .await
+        .expect("failed to deploy fake VRF contract");
 
-    let instance = FakeVRFContract::new(id.clone(), wallet);
+    let instance = vrf_types::FakeVRFContract::new(contract_id.clone(), wallet);
 
-    (instance, id.into())
+    (instance, contract_id.into())
 }
 
 pub struct TestContext {
@@ -40,9 +58,9 @@ pub struct TestContext {
     owner: WalletUnlocked,
     contract_id: ContractId,
     chip_asset_id: AssetId,
-    owner_instance: MyContract<WalletUnlocked>,
-    alice_instance: MyContract<WalletUnlocked>,
-    vrf_instance: FakeVRFContract<WalletUnlocked>,
+    owner_instance: strapped_types::MyContract<WalletUnlocked>,
+    alice_instance: strapped_types::MyContract<WalletUnlocked>,
+    vrf_instance: vrf_types::FakeVRFContract<WalletUnlocked>,
 }
 
 impl TestContext {
@@ -71,10 +89,10 @@ impl TestContext {
             None,
         )
         .await
-        .unwrap();
+        .expect("failed to launch local provider");
 
-        let owner = wallets.pop().unwrap();
-        let alice = wallets.pop().unwrap();
+        let owner = wallets.pop().expect("missing owner wallet");
+        let alice = wallets.pop().expect("missing alice wallet");
 
         let (owner_instance, contract_id) = get_contract_instance(owner.clone()).await;
         let alice_instance =
@@ -91,7 +109,7 @@ impl TestContext {
             )
             .call()
             .await
-            .unwrap();
+            .expect("initialize call failed");
 
         owner_instance
             .methods()
@@ -104,7 +122,7 @@ impl TestContext {
             .unwrap()
             .call()
             .await
-            .unwrap();
+            .expect("contract funding failed");
 
         Self {
             alice,
@@ -133,27 +151,27 @@ impl TestContext {
         self.chip_asset_id
     }
 
-    pub fn owner_contract(&self) -> MyContract<WalletUnlocked> {
+    pub fn owner_contract(&self) -> strapped_types::MyContract<WalletUnlocked> {
         self.owner_instance.clone()
     }
 
-    pub fn alice_contract(&self) -> MyContract<WalletUnlocked> {
+    pub fn alice_contract(&self) -> strapped_types::MyContract<WalletUnlocked> {
         self.alice_instance.clone()
     }
 
-    pub fn vrf_contract(&self) -> FakeVRFContract<WalletUnlocked> {
+    pub fn vrf_contract(&self) -> vrf_types::FakeVRFContract<WalletUnlocked> {
         self.vrf_instance.clone()
     }
 
-    pub fn owner_instance(&self) -> MyContract<WalletUnlocked> {
+    pub fn owner_instance(&self) -> strapped_types::MyContract<WalletUnlocked> {
         self.owner_contract()
     }
 
-    pub fn alice_instance(&self) -> MyContract<WalletUnlocked> {
+    pub fn alice_instance(&self) -> strapped_types::MyContract<WalletUnlocked> {
         self.alice_contract()
     }
 
-    pub fn vrf_instance(&self) -> FakeVRFContract<WalletUnlocked> {
+    pub fn vrf_instance(&self) -> vrf_types::FakeVRFContract<WalletUnlocked> {
         self.vrf_contract()
     }
 
@@ -164,7 +182,7 @@ impl TestContext {
             .next_roll_height()
             .simulate(Execution::StateReadOnly)
             .await
-            .unwrap()
+            .expect("simulate next_roll_height failed")
             .value
         {
             self.advance_to_block_height(next_height).await;
@@ -175,7 +193,7 @@ impl TestContext {
             .set_number(vrf_number)
             .call()
             .await
-            .unwrap();
+            .expect("set_number failed");
 
         self.owner_instance
             .methods()
@@ -183,17 +201,20 @@ impl TestContext {
             .with_contracts(&[&self.vrf_instance])
             .call()
             .await
-            .unwrap();
+            .expect("roll_dice failed");
     }
 
     pub async fn advance_to_block_height(&self, height: u32) {
-        let provider = self.owner.provider().unwrap();
-        let current_height = provider.latest_block_height().await.unwrap();
+        let provider = self.owner.provider().expect("owner has no provider");
+        let current_height = provider
+            .latest_block_height()
+            .await
+            .expect("failed to fetch block height");
         let blocks_to_advance = height.saturating_sub(current_height);
         provider
             .produce_blocks(blocks_to_advance, None)
             .await
-            .unwrap();
+            .expect("failed to advance blocks");
     }
 }
 
@@ -204,9 +225,10 @@ pub async fn get_wallet() -> WalletUnlocked {
         None,
     )
     .await
-    .unwrap();
-    wallets.pop().unwrap()
+    .expect("failed to launch provider for get_wallet");
+    wallets.pop().expect("missing wallet")
 }
+
 pub fn generate_straps(seed: u64) -> Vec<(Roll, Strap, u64)> {
     let mut straps: Vec<(Roll, Strap, u64)> = Vec::new();
     let mut multiple = 1;
@@ -216,7 +238,7 @@ pub fn generate_straps(seed: u64) -> Vec<(Roll, Strap, u64)> {
         let slot = u64_to_slot(inner);
         let cost = strap_to_cost(&strap);
         straps.push((slot, strap, cost));
-        multiple = multiple * 2;
+        multiple *= 2;
     }
     straps
 }
@@ -264,11 +286,9 @@ pub fn u64_to_strap(num: u64) -> Strap {
     };
     Strap::new(level, kind, modifier)
 }
-// two -> twelve, never seven
-pub fn u64_to_slot(num: u64) -> Roll {
-    let modulo = num % 10;
 
-    match modulo {
+pub fn u64_to_slot(num: u64) -> Roll {
+    match num % 10 {
         0 => Roll::Two,
         1 => Roll::Three,
         2 => Roll::Four,
@@ -323,92 +343,42 @@ pub fn roll_to_vrf_number(roll: &Roll) -> u64 {
 }
 
 pub fn modifier_triggers_for_roll(roll: u64) -> Vec<(Roll, Roll, Modifier)> {
-    let mut two = false;
-    let mut three = false;
-    let mut four = false;
-    let mut five = false;
-    let mut six = false;
-    let mut seven = false;
-    let mut eight = false;
-    let mut nine = false;
-    let mut ten = false;
-    let mut eleven = false;
-    let mut twelve = false;
+    let mut seen = [false; 11];
     let mut triggers = Vec::new();
     let mut multiple = 1;
+
     while roll % multiple == 0 && roll != 0 {
         let inner = roll / multiple;
         let (modifier_roll, modifier) = u64_to_modifier(inner);
         let trigger_roll = u64_to_trigger_roll(inner);
-        let add = match modifier_roll {
-            Roll::Two => {
-                let was = two;
-                two = true;
-                !was
-            }
-            Roll::Three => {
-                let was = three;
-                three = true;
-                !was
-            }
-            Roll::Four => {
-                let was = four;
-                four = true;
-                !was
-            }
-            Roll::Five => {
-                let was = five;
-                five = true;
-                !was
-            }
-            Roll::Six => {
-                let was = six;
-                six = true;
-                !was
-            }
-            Roll::Seven => {
-                let was = seven;
-                seven = true;
-                !was
-            }
-            Roll::Eight => {
-                let was = eight;
-                eight = true;
-                !was
-            }
-            Roll::Nine => {
-                let was = nine;
-                nine = true;
-                !was
-            }
-            Roll::Ten => {
-                let was = ten;
-                ten = true;
-                !was
-            }
-            Roll::Eleven => {
-                let was = eleven;
-                eleven = true;
-                !was
-            }
-            Roll::Twelve => {
-                let was = twelve;
-                twelve = true;
-                !was
-            }
+
+        let index = match modifier_roll {
+            Roll::Two => 0,
+            Roll::Three => 1,
+            Roll::Four => 2,
+            Roll::Five => 3,
+            Roll::Six => 4,
+            Roll::Seven => 5,
+            Roll::Eight => 6,
+            Roll::Nine => 7,
+            Roll::Ten => 8,
+            Roll::Eleven => 9,
+            Roll::Twelve => 10,
         };
-        if add {
+
+        if !seen[index] {
             triggers.push((trigger_roll, modifier_roll, modifier));
+            seen[index] = true;
         }
-        multiple = multiple * 3;
+
+        multiple *= 3;
     }
+
     triggers
 }
 
 pub fn u64_to_modifier(num: u64) -> (Roll, Modifier) {
-    let modulo = num % 11;
-
-    match modulo {
+    match num % 11 {
         0 => (Roll::Two, Modifier::Burnt),
         1 => (Roll::Three, Modifier::Lucky),
         2 => (Roll::Four, Modifier::Holy),
@@ -424,9 +394,7 @@ pub fn u64_to_modifier(num: u64) -> (Roll, Modifier) {
 }
 
 pub fn u64_to_trigger_roll(num: u64) -> Roll {
-    let modulo = num % 4;
-
-    match modulo {
+    match num % 4 {
         0 => Roll::Two,
         1 => Roll::Three,
         2 => Roll::Eleven,
