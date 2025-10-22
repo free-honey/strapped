@@ -48,6 +48,6 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
         .await
         .unwrap()
         .value;
-    let expected_active_modifier = vec![(modifier_roll, modifier, 1u64)];
+    let expected_active_modifier = vec![(modifier_roll, modifier, 1u32)];
     assert_eq!(expected_active_modifier, actual_active_modifier);
 }

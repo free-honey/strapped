@@ -50,7 +50,7 @@ pub enum UserEvent {
         amount: u64,
     },
     ConfirmClaim {
-        game_id: u64,
+        game_id: u32,
         enabled: Vec<(strapped::Roll, strapped::Modifier)>,
     },
 }
@@ -62,7 +62,7 @@ pub struct UiState {
     current_vrf: u64,
     terminal: Option<Terminal<CrosstermBackend<std::io::Stdout>>>,
     shop_items: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
-    last_game_id: Option<u64>,
+    last_game_id: Option<u32>,
     owned_straps: Vec<(strapped::Strap, u64)>,
 }
 
@@ -1025,7 +1025,7 @@ fn centered_rect(w_percent: u16, h_percent: u16, r: Rect) -> Rect {
 
 fn active_mods_emojis(
     roll: &strapped::Roll,
-    active: &[(strapped::Roll, strapped::Modifier, u64)],
+    active: &[(strapped::Roll, strapped::Modifier, u32)],
 ) -> String {
     let mut s = String::new();
     for (r, m, _) in active {
@@ -1045,7 +1045,7 @@ fn active_mods_emojis(
 fn roll_border_style(
     roll: &strapped::Roll,
     selected: bool,
-    active: &[(strapped::Roll, strapped::Modifier, u64)],
+    active: &[(strapped::Roll, strapped::Modifier, u32)],
 ) -> Style {
     let mut style = Style::default();
     if let Some(color) = border_color_for_roll(roll, active) {
@@ -1059,7 +1059,7 @@ fn roll_border_style(
 
 fn border_color_for_roll(
     roll: &strapped::Roll,
-    active: &[(strapped::Roll, strapped::Modifier, u64)],
+    active: &[(strapped::Roll, strapped::Modifier, u32)],
 ) -> Option<Color> {
     active
         .iter()

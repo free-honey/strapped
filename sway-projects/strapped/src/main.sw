@@ -18,9 +18,9 @@ pub use ::contract_types::*;
 use ::helpers::*;
 use ::events::*;
 
-type GameId = u64;
+type GameId = u32;
 type Amount = u64;
-type RollIndex = u64;
+type RollIndex = u32;
 
 
 pub struct PayoutConfig {
@@ -408,7 +408,7 @@ impl Strapped for Contract {
         let rolls = storage.roll_history.get(game_id).load_vec();
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
-        let mut rewards: Vec<(SubId, u64)> = Vec::new();
+        let mut rewards: Vec<(Strap, u64)> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
             let mut bet_index = 0;
@@ -443,20 +443,19 @@ impl Strapped for Contract {
                             let active_modifiers = storage.active_modifiers.get(game_id).load_vec();
                             let modifier_for_roll = modifier_for_roll(active_modifiers, roll, roll_index, enabled_modifiers).unwrap_or(modifier);
                             let new_strap = Strap::new(new_level, kind, modifier_for_roll);
-                            let strap_sub_id = new_strap.into_sub_id();
                             let contract_id = ContractId::this();
                             let mut i = 0;
                             let mut found = false; 
                             while i < rewards.len() {
                                 let (existing_id, existing_amount) = rewards.get(i).unwrap();
-                                if existing_id == strap_sub_id {
+                                if existing_id == new_strap {
                                     rewards.set(i, (existing_id, existing_amount + amount));
                                     found = true;
                                 }
                                 i += 1;
                             }
                             if !found {
-                                rewards.push((strap_sub_id, amount));
+                                rewards.push((new_strap, amount));
                             }
                             //remove bet
                             storage.bets.get((game_id, identity, roll)).remove(bet_index);
@@ -487,7 +486,8 @@ impl Strapped for Contract {
             if total_chips_winnings > 0 {
                transfer(identity, chip_asset_id, total_chips_winnings);
             }
-            for (sub_id, amount) in rewards.iter() {
+            for (strap, amount) in rewards.iter() {
+                let sub_id = strap.into_sub_id();
                 mint_to(identity, sub_id, amount);
             }
             log_claim_rewards_event(game_id, identity, enabled_modifiers, total_chips_winnings, rewards);
@@ -678,13 +678,12 @@ fn strap_to_cost(strap: Strap) -> u64 {
     }
 }
 
-fn rewards_for_roll(available_straps: Vec<(Roll, Strap, u64)>, roll: Roll, bet_amount: u64) -> Vec<(SubId, u64)> {
-    let mut rewards: Vec<(SubId, u64)> = Vec::new();
+fn rewards_for_roll(available_straps: Vec<(Roll, Strap, u64)>, roll: Roll, bet_amount: u64) -> Vec<(Strap, u64)> {
+    let mut rewards: Vec<(Strap, u64)> = Vec::new();
     for (reward_roll, strap, cost) in available_straps.iter() {
         if reward_roll == roll {
-            let sub_id = strap.into_sub_id();
             let amount = bet_amount / cost;
-            rewards.push((sub_id, amount));
+            rewards.push((strap, amount));
         }
     }
     rewards

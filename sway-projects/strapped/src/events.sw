@@ -20,12 +20,12 @@ pub fn log_initialized_event(vrf_contract_id: b256, chip_asset_id: AssetId, roll
 }
 
 pub struct RollEvent {
-    game_id: u64,
-    roll_index: u64,
+    game_id: u32,
+    roll_index: u32,
     rolled_value: Roll,
 }
 
-pub fn log_roll_event(game_id: u64, roll_index: u64, rolled_value: Roll) {
+pub fn log_roll_event(game_id: u32, roll_index: u32, rolled_value: Roll) {
     let event = RollEvent {
         game_id,
         roll_index,
@@ -35,12 +35,12 @@ pub fn log_roll_event(game_id: u64, roll_index: u64, rolled_value: Roll) {
 }
 
 pub struct NewGameEvent {
-    game_id: u64,
+    game_id: u32,
     new_straps: Vec<(Roll, Strap, u64)>,
     new_modifiers: Vec<(Roll, Roll, Modifier)>,
 }
 
-pub fn log_new_game_event(game_id: u64, new_straps: Vec<(Roll, Strap, u64)>, new_modifiers: Vec<(Roll, Roll, Modifier)>) {
+pub fn log_new_game_event(game_id: u32, new_straps: Vec<(Roll, Strap, u64)>, new_modifiers: Vec<(Roll, Roll, Modifier)>) {
     let event = NewGameEvent {
         game_id,
         new_straps,
@@ -49,16 +49,16 @@ pub fn log_new_game_event(game_id: u64, new_straps: Vec<(Roll, Strap, u64)>, new
     log(event);
 }
 
-pub struct ModifierTriggered {
-    game_id: u64,
-    roll_index: u64,
+pub struct ModifierTriggeredEvent {
+    game_id: u32,
+    roll_index: u32,
     trigger_roll: Roll,
     modifier_roll: Roll,
     modifier: Modifier,
 }
 
-pub fn log_modifier_triggered(game_id: u64, roll_index: u64, trigger_roll: Roll, modifier_roll: Roll, modifier: Modifier) {
-    let event = ModifierTriggered {
+pub fn log_modifier_triggered(game_id: u32, roll_index: u32, trigger_roll: Roll, modifier_roll: Roll, modifier: Modifier) {
+    let event = ModifierTriggeredEvent {
         game_id,
         roll_index,
         trigger_roll,
@@ -69,15 +69,15 @@ pub fn log_modifier_triggered(game_id: u64, roll_index: u64, trigger_roll: Roll,
 }
 
 pub struct PlaceChipBetEvent {
-    game_id: u64,
+    game_id: u32,
     // latest roll index when the bet was placed
-    bet_roll_index: u64,
+    bet_roll_index: u32,
     player: Identity,
     roll: Roll,
     amount: u64,
 }
 
-pub fn log_place_chip_bet_event(game_id: u64, bet_roll_index: u64, player: Identity, roll: Roll, amount: u64) {
+pub fn log_place_chip_bet_event(game_id: u32, bet_roll_index: u32, player: Identity, roll: Roll, amount: u64) {
     let event = PlaceChipBetEvent {
         game_id,
         bet_roll_index,
@@ -89,15 +89,15 @@ pub fn log_place_chip_bet_event(game_id: u64, bet_roll_index: u64, player: Ident
 }
 
 pub struct PlaceStrapBetEvent {
-    game_id: u64,
+    game_id: u32,
     // latest roll index when the bet was placed
-    bet_roll_index: u64,
+    bet_roll_index: u32,
     player: Identity,
     strap: Strap,
     amount: u64,
 }
 
-pub fn log_place_strap_bet_event(game_id: u64, roll_index: u64, player: Identity, strap: Strap, amount: u64) {
+pub fn log_place_strap_bet_event(game_id: u32, roll_index: u32, player: Identity, strap: Strap, amount: u64) {
     let event = PlaceStrapBetEvent {
         game_id,
         bet_roll_index: roll_index,
@@ -109,14 +109,14 @@ pub fn log_place_strap_bet_event(game_id: u64, roll_index: u64, player: Identity
 }
 
 pub struct ClaimRewardsEvent {
-    game_id: u64,
+    game_id: u32,
     player: Identity,
     enabled_modifiers: Vec<(Roll, Modifier)>,
     total_chips_winnings: u64,
-    total_strap_winnings: Vec<(SubId, u64)>,
+    total_strap_winnings: Vec<(Strap, u64)>,
 }
 
-pub fn log_claim_rewards_event(game_id: u64, player: Identity, enabled_modifiers: Vec<(Roll, Modifier)>, total_chips_winnings: u64, total_strap_winnings: Vec<(SubId, u64)>) {
+pub fn log_claim_rewards_event(game_id: u32, player: Identity, enabled_modifiers: Vec<(Roll, Modifier)>, total_chips_winnings: u64, total_strap_winnings: Vec<(Strap, u64)>) {
     let event = ClaimRewardsEvent {
         game_id,
         player,
