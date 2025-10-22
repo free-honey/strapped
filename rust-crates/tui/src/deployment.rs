@@ -255,14 +255,14 @@ pub struct StoredStrapReward {
 pub struct StoredModifier {
     pub roll: String,
     pub modifier: String,
-    pub roll_index: u64,
+    pub roll_index: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredBet {
     pub bet_type: String,
     pub amount: u64,
-    pub roll_index: u64,
+    pub roll_index: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strap: Option<StoredStrap>,
 }
@@ -275,7 +275,7 @@ pub struct StoredRollBets {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoredGameHistory {
-    pub game_id: u64,
+    pub game_id: u32,
     pub rolls: Vec<String>,
     pub modifiers: Vec<StoredModifier>,
     pub owner_bets: Vec<StoredRollBets>,

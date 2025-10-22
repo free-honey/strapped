@@ -20,8 +20,8 @@ use color_eyre::eyre::{
 };
 use fuels::{
     accounts::{
-        wallet::WalletUnlocked,
         ViewOnlyAccount,
+        wallet::WalletUnlocked,
     },
     prelude::{
         AssetConfig,
@@ -111,22 +111,17 @@ pub enum WalletKind {
     Alice,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct BetsSummary {
-    pub _by_roll: Vec<(strapped::Roll, u64 /* total amount */)>,
-}
-
 #[derive(Clone, Debug)]
 pub struct AppSnapshot {
     pub wallet: WalletKind,
-    pub current_game_id: u64,
+    pub current_game_id: u32,
     pub roll_history: Vec<strapped::Roll>,
     pub modifier_triggers:
         Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
     pub active_modifiers: Vec<(
         strapped::Roll,
         strapped::Modifier,
-        u64, // roll_index
+        u32, // roll_index
     )>,
     pub owned_straps: Vec<(strapped::Strap, u64)>,
     pub pot_balance: u64,
@@ -293,19 +288,19 @@ pub struct AppController {
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub status: String,
-    last_seen_game_id_owner: Option<u64>,
-    last_seen_game_id_alice: Option<u64>,
+    last_seen_game_id_owner: Option<u32>,
+    last_seen_game_id_alice: Option<u32>,
     shared_last_roll_history: Vec<strapped::Roll>,
     shared_prev_games: Vec<SharedGame>,
-    owner_bets_hist: HashMap<u64, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>>,
-    alice_bets_hist: HashMap<u64, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>>,
-    owner_claimed: HashSet<u64>,
-    alice_claimed: HashSet<u64>,
-    prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
-    strap_rewards_by_game: HashMap<u64, Vec<(strapped::Roll, strapped::Strap, u64)>>,
+    owner_bets_hist: HashMap<u32, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>>,
+    alice_bets_hist: HashMap<u32, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>>,
+    owner_claimed: HashSet<u32>,
+    alice_claimed: HashSet<u32>,
+    prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
+    prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
+    strap_rewards_by_game: HashMap<u32, Vec<(strapped::Roll, strapped::Strap, u64)>>,
     active_modifiers_by_game:
-        HashMap<u64, Vec<(strapped::Roll, strapped::Modifier, u64)>>,
+        HashMap<u32, Vec<(strapped::Roll, strapped::Modifier, u32)>>,
     errors: Vec<String>,
     last_snapshot: Option<AppSnapshot>,
     last_snapshot_time: Option<Instant>,
@@ -492,9 +487,9 @@ impl AppController {
 
     fn upsert_shared_game(
         &mut self,
-        game_id: u64,
+        game_id: u32,
         rolls: Vec<strapped::Roll>,
-        modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
+        modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
     ) {
         if let Some(existing) = self
             .shared_prev_games
@@ -560,7 +555,7 @@ impl AppController {
     async fn fetch_bets_for(
         &self,
         who: WalletKind,
-    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
         let contract = self.clients.instance(who).clone();
         let safe_limit = self.clients.safe_script_gas_limit;
         let futures = all_rolls()
@@ -588,8 +583,8 @@ impl AppController {
     async fn fetch_bets_for_game(
         &self,
         who: WalletKind,
-        game_id: u64,
-    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+        game_id: u32,
+    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
         let contract = self.clients.instance(who).clone();
         let safe_limit = self.clients.safe_script_gas_limit;
         let bets = contract
@@ -605,20 +600,20 @@ impl AppController {
     async fn backfill_recent_games(&mut self) -> Result<bool> {
         let owner_contract = self.clients.owner.clone();
         let safe_limit = self.clients.safe_script_gas_limit;
-        let current_game_id = owner_contract
+        let current_game_id_u32 = owner_contract
             .methods()
             .current_game_id()
             .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
             .simulate(Execution::Realistic)
             .await?
             .value;
-        if current_game_id == 0 {
+        if current_game_id_u32 == 0 {
             return Ok(false);
         }
 
         let mut updated_any = false;
-        let start = current_game_id.saturating_sub(GAME_HISTORY_DEPTH as u64);
-        for game_id in start..current_game_id {
+        let start = current_game_id_u32.saturating_sub(GAME_HISTORY_DEPTH as u32);
+        for game_id in start..current_game_id_u32 {
             let mut game_updated = false;
             if !self.shared_prev_games.iter().any(|g| g.game_id == game_id) {
                 let rolls = owner_contract
@@ -1709,7 +1704,7 @@ impl AppController {
 
     pub async fn claim_game(
         &mut self,
-        game_id: u64,
+        game_id: u32,
         enabled: Vec<(strapped::Roll, strapped::Modifier)>,
     ) -> Result<()> {
         let me = self.clients.instance(self.wallet);
@@ -1826,7 +1821,7 @@ impl AppController {
 
     fn expected_upgraded_straps(
         &self,
-        game_id: u64,
+        game_id: u32,
         enabled: &[(strapped::Roll, strapped::Modifier)],
     ) -> Vec<(strapped::Roll, strapped::Strap)> {
         let bets_hist = match self.wallet {
@@ -1858,7 +1853,7 @@ impl AppController {
         for (idx, roll) in rolls.iter().enumerate() {
             if let Some((_, bets)) = bets_hist.iter().find(|(r, _)| r == roll) {
                 for (bet, _amount, bet_roll_index) in bets {
-                    if *bet_roll_index <= idx as u64 {
+                    if *bet_roll_index <= idx as u32 {
                         if let strapped::Bet::Strap(strap) = bet {
                             let mut new_strap = strap.clone();
                             new_strap.level = new_strap.level.saturating_add(1);
@@ -1881,9 +1876,9 @@ impl AppController {
     }
 
     fn modifier_override_for_roll(
-        active: &[(strapped::Roll, strapped::Modifier, u64)],
+        active: &[(strapped::Roll, strapped::Modifier, u32)],
         roll: &strapped::Roll,
-        bet_roll_index: u64,
+        bet_roll_index: u32,
         enabled: &[(strapped::Roll, strapped::Modifier)],
     ) -> Option<strapped::Modifier> {
         for (modifier_roll, modifier, activated_index) in active {
@@ -2027,7 +2022,7 @@ fn prev_roll(r: strapped::Roll) -> strapped::Roll {
     rolls[(idx + rolls.len() - 1) % rolls.len()].clone()
 }
 
-fn empty_bets_template() -> Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)> {
+fn empty_bets_template() -> Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)> {
     all_rolls().into_iter().map(|r| (r, Vec::new())).collect()
 }
 
@@ -2165,7 +2160,7 @@ fn stored_to_strap(stored: &StoredStrap) -> Result<strapped::Strap> {
 }
 
 fn runtime_bets_to_store(
-    bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
+    bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
 ) -> Vec<StoredRollBets> {
     let mut stored = Vec::new();
     for roll in all_rolls() {
@@ -2201,7 +2196,7 @@ fn runtime_bets_to_store(
 
 fn stored_bets_to_runtime(
     entries: &[StoredRollBets],
-) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>> {
+) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
     let mut result = Vec::new();
     for roll in all_rolls() {
         let bets = entries
@@ -2253,19 +2248,19 @@ pub struct RewardInfo {
 
 #[derive(Clone, Debug)]
 pub struct PreviousGameSummary {
-    pub game_id: u64,
+    pub game_id: u32,
     pub cells: Vec<RollCell>,
-    pub modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
+    pub modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
     pub rolls: Vec<strapped::Roll>,
-    pub bets_by_roll: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u64)>)>,
+    pub bets_by_roll: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
     pub claimed: bool,
 }
 
 #[derive(Clone, Debug)]
 struct SharedGame {
-    game_id: u64,
+    game_id: u32,
     rolls: Vec<strapped::Roll>,
-    modifiers: Vec<(strapped::Roll, strapped::Modifier, u64)>,
+    modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
 }
 
 fn format_deployment_summary(

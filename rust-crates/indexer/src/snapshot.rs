@@ -60,6 +60,7 @@ pub struct AccountSnapshot {
     pub claimed_rewards: Option<(u64, Vec<(Strap, u64)>)>,
 }
 
+#[allow(dead_code)]
 // Historical shapshot that is persisted after current game ends. Updated as each event occurs
 pub struct HistoricalSnapshot {
     game_id: u32,
