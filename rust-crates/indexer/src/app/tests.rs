@@ -12,9 +12,8 @@ use fuels::{
     types::Identity,
 };
 
-use generated_abi::strapped_types::Strap;
+use generated_abi::strapped_types::*;
 use std::{
-    collections::HashMap,
     future::pending,
     sync::{
         Arc,
@@ -44,7 +43,7 @@ impl EventSource for FakeEventSource {
 }
 
 pub struct FakeSnapshotStorage {
-    snapshot: Arc<Mutex<Option<Snapshot>>>,
+    snapshot: Arc<Mutex<Option<(Snapshot, u32)>>>,
 }
 
 impl FakeSnapshotStorage {
@@ -54,14 +53,24 @@ impl FakeSnapshotStorage {
         }
     }
 
-    pub fn snapshot(&self) -> Arc<Mutex<Option<Snapshot>>> {
+    pub fn new_with_snapshot(snapshot: Snapshot, height: u32) -> Self {
+        Self {
+            snapshot: Arc::new(Mutex::new(Some((snapshot, height)))),
+        }
+    }
+
+    pub fn snapshot(&self) -> Arc<Mutex<Option<(Snapshot, u32)>>> {
         self.snapshot.clone()
     }
 }
 
 impl SnapshotStorage for FakeSnapshotStorage {
     fn latest_snapshot(&self) -> crate::Result<(Snapshot, u32)> {
-        todo!()
+        let guard = self.snapshot.lock().unwrap();
+        match &*guard {
+            Some(snapshot) => Ok(snapshot.clone()),
+            None => Err(anyhow::anyhow!("No snapshot found")),
+        }
     }
 
     fn latest_account_snapshot(
@@ -85,7 +94,7 @@ impl SnapshotStorage for FakeSnapshotStorage {
 
     fn update_snapshot(&mut self, snapshot: &Snapshot, height: u32) -> crate::Result<()> {
         let mut guard = self.snapshot.lock().unwrap();
-        *guard = Some(snapshot.clone());
+        *guard = Some((snapshot.clone(), height));
         Ok(())
     }
 
@@ -154,6 +163,43 @@ async fn run__initialize_event__creates_first_snapshot() {
 
     // then
     let expected = Snapshot::new();
-    let actual = snapshot_copy.lock().unwrap().clone().unwrap();
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__roll_event__updates_snapshot() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let game_id = 1u32;
+    let roll_index = 0u32;
+    let rolled_value = Roll::Five;
+
+    let existing_snapshot = Snapshot {
+        game_id,
+        ..Snapshot::default()
+    };
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 105);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let roll_event = Event::roll_event(game_id, roll_index, rolled_value.clone());
+    let roll_height = 110;
+
+    // when
+    event_sender.send((roll_event, roll_height)).await.unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let expected = {
+        let mut snap = existing_snapshot;
+        snap.rolls.push(rolled_value);
+        snap
+    };
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     assert_eq!(expected, actual);
 }

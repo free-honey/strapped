@@ -18,9 +18,9 @@ pub use ::contract_types::*;
 use ::helpers::*;
 use ::events::*;
 
-type GameId = u64;
+type GameId = u32;
 type Amount = u64;
-type RollIndex = u64;
+type RollIndex = u32;
 
 
 pub struct PayoutConfig {

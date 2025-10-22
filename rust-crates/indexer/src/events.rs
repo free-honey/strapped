@@ -1,12 +1,15 @@
+use fuels::types::*;
+
 use generated_abi::strapped_types::{
     ClaimRewardsEvent,
     FundPotEvent,
     InitializedEvent,
-    ModifierTriggered,
+    ModifierTriggeredEvent,
     NewGameEvent,
     PlaceChipBetEvent,
     PlaceStrapBetEvent,
     PurchaseModifierEvent,
+    Roll,
     RollEvent,
 };
 
@@ -19,7 +22,7 @@ pub enum ContractEvent {
     Initialized(InitializedEvent),
     Roll(RollEvent),
     NewGame(NewGameEvent),
-    ModifierTriggered(ModifierTriggered),
+    ModifierTriggered(ModifierTriggeredEvent),
     PlaceChipBet(PlaceChipBetEvent),
     PlaceStrapBet(PlaceStrapBetEvent),
     ClaimRewards(ClaimRewardsEvent),
@@ -104,5 +107,14 @@ impl Event {
             first_height,
         };
         Event::ContractEvent(ContractEvent::Initialized(inner))
+    }
+
+    pub fn roll_event(game_id: u32, roll_index: u32, rolled_value: Roll) -> Self {
+        let inner = RollEvent {
+            game_id,
+            roll_index,
+            rolled_value,
+        };
+        Event::ContractEvent(ContractEvent::Roll(inner))
     }
 }
