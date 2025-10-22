@@ -12,7 +12,7 @@ use crate::{
 use anyhow::Result;
 use fuels::{
     prelude::AssetId,
-    types::Identity,
+    types::{Address, Identity},
 };
 
 use crate::snapshot::HistoricalSnapshot;
@@ -303,6 +303,204 @@ async fn run__modifier_triggered_event__activates_modifier() {
     // when
     event_sender
         .send((Event::ContractEvent(modifier_event), event_height))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.modifiers_active[2] = true;
+    expected.modifier_shop[0].3 = true;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__place_chip_bet_event__updates_pot_and_totals() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let mut existing_snapshot = OverviewSnapshot::default();
+    existing_snapshot.pot_size = 200;
+    existing_snapshot.total_bets[4].0 = 50; // Roll::Six index
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let player = Identity::Address(Address::from([0u8; 32]));
+    let chip_event = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
+        game_id: existing_snapshot.game_id,
+        bet_roll_index: 0,
+        player,
+        roll: Roll::Six,
+        amount: 150,
+    });
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(chip_event), 305))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.pot_size = 350;
+    expected.total_bets[4].0 = 200;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__place_strap_bet_event__records_strap_bet() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let mut existing_snapshot = OverviewSnapshot::default();
+    existing_snapshot.total_bets[3].1 = vec![(
+        Strap::new(1, StrapKind::Gloves, Modifier::Lucky),
+        1,
+    )];
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 410);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let strap = Strap::new(2, StrapKind::Gloves, Modifier::Lucky);
+    let strap_event = ContractEvent::PlaceStrapBet(PlaceStrapBetEvent {
+        game_id: existing_snapshot.game_id,
+        bet_roll_index: 3,
+        player: Identity::Address(Address::from([1u8; 32])),
+        strap: strap.clone(),
+        amount: 2,
+    });
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(strap_event), 415))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.total_bets[3].1.push((strap, 2));
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__claim_rewards_event__reduces_pot() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let mut existing_snapshot = OverviewSnapshot::default();
+    existing_snapshot.pot_size = 500;
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 510);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let claim_event = ContractEvent::ClaimRewards(ClaimRewardsEvent {
+        game_id: existing_snapshot.game_id,
+        player: Identity::Address(Address::from([2u8; 32])),
+        enabled_modifiers: vec![],
+        total_chips_winnings: 120,
+        total_strap_winnings: vec![],
+    });
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(claim_event), 515))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.pot_size = 380;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__fund_pot_event__increases_pot() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let mut existing_snapshot = OverviewSnapshot::default();
+    existing_snapshot.pot_size = 75;
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 610);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let fund_event = ContractEvent::FundPot(FundPotEvent {
+        chips_amount: 325,
+        funder: Identity::Address(Address::from([3u8; 32])),
+    });
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(fund_event), 615))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.pot_size = 400;
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__purchase_modifier_event__marks_shop_entry() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let mut existing_snapshot = OverviewSnapshot::default();
+    existing_snapshot.modifier_shop = vec![(
+        Roll::Two,
+        Roll::Four,
+        Modifier::Holy,
+        false,
+    )];
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 710);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let purchase_event = ContractEvent::PurchaseModifier(PurchaseModifierEvent {
+        expected_roll: Roll::Four,
+        expected_modifier: Modifier::Holy,
+        purchaser: Identity::Address(Address::from([4u8; 32])),
+    });
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(purchase_event), 715))
         .await
         .unwrap();
     app.run().await.unwrap();

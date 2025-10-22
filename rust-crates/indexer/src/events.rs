@@ -1,5 +1,3 @@
-use fuels::types::*;
-
 use generated_abi::strapped_types::{
     ClaimRewardsEvent,
     FundPotEvent,

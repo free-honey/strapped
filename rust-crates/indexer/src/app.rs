@@ -16,12 +16,18 @@ use crate::{
 };
 use anyhow::anyhow;
 use generated_abi::strapped_types::{
+    ClaimRewardsEvent,
+    FundPotEvent,
     ModifierTriggeredEvent,
     NewGameEvent,
+    PlaceChipBetEvent,
+    PlaceStrapBetEvent,
+    PurchaseModifierEvent,
     Roll,
     RollEvent,
+    Strap,
 };
-use std::fs::Metadata;
+use std::cmp;
 
 pub mod event_source;
 pub mod query_api;
@@ -48,6 +54,15 @@ fn roll_to_index(roll: &Roll) -> Option<usize> {
         Eleven => Some(8),
         Twelve => Some(9),
         Seven => None,
+    }
+}
+
+fn add_strap_bet(bets: &mut Vec<(Strap, u64)>, strap: Strap, amount: u64) {
+    if let Some(idx) = bets.iter().position(|(existing, _)| *existing == strap) {
+        let (_, existing_amount) = &mut bets[idx];
+        *existing_amount = existing_amount.saturating_add(amount);
+    } else {
+        bets.push((strap, amount));
     }
 }
 
@@ -98,12 +113,8 @@ impl<
             }
             query = self.api.query() => {
                 match query {
-                    Ok(q) => {
-                        Ok(())
-                    }
-                    Err(e) => {
-                        Err(e)
-                    }
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e),
                 }
             }
         }
@@ -128,8 +139,20 @@ impl<
                 ContractEvent::NewGame(event) => {
                     self.handle_new_game_event(event, height)
                 }
-                _ => {
-                    todo!()
+                ContractEvent::PlaceChipBet(event) => {
+                    self.handle_place_chip_bet_event(event, height)
+                }
+                ContractEvent::PlaceStrapBet(event) => {
+                    self.handle_place_strap_bet_event(event, height)
+                }
+                ContractEvent::ClaimRewards(event) => {
+                    self.handle_claim_rewards_event(event, height)
+                }
+                ContractEvent::FundPot(event) => {
+                    self.handle_fund_pot_event(event, height)
+                }
+                ContractEvent::PurchaseModifier(event) => {
+                    self.handle_purchase_modifier_event(event, height)
                 }
             },
         }
@@ -189,6 +212,85 @@ impl<
             })
             .collect();
 
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_place_chip_bet_event(
+        &mut self,
+        event: PlaceChipBetEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling PlaceChipBetEvent at height {}", height);
+        let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        snapshot.pot_size = snapshot.pot_size.saturating_add(event.amount);
+        if let Some(idx) = roll_to_index(&event.roll) {
+            let entry = &mut snapshot.total_bets[idx];
+            entry.0 = entry.0.saturating_add(event.amount);
+        }
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_place_strap_bet_event(
+        &mut self,
+        event: PlaceStrapBetEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling PlaceStrapBetEvent at height {}", height);
+        let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        if !snapshot.total_bets.is_empty() {
+            let idx = cmp::min(
+                event.bet_roll_index as usize,
+                snapshot.total_bets.len().saturating_sub(1),
+            );
+            add_strap_bet(&mut snapshot.total_bets[idx].1, event.strap, event.amount);
+        }
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_claim_rewards_event(
+        &mut self,
+        event: ClaimRewardsEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling ClaimRewardsEvent at height {}", height);
+        let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        snapshot.pot_size = snapshot
+            .pot_size
+            .saturating_sub(event.total_chips_winnings);
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_fund_pot_event(
+        &mut self,
+        event: FundPotEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling FundPotEvent at height {}", height);
+        let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        snapshot.pot_size = snapshot
+            .pot_size
+            .saturating_add(event.chips_amount);
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_purchase_modifier_event(
+        &mut self,
+        event: PurchaseModifierEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling PurchaseModifierEvent at height {}", height);
+        let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        if let Some(idx) = roll_to_index(&event.expected_roll) {
+            snapshot.modifiers_active[idx] = true;
+        }
+        for entry in &mut snapshot.modifier_shop {
+            let (_trigger_roll, modifier_roll, modifier, purchased) = entry;
+            if *modifier_roll == event.expected_roll
+                && *modifier == event.expected_modifier
+            {
+                *purchased = true;
+            }
+        }
         self.snapshots.update_snapshot(&snapshot, height)
     }
 }
