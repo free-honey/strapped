@@ -3,13 +3,20 @@
 use super::*;
 use crate::{
     app::query_api::Query,
-    events::{ContractEvent, Event},
+    events::{
+        ContractEvent,
+        Event,
+    },
     snapshot::AccountSnapshot,
 };
 use anyhow::Result;
 use fuels::{
     prelude::AssetId,
-    types::{Address, ContractId, Identity},
+    types::{
+        Address,
+        ContractId,
+        Identity,
+    },
 };
 
 use crate::snapshot::HistoricalSnapshot;
@@ -17,7 +24,10 @@ use generated_abi::strapped_types::*;
 use std::{
     collections::HashMap,
     future::pending,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+    },
 };
 
 pub struct FakeEventSource {
@@ -119,18 +129,18 @@ impl SnapshotStorage for FakeSnapshotStorage {
         Ok(())
     }
 
-    fn roll_back_snapshots(&mut self, to_height: u32) -> crate::Result<()> {
+    fn roll_back_snapshots(&mut self, _to_height: u32) -> crate::Result<()> {
         todo!()
     }
 
-    fn historical_snapshots(&self, game_id: u32) -> crate::Result<HistoricalSnapshot> {
+    fn historical_snapshots(&self, _game_id: u32) -> crate::Result<HistoricalSnapshot> {
         todo!()
     }
 
     fn write_historical_snapshot(
         &mut self,
-        game_id: u32,
-        snapshot: &HistoricalSnapshot,
+        _game_id: u32,
+        _snapshot: &HistoricalSnapshot,
     ) -> crate::Result<()> {
         todo!()
     }
@@ -179,7 +189,7 @@ fn arb_init_event() -> Event {
 #[tokio::test]
 async fn run__initialize_event__creates_first_snapshot() {
     // given
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
     let snapshot_storage = FakeSnapshotStorage::new();
     let snapshot_copy = snapshot_storage.snapshot();
 
@@ -209,7 +219,7 @@ async fn run__initialize_event__creates_first_snapshot() {
 #[tokio::test]
 async fn run__roll_event__updates_snapshot() {
     // given
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
     let game_id = 1u32;
     let roll_index = 0u32;
     let rolled_value = Roll::Five;
@@ -252,7 +262,7 @@ async fn run__roll_event__updates_snapshot() {
 #[tokio::test]
 async fn run__new_game_event__resets_overview_snapshot() {
     // given
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 1,
@@ -319,7 +329,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
 #[tokio::test]
 async fn run__modifier_triggered_event__activates_modifier() {
     // given
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
@@ -366,7 +376,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
 
 #[tokio::test]
 async fn run__place_chip_bet_event__updates_pot_and_totals() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.pot_size = 200;
@@ -409,7 +419,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
 
 #[tokio::test]
 async fn run__place_chip_bet_event__updates_account_snapshot() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
         FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 300);
@@ -451,7 +461,7 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
 
 #[tokio::test]
 async fn run__place_strap_bet_event__records_strap_bet() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.total_bets[3].1 =
@@ -495,7 +505,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
 
 #[tokio::test]
 async fn run__place_strap_bet_event__updates_account_snapshot() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
         FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
@@ -539,7 +549,7 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
 
 #[tokio::test]
 async fn run__claim_rewards_event__reduces_pot() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.pot_size = 500;
@@ -580,7 +590,7 @@ async fn run__claim_rewards_event__reduces_pot() {
 
 #[tokio::test]
 async fn run__claim_rewards_event__updates_account_snapshot() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
         FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
@@ -622,7 +632,7 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
 
 #[tokio::test]
 async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() {
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
         FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
@@ -684,7 +694,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
 #[tokio::test]
 async fn run__fund_pot_event__increases_pot() {
     // given
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.pot_size = 75;
@@ -725,7 +735,7 @@ async fn run__fund_pot_event__increases_pot() {
 #[tokio::test]
 async fn run__purchase_modifier_event__marks_shop_entry() {
     // given
-    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.modifier_shop =
