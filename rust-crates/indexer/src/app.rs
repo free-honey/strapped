@@ -3,29 +3,20 @@ use crate::{
     app::{
         event_source::EventSource,
         query_api::QueryAPI,
-        snapshot_storage::{
-            MetadataStorage,
-            SnapshotStorage,
-        },
+        snapshot_storage::{MetadataStorage, SnapshotStorage},
     },
-    events::{
-        ContractEvent,
-        Event,
-    },
+    events::{ContractEvent, Event},
     snapshot::OverviewSnapshot,
 };
 use anyhow::anyhow;
-use generated_abi::strapped_types::{
-    ClaimRewardsEvent,
-    FundPotEvent,
-    ModifierTriggeredEvent,
-    NewGameEvent,
-    PlaceChipBetEvent,
-    PlaceStrapBetEvent,
-    PurchaseModifierEvent,
-    Roll,
-    RollEvent,
-    Strap,
+use fuels::{tx::ContractIdExt, types::ContractId};
+use generated_abi::{
+    strap_to_sub_id,
+    strapped_types::{
+        ClaimRewardsEvent, FundPotEvent, InitializedEvent, ModifierTriggeredEvent,
+        NewGameEvent, PlaceChipBetEvent, PlaceStrapBetEvent, PurchaseModifierEvent, Roll,
+        RollEvent, Strap,
+    },
 };
 use std::cmp;
 
@@ -38,6 +29,7 @@ pub struct App<Events, API, Snapshots, Metadata> {
     api: API,
     snapshots: Snapshots,
     metadata: Metadata,
+    contract_id: ContractId,
 }
 
 fn roll_to_index(roll: &Roll) -> Option<usize> {
@@ -74,12 +66,14 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
         api: API,
         snapshots: Snapshots,
         metadata: Metadata,
+        contract_id: ContractId,
     ) -> Self {
         Self {
             events,
             api,
             snapshots,
             metadata,
+            contract_id,
         }
     }
 }
@@ -119,14 +113,20 @@ impl<
         }
     }
 
+    fn remember_strap(&mut self, strap: &Strap) {
+        let sub_id = strap_to_sub_id(strap);
+        let asset_id = self.contract_id.asset_id(&sub_id);
+        let _ = self.metadata.record_new_asset_id(&asset_id, strap);
+    }
+
     fn handle_event(&mut self, event: Event, height: u32) -> Result<()> {
         match event {
             Event::BlockchainEvent => {
                 todo!()
             }
             Event::ContractEvent(contract_event) => match contract_event {
-                ContractEvent::Initialized(_) => {
-                    self.handle_initialized_event(contract_event, height)
+                ContractEvent::Initialized(event) => {
+                    self.handle_initialized_event(event, height)
                 }
                 ContractEvent::Roll(roll_event) => {
                     let RollEvent { rolled_value, .. } = roll_event;
@@ -159,7 +159,7 @@ impl<
 
     fn handle_initialized_event(
         &mut self,
-        _event: ContractEvent,
+        _event: InitializedEvent,
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling InitializedEvent at height {}", height);
@@ -195,23 +195,30 @@ impl<
 
     fn handle_new_game_event(&mut self, event: NewGameEvent, height: u32) -> Result<()> {
         tracing::info!("Handling NewGameEvent at height {}", height);
-        let game_id: u32 = event
-            .game_id
+        let NewGameEvent {
+            game_id,
+            new_straps,
+            new_modifiers,
+        } = event;
+        let game_id: u32 = game_id
             .try_into()
-            .map_err(|_| anyhow!("game id {} overflows u32", event.game_id))?;
+            .map_err(|_| anyhow!("game id {} overflows u32", game_id))?;
 
         let mut snapshot = OverviewSnapshot::default();
         snapshot.game_id = game_id;
-        snapshot.rewards = event.new_straps.into_iter().collect();
-        snapshot.modifier_shop = event
-            .new_modifiers
+        snapshot.rewards = new_straps.clone();
+        snapshot.modifier_shop = new_modifiers
             .into_iter()
             .map(|(trigger_roll, modifier_roll, modifier)| {
                 (trigger_roll, modifier_roll, modifier, false)
             })
             .collect();
 
-        self.snapshots.update_snapshot(&snapshot, height)
+        self.snapshots.update_snapshot(&snapshot, height)?;
+        for (_, strap, _) in new_straps {
+            self.remember_strap(&strap);
+        }
+        Ok(())
     }
 
     fn handle_place_chip_bet_event(
@@ -274,6 +281,7 @@ impl<
             .map(|(snap, _)| snap)
             .unwrap_or_default();
         accumulate_strap(&mut account_snapshot.strap_bets, &strap, amount);
+        self.remember_strap(&strap);
         self.snapshots
             .update_account_snapshot(&player, &account_snapshot, height)
     }
@@ -287,13 +295,11 @@ impl<
         let ClaimRewardsEvent {
             player,
             total_chips_winnings,
-            total_strap_winnings: _,
+            total_strap_winnings,
             ..
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        snapshot.pot_size = snapshot
-            .pot_size
-            .saturating_sub(total_chips_winnings);
+        snapshot.pot_size = snapshot.pot_size.saturating_sub(total_chips_winnings);
         self.snapshots.update_snapshot(&snapshot, height)?;
 
         let mut account_snapshot = self
@@ -304,22 +310,19 @@ impl<
         account_snapshot.total_chip_won = account_snapshot
             .total_chip_won
             .saturating_add(total_chips_winnings);
-        account_snapshot.claimed_rewards =
-            Some((total_chips_winnings, Vec::new()));
+        let strap_rewards: Vec<(Strap, u64)> = total_strap_winnings.clone();
+        for (strap, _) in &strap_rewards {
+            self.remember_strap(strap);
+        }
+        account_snapshot.claimed_rewards = Some((total_chips_winnings, strap_rewards));
         self.snapshots
             .update_account_snapshot(&player, &account_snapshot, height)
     }
 
-    fn handle_fund_pot_event(
-        &mut self,
-        event: FundPotEvent,
-        height: u32,
-    ) -> Result<()> {
+    fn handle_fund_pot_event(&mut self, event: FundPotEvent, height: u32) -> Result<()> {
         tracing::info!("Handling FundPotEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        snapshot.pot_size = snapshot
-            .pot_size
-            .saturating_add(event.chips_amount);
+        snapshot.pot_size = snapshot.pot_size.saturating_add(event.chips_amount);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 

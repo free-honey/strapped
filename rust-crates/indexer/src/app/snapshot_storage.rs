@@ -1,13 +1,6 @@
-use crate::snapshot::{
-    AccountSnapshot,
-    HistoricalSnapshot,
-    OverviewSnapshot,
-};
+use crate::snapshot::{AccountSnapshot, HistoricalSnapshot, OverviewSnapshot};
 
-use fuels::{
-    prelude::*,
-    types::Identity,
-};
+use fuels::{prelude::*, types::Identity};
 use generated_abi::strapped_types::Strap;
 
 pub trait SnapshotStorage {

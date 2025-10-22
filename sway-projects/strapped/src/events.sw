@@ -113,10 +113,10 @@ pub struct ClaimRewardsEvent {
     player: Identity,
     enabled_modifiers: Vec<(Roll, Modifier)>,
     total_chips_winnings: u64,
-    total_strap_winnings: Vec<(SubId, u64)>,
+    total_strap_winnings: Vec<(Strap, u64)>,
 }
 
-pub fn log_claim_rewards_event(game_id: u32, player: Identity, enabled_modifiers: Vec<(Roll, Modifier)>, total_chips_winnings: u64, total_strap_winnings: Vec<(SubId, u64)>) {
+pub fn log_claim_rewards_event(game_id: u32, player: Identity, enabled_modifiers: Vec<(Roll, Modifier)>, total_chips_winnings: u64, total_strap_winnings: Vec<(Strap, u64)>) {
     let event = ClaimRewardsEvent {
         game_id,
         player,

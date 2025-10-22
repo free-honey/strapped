@@ -71,6 +71,7 @@ impl Strap {
     }
 }
 
+
 pub enum Bet {
     Chip: (),
     Strap: Strap
@@ -158,6 +159,33 @@ impl Hash for Modifier {
     }
 }
 
+impl PartialEq for StrapKind {
+    fn eq(self, other: StrapKind) -> bool {
+        match (self, other) {
+            (StrapKind::Shirt, StrapKind::Shirt) => true,
+            (StrapKind::Pants, StrapKind::Pants) => true,
+            (StrapKind::Shoes, StrapKind::Shoes) => true,
+            (StrapKind::Dress, StrapKind::Dress) => true,
+            (StrapKind::Hat, StrapKind::Hat) => true,
+            (StrapKind::Glasses, StrapKind::Glasses) => true,
+            (StrapKind::Watch, StrapKind::Watch) => true,
+            (StrapKind::Ring, StrapKind::Ring) => true,
+            (StrapKind::Necklace, StrapKind::Necklace) => true,
+            (StrapKind::Earring, StrapKind::Earring) => true,
+            (StrapKind::Bracelet, StrapKind::Bracelet) => true,
+            (StrapKind::Tattoo, StrapKind::Tattoo) => true,
+            (StrapKind::Skirt, StrapKind::Skirt) => true,
+            (StrapKind::Piercing, StrapKind::Piercing) => true,
+            (StrapKind::Coat, StrapKind::Coat) => true,
+            (StrapKind::Scarf, StrapKind::Scarf) => true,
+            (StrapKind::Gloves, StrapKind::Gloves) => true,
+            (StrapKind::Gown, StrapKind::Gown) => true,
+            (StrapKind::Belt, StrapKind::Belt) => true,
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for Modifier {
     fn eq(self, other: Modifier) -> bool {
         match (self, other) {
@@ -175,6 +203,12 @@ impl PartialEq for Modifier {
             (Modifier::Delicate, Modifier::Delicate) => true,
             _ => false,
         }
+    }
+}
+
+impl PartialEq for Strap {
+    fn eq(self, other: Strap) -> bool {
+        self.level == other.level && self.kind == other.kind && self.modifier == other.modifier
     }
 }
 
