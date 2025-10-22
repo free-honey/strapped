@@ -57,12 +57,11 @@ fn roll_to_index(roll: &Roll) -> Option<usize> {
     }
 }
 
-fn add_strap_bet(bets: &mut Vec<(Strap, u64)>, strap: Strap, amount: u64) {
-    if let Some(idx) = bets.iter().position(|(existing, _)| *existing == strap) {
-        let (_, existing_amount) = &mut bets[idx];
-        *existing_amount = existing_amount.saturating_add(amount);
+fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
+    if let Some(idx) = bets.iter().position(|(existing, _)| existing == strap) {
+        bets[idx].1 = bets[idx].1.saturating_add(amount);
     } else {
-        bets.push((strap, amount));
+        bets.push((strap.clone(), amount));
     }
 }
 
@@ -221,13 +220,29 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling PlaceChipBetEvent at height {}", height);
+        let PlaceChipBetEvent {
+            player,
+            amount,
+            roll,
+            ..
+        } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        snapshot.pot_size = snapshot.pot_size.saturating_add(event.amount);
-        if let Some(idx) = roll_to_index(&event.roll) {
+        snapshot.pot_size = snapshot.pot_size.saturating_add(amount);
+        if let Some(idx) = roll_to_index(&roll) {
             let entry = &mut snapshot.total_bets[idx];
-            entry.0 = entry.0.saturating_add(event.amount);
+            entry.0 = entry.0.saturating_add(amount);
         }
-        self.snapshots.update_snapshot(&snapshot, height)
+        self.snapshots.update_snapshot(&snapshot, height)?;
+
+        let mut account_snapshot = self
+            .snapshots
+            .latest_account_snapshot(&player)
+            .map(|(snap, _)| snap)
+            .unwrap_or_default();
+        account_snapshot.total_chip_bet =
+            account_snapshot.total_chip_bet.saturating_add(amount);
+        self.snapshots
+            .update_account_snapshot(&player, &account_snapshot, height)
     }
 
     fn handle_place_strap_bet_event(
@@ -236,15 +251,31 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling PlaceStrapBetEvent at height {}", height);
+        let PlaceStrapBetEvent {
+            player,
+            amount,
+            bet_roll_index,
+            strap,
+            ..
+        } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         if !snapshot.total_bets.is_empty() {
             let idx = cmp::min(
-                event.bet_roll_index as usize,
+                bet_roll_index as usize,
                 snapshot.total_bets.len().saturating_sub(1),
             );
-            add_strap_bet(&mut snapshot.total_bets[idx].1, event.strap, event.amount);
+            accumulate_strap(&mut snapshot.total_bets[idx].1, &strap, amount);
         }
-        self.snapshots.update_snapshot(&snapshot, height)
+        self.snapshots.update_snapshot(&snapshot, height)?;
+
+        let mut account_snapshot = self
+            .snapshots
+            .latest_account_snapshot(&player)
+            .map(|(snap, _)| snap)
+            .unwrap_or_default();
+        accumulate_strap(&mut account_snapshot.strap_bets, &strap, amount);
+        self.snapshots
+            .update_account_snapshot(&player, &account_snapshot, height)
     }
 
     fn handle_claim_rewards_event(
@@ -253,11 +284,30 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling ClaimRewardsEvent at height {}", height);
+        let ClaimRewardsEvent {
+            player,
+            total_chips_winnings,
+            total_strap_winnings: _,
+            ..
+        } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot
             .pot_size
-            .saturating_sub(event.total_chips_winnings);
-        self.snapshots.update_snapshot(&snapshot, height)
+            .saturating_sub(total_chips_winnings);
+        self.snapshots.update_snapshot(&snapshot, height)?;
+
+        let mut account_snapshot = self
+            .snapshots
+            .latest_account_snapshot(&player)
+            .map(|(snap, _)| snap)
+            .unwrap_or_default();
+        account_snapshot.total_chip_won = account_snapshot
+            .total_chip_won
+            .saturating_add(total_chips_winnings);
+        account_snapshot.claimed_rewards =
+            Some((total_chips_winnings, Vec::new()));
+        self.snapshots
+            .update_account_snapshot(&player, &account_snapshot, height)
     }
 
     fn handle_fund_pot_event(

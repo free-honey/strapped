@@ -18,6 +18,7 @@ use fuels::{
 use crate::snapshot::HistoricalSnapshot;
 use generated_abi::strapped_types::*;
 use std::{
+    collections::HashMap,
     future::pending,
     sync::{
         Arc,
@@ -48,23 +49,36 @@ impl EventSource for FakeEventSource {
 
 pub struct FakeSnapshotStorage {
     snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
+    account_snapshots: Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>>,
 }
 
 impl FakeSnapshotStorage {
     pub fn new() -> Self {
         Self {
             snapshot: Arc::new(Mutex::new(None)),
+            account_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub fn new_with_snapshot(snapshot: OverviewSnapshot, height: u32) -> Self {
         Self {
             snapshot: Arc::new(Mutex::new(Some((snapshot, height)))),
+            account_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub fn snapshot(&self) -> Arc<Mutex<Option<(OverviewSnapshot, u32)>>> {
         self.snapshot.clone()
+    }
+
+    pub fn account_snapshots(
+        &self,
+    ) -> Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>> {
+        self.account_snapshots.clone()
+    }
+
+    pub fn identity_key(account: &Identity) -> String {
+        format!("{:?}", account)
     }
 }
 
@@ -81,7 +95,12 @@ impl SnapshotStorage for FakeSnapshotStorage {
         &self,
         account: &Identity,
     ) -> crate::Result<(AccountSnapshot, u32)> {
-        todo!()
+        let key = Self::identity_key(account);
+        let guard = self.account_snapshots.lock().unwrap();
+        guard
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No account snapshot found"))
     }
 
     fn update_snapshot(
@@ -96,10 +115,14 @@ impl SnapshotStorage for FakeSnapshotStorage {
 
     fn update_account_snapshot(
         &mut self,
+        account: &Identity,
         account_snapshot: &AccountSnapshot,
         height: u32,
     ) -> crate::Result<()> {
-        todo!()
+        let key = Self::identity_key(account);
+        let mut guard = self.account_snapshots.lock().unwrap();
+        guard.insert(key, (account_snapshot.clone(), height));
+        Ok(())
     }
 
     fn roll_back_snapshots(&mut self, to_height: u32) -> crate::Result<()> {
@@ -317,7 +340,6 @@ async fn run__modifier_triggered_event__activates_modifier() {
 
 #[tokio::test]
 async fn run__place_chip_bet_event__updates_pot_and_totals() {
-    // given
     let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
@@ -332,23 +354,20 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let query_api = FakeQueryApi;
     let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
 
-    let player = Identity::Address(Address::from([0u8; 32]));
     let chip_event = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 0,
-        player,
+        player: Identity::Address(Address::from([0u8; 32])),
         roll: Roll::Six,
         amount: 150,
     });
 
-    // when
     event_sender
         .send((Event::ContractEvent(chip_event), 305))
         .await
         .unwrap();
     app.run().await.unwrap();
 
-    // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.pot_size = 350;
@@ -357,8 +376,43 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
 }
 
 #[tokio::test]
+async fn run__place_chip_bet_event__updates_account_snapshot() {
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 300);
+    let accounts_map = snapshot_storage.account_snapshots();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let player = Identity::Address(Address::from([0u8; 32]));
+    let chip_event = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
+        game_id: 0,
+        bet_roll_index: 0,
+        player: player.clone(),
+        roll: Roll::Six,
+        amount: 150,
+    });
+
+    event_sender
+        .send((Event::ContractEvent(chip_event), 305))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    let key = FakeSnapshotStorage::identity_key(&player);
+    let account_guard = accounts_map.lock().unwrap();
+    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    assert_eq!(account_snapshot.total_chip_bet, 150);
+    assert!(account_snapshot.strap_bets.is_empty());
+    assert_eq!(account_snapshot.total_chip_won, 0);
+    assert_eq!(account_snapshot.claimed_rewards, None);
+}
+
+#[tokio::test]
 async fn run__place_strap_bet_event__records_strap_bet() {
-    // given
     let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
@@ -376,22 +430,21 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
 
     let strap = Strap::new(2, StrapKind::Gloves, Modifier::Lucky);
+    let player = Identity::Address(Address::from([1u8; 32]));
     let strap_event = ContractEvent::PlaceStrapBet(PlaceStrapBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 3,
-        player: Identity::Address(Address::from([1u8; 32])),
+        player,
         strap: strap.clone(),
         amount: 2,
     });
 
-    // when
     event_sender
         .send((Event::ContractEvent(strap_event), 415))
         .await
         .unwrap();
     app.run().await.unwrap();
 
-    // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.total_bets[3].1.push((strap, 2));
@@ -399,8 +452,45 @@ async fn run__place_strap_bet_event__records_strap_bet() {
 }
 
 #[tokio::test]
+async fn run__place_strap_bet_event__updates_account_snapshot() {
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
+    let accounts_map = snapshot_storage.account_snapshots();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let strap = Strap::new(2, StrapKind::Gloves, Modifier::Lucky);
+    let expected_strap = strap.clone();
+    let player = Identity::Address(Address::from([1u8; 32]));
+    let strap_event = ContractEvent::PlaceStrapBet(PlaceStrapBetEvent {
+        game_id: 0,
+        bet_roll_index: 3,
+        player: player.clone(),
+        strap: strap.clone(),
+        amount: 2,
+    });
+
+    event_sender
+        .send((Event::ContractEvent(strap_event), 415))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    let key = FakeSnapshotStorage::identity_key(&player);
+    let account_guard = accounts_map.lock().unwrap();
+    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    assert_eq!(account_snapshot.total_chip_bet, 0);
+    assert_eq!(account_snapshot.total_chip_won, 0);
+    assert_eq!(account_snapshot.claimed_rewards, None);
+    assert_eq!(account_snapshot.strap_bets, vec![(expected_strap, 2)]);
+}
+
+#[tokio::test]
 async fn run__claim_rewards_event__reduces_pot() {
-    // given
     let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
@@ -422,18 +512,52 @@ async fn run__claim_rewards_event__reduces_pot() {
         total_strap_winnings: vec![],
     });
 
-    // when
     event_sender
         .send((Event::ContractEvent(claim_event), 515))
         .await
         .unwrap();
     app.run().await.unwrap();
 
-    // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.pot_size = 380;
     assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__claim_rewards_event__updates_account_snapshot() {
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
+    let accounts_map = snapshot_storage.account_snapshots();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let player = Identity::Address(Address::from([2u8; 32]));
+    let claim_event = ContractEvent::ClaimRewards(ClaimRewardsEvent {
+        game_id: 0,
+        player: player.clone(),
+        enabled_modifiers: vec![],
+        total_chips_winnings: 120,
+        total_strap_winnings: vec![],
+    });
+
+    event_sender
+        .send((Event::ContractEvent(claim_event), 515))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    let key = FakeSnapshotStorage::identity_key(&player);
+    let account_guard = accounts_map.lock().unwrap();
+    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    assert_eq!(account_snapshot.total_chip_bet, 0);
+    assert!(account_snapshot.strap_bets.is_empty());
+    assert_eq!(account_snapshot.total_chip_won, 120);
+    assert_eq!(account_snapshot.claimed_rewards, Some((120, Vec::new())));
 }
 
 #[tokio::test]

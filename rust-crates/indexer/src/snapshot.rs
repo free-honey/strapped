@@ -52,8 +52,12 @@ impl Default for OverviewSnapshot {
 
 // Used for current game, as well as historical games
 // Historical snapshots can be used to claim rewards for past games
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AccountSnapshot {
-    bets: Vec<(Bet, u32)>,
+    pub total_chip_bet: u64,
+    pub strap_bets: Vec<(Strap, u64)>,
+    pub total_chip_won: u64,
+    pub claimed_rewards: Option<(u64, Vec<(Strap, u64)>)>,
 }
 
 // Historical shapshot that is persisted after current game ends. Updated as each event occurs
