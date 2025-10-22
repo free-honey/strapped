@@ -5,10 +5,10 @@ pub struct OverviewSnapshot {
     pub(crate) game_id: u32,
     pub(crate) rolls: Vec<Roll>,
     pub(crate) pot_size: u64,
-    pub(crate) rewards: Vec<(Roll, Strap)>,
+    pub(crate) rewards: Vec<(Roll, Strap, u64)>,
     pub(crate) total_bets: [(u64, Vec<(Strap, u64)>); 10],
     pub(crate) modifiers_active: [bool; 10],
-    pub(crate) modifier_shop: Vec<(Modifier, Roll)>,
+    pub(crate) modifier_shop: Vec<(Roll, Roll, Modifier, bool)>,
 }
 
 impl OverviewSnapshot {

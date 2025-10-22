@@ -3,7 +3,10 @@
 use super::*;
 use crate::{
     app::query_api::Query,
-    events::Event,
+    events::{
+        ContractEvent,
+        Event,
+    },
     snapshot::AccountSnapshot,
 };
 use anyhow::Result;
@@ -206,5 +209,66 @@ async fn run__roll_event__updates_snapshot() {
         snap
     };
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__new_game_event__resets_overview_snapshot() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let existing_snapshot = OverviewSnapshot {
+        game_id: 1,
+        rolls: vec![Roll::Five],
+        pot_size: 500,
+        rewards: vec![(
+            Roll::Three,
+            Strap::new(1, StrapKind::Hat, Modifier::Lucky),
+            100,
+        )],
+        modifier_shop: vec![(Roll::Two, Roll::Three, Modifier::Burnt, false)],
+        ..OverviewSnapshot::default()
+    };
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 200);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let next_game_id: u32 = 2;
+    let shop_modifier = (Roll::Seven, Roll::Four, Modifier::Groovy);
+    let strap_reward = (
+        Roll::Nine,
+        Strap::new(2, StrapKind::Coat, Modifier::Nothing),
+        150,
+    );
+
+    let new_game_event = ContractEvent::NewGame(NewGameEvent {
+        game_id: next_game_id,
+        new_straps: vec![strap_reward.clone()],
+        new_modifiers: vec![shop_modifier.clone()],
+    });
+    let new_game_height = 210;
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(new_game_event), new_game_height))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = OverviewSnapshot::default();
+    expected.game_id = next_game_id;
+    expected.rewards = vec![strap_reward];
+    expected.modifier_shop = vec![(
+        shop_modifier.0.clone(),
+        shop_modifier.1.clone(),
+        shop_modifier.2.clone(),
+        false,
+    )];
     assert_eq!(expected, actual);
 }

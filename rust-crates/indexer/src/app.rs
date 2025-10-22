@@ -14,7 +14,9 @@ use crate::{
     },
     snapshot::OverviewSnapshot,
 };
+use anyhow::anyhow;
 use generated_abi::strapped_types::{
+    NewGameEvent,
     Roll,
     RollEvent,
 };
@@ -102,6 +104,9 @@ impl<
                     let RollEvent { rolled_value, .. } = roll_event;
                     self.handle_roll_event(rolled_value, height)
                 }
+                ContractEvent::NewGame(event) => {
+                    self.handle_new_game_event(event, height)
+                }
                 _ => {
                     todo!()
                 }
@@ -123,6 +128,27 @@ impl<
         tracing::info!("Handling RollEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.rolls.push(roll);
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_new_game_event(&mut self, event: NewGameEvent, height: u32) -> Result<()> {
+        tracing::info!("Handling NewGameEvent at height {}", height);
+        let game_id: u32 = event
+            .game_id
+            .try_into()
+            .map_err(|_| anyhow!("game id {} overflows u32", event.game_id))?;
+
+        let mut snapshot = OverviewSnapshot::default();
+        snapshot.game_id = game_id;
+        snapshot.rewards = event.new_straps.into_iter().collect();
+        snapshot.modifier_shop = event
+            .new_modifiers
+            .into_iter()
+            .map(|(trigger_roll, modifier_roll, modifier)| {
+                (trigger_roll, modifier_roll, modifier, false)
+            })
+            .collect();
+
         self.snapshots.update_snapshot(&snapshot, height)
     }
 }
