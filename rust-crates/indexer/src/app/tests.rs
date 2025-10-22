@@ -272,3 +272,45 @@ async fn run__new_game_event__resets_overview_snapshot() {
     )];
     assert_eq!(expected, actual);
 }
+
+#[tokio::test]
+async fn run__modifier_triggered_event__activates_modifier() {
+    // given
+    let (event_source, mut event_sender) = FakeEventSource::new_with_sender();
+
+    let existing_snapshot = OverviewSnapshot {
+        game_id: 5,
+        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false)],
+        ..OverviewSnapshot::default()
+    };
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 220);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = FakeMetadataStorage;
+    let query_api = FakeQueryApi;
+    let mut app = App::new(event_source, query_api, snapshot_storage, metadata_storage);
+
+    let modifier_event = ContractEvent::ModifierTriggered(ModifierTriggeredEvent {
+        game_id: existing_snapshot.game_id,
+        roll_index: 1,
+        trigger_roll: Roll::Three,
+        modifier_roll: Roll::Four,
+        modifier: Modifier::Holy,
+    });
+    let event_height = 225;
+
+    // when
+    event_sender
+        .send((Event::ContractEvent(modifier_event), event_height))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.modifiers_active[2] = true;
+    expected.modifier_shop[0].3 = true;
+    assert_eq!(expected, actual);
+}

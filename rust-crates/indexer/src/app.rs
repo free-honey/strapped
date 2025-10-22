@@ -16,6 +16,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use generated_abi::strapped_types::{
+    ModifierTriggeredEvent,
     NewGameEvent,
     Roll,
     RollEvent,
@@ -31,6 +32,23 @@ pub struct App<Events, API, Snapshots, Metadata> {
     api: API,
     snapshots: Snapshots,
     metadata: Metadata,
+}
+
+fn roll_to_index(roll: &Roll) -> Option<usize> {
+    use Roll::*;
+    match roll {
+        Two => Some(0),
+        Three => Some(1),
+        Four => Some(2),
+        Five => Some(3),
+        Six => Some(4),
+        Eight => Some(5),
+        Nine => Some(6),
+        Ten => Some(7),
+        Eleven => Some(8),
+        Twelve => Some(9),
+        Seven => None,
+    }
 }
 
 #[cfg(test)]
@@ -104,6 +122,9 @@ impl<
                     let RollEvent { rolled_value, .. } = roll_event;
                     self.handle_roll_event(rolled_value, height)
                 }
+                ContractEvent::ModifierTriggered(event) => {
+                    self.handle_modifier_triggered_event(event, height)
+                }
                 ContractEvent::NewGame(event) => {
                     self.handle_new_game_event(event, height)
                 }
@@ -128,6 +149,25 @@ impl<
         tracing::info!("Handling RollEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.rolls.push(roll);
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_modifier_triggered_event(
+        &mut self,
+        event: ModifierTriggeredEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling ModifierTriggeredEvent at height {}", height);
+        let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        if let Some(idx) = roll_to_index(&event.modifier_roll) {
+            snapshot.modifiers_active[idx] = true;
+        }
+        for entry in &mut snapshot.modifier_shop {
+            let (_trigger_roll, modifier_roll, modifier, is_active) = entry;
+            if *modifier_roll == event.modifier_roll && *modifier == event.modifier {
+                *is_active = true;
+            }
+        }
         self.snapshots.update_snapshot(&snapshot, height)
     }
 
