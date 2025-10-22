@@ -8,6 +8,10 @@ use crate::{
             SnapshotStorage,
         },
     },
+    events::{
+        ContractEvent,
+        Event,
+    },
     snapshot::Snapshot,
 };
 use std::fs::Metadata;
@@ -53,8 +57,8 @@ impl<
         tokio::select! {
             event = self.events.next_event() => {
                 match event {
-                    Ok(ev) => {
-                        // Handle the event
+                    Ok((ev, height)) => {
+                        self.handle_event(ev, height);
                     }
                     Err(e) => {
                         // Handle the error
@@ -69,6 +73,23 @@ impl<
                     Err(e) => {
                         // Handle the error
                     }
+                }
+            }
+        }
+    }
+
+    fn handle_event(&mut self, event: Event, height: u32) {
+        match event {
+            Event::BlockchainEvent => {}
+            Event::ContractEvent(contract_event) => {
+                match contract_event {
+                    ContractEvent::Initialized(_) => {
+                        tracing::info!("Contract initialized at height {}", height);
+                        let snapshot = Snapshot::new();
+                        // TODO: use actual height
+                        self.snapshots.update_snapshot(&snapshot, height).unwrap();
+                    }
+                    _ => {}
                 }
             }
         }
