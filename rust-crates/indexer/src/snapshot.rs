@@ -1,7 +1,7 @@
 use generated_abi::strapped_types::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Snapshot {
+pub struct OverviewSnapshot {
     pub(crate) game_id: u32,
     pub(crate) rolls: Vec<Roll>,
     pub(crate) pot_size: u64,
@@ -11,13 +11,13 @@ pub struct Snapshot {
     pub(crate) modifier_shop: Vec<(Modifier, Roll)>,
 }
 
-impl Snapshot {
+impl OverviewSnapshot {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl Default for Snapshot {
+impl Default for OverviewSnapshot {
     fn default() -> Self {
         let total_bets: [(u64, Vec<(Strap, u64)>); 10] = [
             (0, Vec::new()),
@@ -31,7 +31,7 @@ impl Default for Snapshot {
             (0, Vec::new()),
             (0, Vec::new()),
         ];
-        Snapshot {
+        OverviewSnapshot {
             // GameId: 0,
             // RollIndex: 0,
             // PotSize: 0,
@@ -50,6 +50,19 @@ impl Default for Snapshot {
     }
 }
 
+// Used for current game, as well as historical games
+// Historical snapshots can be used to claim rewards for past games
 pub struct AccountSnapshot {
-    Bets: Vec<(Bet, u32)>,
+    bets: Vec<(Bet, u32)>,
+}
+
+// Historical shapshot that is persisted after current game ends. Updated as each event occurs
+pub struct HistoricalSnapshot {
+    game_id: u32,
+    rolls: Vec<Roll>,
+    // The roll for which a modifier was activated, and the roll index at which it was activated
+    // This allows the player to see which modifiers are available for their bet straps
+    modifiers_active: Vec<(Roll, u32)>,
+    // TODO: we can add additional interesting data here that isn't necessary, like how much was
+    //   bet, won, lost, etc.
 }

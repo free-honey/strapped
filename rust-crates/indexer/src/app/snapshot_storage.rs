@@ -1,6 +1,7 @@
 use crate::snapshot::{
     AccountSnapshot,
-    Snapshot,
+    HistoricalSnapshot,
+    OverviewSnapshot,
 };
 
 use fuels::{
@@ -10,24 +11,41 @@ use fuels::{
 use generated_abi::strapped_types::Strap;
 
 pub trait SnapshotStorage {
-    fn latest_snapshot(&self) -> crate::Result<(Snapshot, u32)>;
+    /// retrieve latest snapshot along with its block height
+    fn latest_snapshot(&self) -> crate::Result<(OverviewSnapshot, u32)>;
+
+    /// retrieve latest account snapshot along with its block height
     fn latest_account_snapshot(
         &self,
         account: &Identity,
     ) -> crate::Result<(AccountSnapshot, u32)>;
-    fn get_snapshot_at(&self, height: u32) -> crate::Result<Snapshot>;
-    fn get_account_snapshot_at(
-        &self,
-        account: &Identity,
+
+    /// write or overwrite snapshot at given block height
+    fn update_snapshot(
+        &mut self,
+        snapshot: &OverviewSnapshot,
         height: u32,
-    ) -> crate::Result<AccountSnapshot>;
-    fn update_snapshot(&mut self, snapshot: &Snapshot, height: u32) -> crate::Result<()>;
+    ) -> crate::Result<()>;
+
+    /// write or overwrite account snapshot at given block height
     fn update_account_snapshot(
         &mut self,
         account_snapshot: &AccountSnapshot,
         height: u32,
     ) -> crate::Result<()>;
+
+    /// roll back snapshots to given block height (deleting any snapshots above that height)
     fn roll_back_snapshots(&mut self, to_height: u32) -> crate::Result<()>;
+
+    /// retrieve historical snapshot for given game id
+    fn historical_snapshots(&self, game_id: u32) -> crate::Result<HistoricalSnapshot>;
+
+    /// write or overwrite historical snapshot for given game id
+    fn write_historical_snapshot(
+        &mut self,
+        game_id: u32,
+        snapshot: &HistoricalSnapshot,
+    ) -> crate::Result<()>;
 }
 
 pub trait MetadataStorage {

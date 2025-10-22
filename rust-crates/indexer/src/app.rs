@@ -12,7 +12,7 @@ use crate::{
         ContractEvent,
         Event,
     },
-    snapshot::Snapshot,
+    snapshot::OverviewSnapshot,
 };
 use generated_abi::strapped_types::{
     Roll,
@@ -115,7 +115,7 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling InitializedEvent at height {}", height);
-        let snapshot = Snapshot::new();
+        let snapshot = OverviewSnapshot::new();
         self.snapshots.update_snapshot(&snapshot, height)
     }
 

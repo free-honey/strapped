@@ -12,6 +12,7 @@ use fuels::{
     types::Identity,
 };
 
+use crate::snapshot::HistoricalSnapshot;
 use generated_abi::strapped_types::*;
 use std::{
     future::pending,
@@ -43,7 +44,7 @@ impl EventSource for FakeEventSource {
 }
 
 pub struct FakeSnapshotStorage {
-    snapshot: Arc<Mutex<Option<(Snapshot, u32)>>>,
+    snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
 }
 
 impl FakeSnapshotStorage {
@@ -53,19 +54,19 @@ impl FakeSnapshotStorage {
         }
     }
 
-    pub fn new_with_snapshot(snapshot: Snapshot, height: u32) -> Self {
+    pub fn new_with_snapshot(snapshot: OverviewSnapshot, height: u32) -> Self {
         Self {
             snapshot: Arc::new(Mutex::new(Some((snapshot, height)))),
         }
     }
 
-    pub fn snapshot(&self) -> Arc<Mutex<Option<(Snapshot, u32)>>> {
+    pub fn snapshot(&self) -> Arc<Mutex<Option<(OverviewSnapshot, u32)>>> {
         self.snapshot.clone()
     }
 }
 
 impl SnapshotStorage for FakeSnapshotStorage {
-    fn latest_snapshot(&self) -> crate::Result<(Snapshot, u32)> {
+    fn latest_snapshot(&self) -> crate::Result<(OverviewSnapshot, u32)> {
         let guard = self.snapshot.lock().unwrap();
         match &*guard {
             Some(snapshot) => Ok(snapshot.clone()),
@@ -80,19 +81,11 @@ impl SnapshotStorage for FakeSnapshotStorage {
         todo!()
     }
 
-    fn get_snapshot_at(&self, height: u32) -> crate::Result<Snapshot> {
-        todo!()
-    }
-
-    fn get_account_snapshot_at(
-        &self,
-        account: &Identity,
+    fn update_snapshot(
+        &mut self,
+        snapshot: &OverviewSnapshot,
         height: u32,
-    ) -> crate::Result<AccountSnapshot> {
-        todo!()
-    }
-
-    fn update_snapshot(&mut self, snapshot: &Snapshot, height: u32) -> crate::Result<()> {
+    ) -> crate::Result<()> {
         let mut guard = self.snapshot.lock().unwrap();
         *guard = Some((snapshot.clone(), height));
         Ok(())
@@ -107,6 +100,18 @@ impl SnapshotStorage for FakeSnapshotStorage {
     }
 
     fn roll_back_snapshots(&mut self, to_height: u32) -> crate::Result<()> {
+        todo!()
+    }
+
+    fn historical_snapshots(&self, game_id: u32) -> crate::Result<HistoricalSnapshot> {
+        todo!()
+    }
+
+    fn write_historical_snapshot(
+        &mut self,
+        game_id: u32,
+        snapshot: &HistoricalSnapshot,
+    ) -> crate::Result<()> {
         todo!()
     }
 }
@@ -159,10 +164,10 @@ async fn run__initialize_event__creates_first_snapshot() {
 
     // when
     event_sender.send((init_event, init_height)).await.unwrap();
-    app.run().await;
+    app.run().await.unwrap();
 
     // then
-    let expected = Snapshot::new();
+    let expected = OverviewSnapshot::new();
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     assert_eq!(expected, actual);
 }
@@ -175,9 +180,9 @@ async fn run__roll_event__updates_snapshot() {
     let roll_index = 0u32;
     let rolled_value = Roll::Five;
 
-    let existing_snapshot = Snapshot {
+    let existing_snapshot = OverviewSnapshot {
         game_id,
-        ..Snapshot::default()
+        ..OverviewSnapshot::default()
     };
     let snapshot_storage =
         FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 105);
