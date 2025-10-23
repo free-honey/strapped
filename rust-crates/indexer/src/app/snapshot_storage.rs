@@ -1,7 +1,14 @@
-use crate::snapshot::{AccountSnapshot, HistoricalSnapshot, OverviewSnapshot};
+use crate::snapshot::{
+    AccountSnapshot,
+    HistoricalSnapshot,
+    OverviewSnapshot,
+};
 
-use fuels::{prelude::*, types::Identity};
-use generated_abi::strapped_types::Strap;
+use crate::events::Strap;
+use fuels::{
+    prelude::*,
+    types::Identity,
+};
 
 pub trait SnapshotStorage {
     /// retrieve latest snapshot along with its block height

@@ -19,8 +19,22 @@ use fuels::{
     },
 };
 
-use crate::snapshot::HistoricalSnapshot;
-use generated_abi::strapped_types::*;
+use crate::{
+    events::{
+        ClaimRewardsEvent,
+        FundPotEvent,
+        Modifier,
+        ModifierTriggeredEvent,
+        NewGameEvent,
+        PlaceChipBetEvent,
+        PlaceStrapBetEvent,
+        PurchaseModifierEvent,
+        Roll,
+        Strap,
+        StrapKind,
+    },
+    snapshot::HistoricalSnapshot,
+};
 use std::{
     collections::HashMap,
     future::pending,
@@ -31,11 +45,11 @@ use std::{
 };
 
 pub struct FakeEventSource {
-    recv: tokio::sync::mpsc::Receiver<(Event, u32)>,
+    recv: tokio::sync::mpsc::Receiver<(Vec<Event>, u32)>,
 }
 
 impl FakeEventSource {
-    pub fn new_with_sender() -> (Self, tokio::sync::mpsc::Sender<(Event, u32)>) {
+    pub fn new_with_sender() -> (Self, tokio::sync::mpsc::Sender<(Vec<Event>, u32)>) {
         let (send, recv) = tokio::sync::mpsc::channel(10);
         let recv = FakeEventSource { recv };
         (recv, send)
@@ -43,9 +57,9 @@ impl FakeEventSource {
 }
 
 impl EventSource for FakeEventSource {
-    async fn next_event(&mut self) -> Result<(Event, u32)> {
+    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
         match self.recv.recv().await {
-            Some(event) => Ok(event),
+            Some((events, height)) => Ok((events, height)),
             None => Err(anyhow::anyhow!("No more events")),
         }
     }
@@ -183,7 +197,12 @@ fn arb_init_event() -> Event {
     let chip_asset_id = [1u8; 32];
     let roll_frequency = 10;
     let first_height = 100;
-    Event::init_event(vrf_contract_id, chip_asset_id, roll_frequency, first_height)
+    Event::init_event(
+        vrf_contract_id.into(),
+        chip_asset_id.into(),
+        roll_frequency,
+        first_height,
+    )
 }
 
 #[tokio::test]
@@ -207,7 +226,10 @@ async fn run__initialize_event__creates_first_snapshot() {
     let init_height = 100;
 
     // when
-    event_sender.send((init_event, init_height)).await.unwrap();
+    event_sender
+        .send((vec![init_event], init_height))
+        .await
+        .unwrap();
     app.run().await.unwrap();
 
     // then
@@ -246,7 +268,10 @@ async fn run__roll_event__updates_snapshot() {
     let roll_height = 110;
 
     // when
-    event_sender.send((roll_event, roll_height)).await.unwrap();
+    event_sender
+        .send((vec![roll_event], roll_height))
+        .await
+        .unwrap();
     app.run().await.unwrap();
 
     // then
@@ -307,7 +332,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
 
     // when
     event_sender
-        .send((Event::ContractEvent(new_game_event), new_game_height))
+        .send((vec![Event::ContractEvent(new_game_event)], new_game_height))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -361,7 +386,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
 
     // when
     event_sender
-        .send((Event::ContractEvent(modifier_event), event_height))
+        .send((vec![Event::ContractEvent(modifier_event)], event_height))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -405,7 +430,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     });
 
     event_sender
-        .send((Event::ContractEvent(chip_event), 305))
+        .send((vec![Event::ContractEvent(chip_event)], 305))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -445,7 +470,7 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
     });
 
     event_sender
-        .send((Event::ContractEvent(chip_event), 305))
+        .send((vec![Event::ContractEvent(chip_event)], 305))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -492,7 +517,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     });
 
     event_sender
-        .send((Event::ContractEvent(strap_event), 415))
+        .send((vec![Event::ContractEvent(strap_event)], 415))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -533,7 +558,7 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
     });
 
     event_sender
-        .send((Event::ContractEvent(strap_event), 415))
+        .send((vec![Event::ContractEvent(strap_event)], 415))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -577,7 +602,7 @@ async fn run__claim_rewards_event__reduces_pot() {
     });
 
     event_sender
-        .send((Event::ContractEvent(claim_event), 515))
+        .send((vec![Event::ContractEvent(claim_event)], 515))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -616,7 +641,7 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
     });
 
     event_sender
-        .send((Event::ContractEvent(claim_event), 515))
+        .send((vec![Event::ContractEvent(claim_event)], 515))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -659,7 +684,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
         new_modifiers: vec![],
     });
     event_sender
-        .send((Event::ContractEvent(new_game), 100))
+        .send((vec![Event::ContractEvent(new_game)], 100))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -674,7 +699,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
     });
 
     event_sender
-        .send((Event::ContractEvent(claim_event), 520))
+        .send((vec![Event::ContractEvent(claim_event)], 520))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -720,7 +745,7 @@ async fn run__fund_pot_event__increases_pot() {
 
     // when
     event_sender
-        .send((Event::ContractEvent(fund_event), 615))
+        .send((vec![Event::ContractEvent(fund_event)], 615))
         .await
         .unwrap();
     app.run().await.unwrap();
@@ -763,7 +788,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
 
     // when
     event_sender
-        .send((Event::ContractEvent(purchase_event), 715))
+        .send((vec![Event::ContractEvent(purchase_event)], 715))
         .await
         .unwrap();
     app.run().await.unwrap();
