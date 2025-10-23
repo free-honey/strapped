@@ -8,7 +8,6 @@ use fuels::{
     macros::abigen,
     programs::contract::Contract,
     types::{
-        Bytes32,
         ContractId,
         SubAssetId,
     },

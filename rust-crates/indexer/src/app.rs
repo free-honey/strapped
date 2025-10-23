@@ -30,7 +30,6 @@ use fuels::{
     tx::ContractIdExt,
     types::ContractId,
 };
-use generated_abi::strap_to_sub_id;
 use std::cmp;
 
 pub mod fuel_indexer_event_source;

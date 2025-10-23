@@ -2,10 +2,16 @@ use crate::{
     Result,
     app::event_source::EventSource,
     events::{
+        ClaimRewardsEvent,
         ContractEvent,
         Event,
+        FundPotEvent,
         Modifier as AppModifier,
+        ModifierTriggeredEvent,
         NewGameEvent as AppNewGameEvent,
+        PlaceChipBetEvent,
+        PlaceStrapBetEvent,
+        PurchaseModifierEvent,
         Roll as AppRoll,
         Strap as AppStrap,
         StrapKind as AppStrapKind,
@@ -36,28 +42,24 @@ use fuel_indexer::{
     try_parse_events,
 };
 use fuels::{
-    core::{
-        codec::{
-            DecoderConfig,
-            Log,
-        },
-        traits::Tokenizable,
-    },
+    core::codec::DecoderConfig,
     prelude::{
-        AssetConfig,
         AssetId,
         ContractId,
-        DbType,
-        NodeConfig,
         Receipt,
-        WalletsConfig,
     },
-    types::Token,
+    types::Identity,
 };
 use generated_abi::strapped_types::{
+    ClaimRewardsEvent as AbiClaimRewardsEvent,
+    FundPotEvent as AbiFundPotEvent,
     InitializedEvent,
     Modifier as AbiModifier,
+    ModifierTriggeredEvent as AbiModifierTriggeredEvent,
     NewGameEvent as AbiNewGameEvent,
+    PlaceChipBetEvent as AbiPlaceChipBetEvent,
+    PlaceStrapBetEvent as AbiPlaceStrapBetEvent,
+    PurchaseModifierEvent as AbiPurchaseModifierEvent,
     Roll as AbiRoll,
     RollEvent as AbiRollEvent,
     Strap as AbiStrap,
@@ -66,11 +68,14 @@ use generated_abi::strapped_types::{
 use std::convert::TryFrom;
 use tokio_stream::StreamExt;
 
+#[cfg(test)]
+mod tests;
+
 pub struct FuelIndexerEventSource<Fn>
 where
     Fn: FnOnce(DecoderConfig, &Receipt) -> Option<Event> + Copy + Send + Sync + 'static,
 {
-    service: ServiceRunner<
+    _service: ServiceRunner<
         Task<
             SimplerProcessorAdapter<FnReceiptParser<Fn>>,
             fuel_receipts_manager::rocksdb::Storage,
@@ -124,7 +129,10 @@ where
         )?;
         service.start_and_await().await?;
         let stream = service.shared.events_starting_from(0u32.into()).await?;
-        let new = Self { service, stream };
+        let new = Self {
+            _service: service,
+            stream,
+        };
         Ok(new)
     }
 }
@@ -194,6 +202,10 @@ fn map_strap(strap: AbiStrap) -> AppStrap {
     )
 }
 
+fn map_identity(identity: Identity) -> Identity {
+    identity
+}
+
 fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> {
     try_parse_events!(
         [decoder, receipt]
@@ -236,369 +248,72 @@ fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> 
                 new_modifiers,
             };
             Some(Event::ContractEvent(ContractEvent::NewGame(inner)))
+        },
+        AbiModifierTriggeredEvent => |event| {
+            let inner = ModifierTriggeredEvent {
+                game_id: u32::try_from(event.game_id).ok()?,
+                roll_index: u32::try_from(event.roll_index).ok()?,
+                trigger_roll: map_roll(event.trigger_roll),
+                modifier_roll: map_roll(event.modifier_roll),
+                modifier: map_modifier(event.modifier),
+            };
+            Some(Event::ContractEvent(ContractEvent::ModifierTriggered(inner)))
+        },
+        AbiPlaceChipBetEvent => |event| {
+            let inner = PlaceChipBetEvent {
+                game_id: u32::try_from(event.game_id).ok()?,
+                bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,
+                player: map_identity(event.player),
+                roll: map_roll(event.roll),
+                amount: event.amount,
+            };
+            Some(Event::ContractEvent(ContractEvent::PlaceChipBet(inner)))
+        },
+        AbiPlaceStrapBetEvent => |event| {
+            let inner = PlaceStrapBetEvent {
+                game_id: u32::try_from(event.game_id).ok()?,
+                bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,
+                player: map_identity(event.player),
+                strap: map_strap(event.strap),
+                amount: event.amount,
+            };
+            Some(Event::ContractEvent(ContractEvent::PlaceStrapBet(inner)))
+        },
+        AbiClaimRewardsEvent => |event| {
+            let enabled_modifiers = event
+                .enabled_modifiers
+                .into_iter()
+                .map(|(roll, modifier)| (map_roll(roll), map_modifier(modifier)))
+                .collect::<Vec<_>>();
+            let total_strap_winnings = event
+                .total_strap_winnings
+                .into_iter()
+                .map(|(strap, amount)| (map_strap(strap), amount))
+                .collect::<Vec<_>>();
+            let inner = ClaimRewardsEvent {
+                game_id: u32::try_from(event.game_id).ok()?,
+                player: map_identity(event.player),
+                enabled_modifiers,
+                total_chips_winnings: event.total_chips_winnings,
+                total_strap_winnings,
+            };
+            Some(Event::ContractEvent(ContractEvent::ClaimRewards(inner)))
+        },
+        AbiFundPotEvent => |event| {
+            let inner = FundPotEvent {
+                chips_amount: event.chips_amount,
+                funder: map_identity(event.funder),
+            };
+            Some(Event::ContractEvent(ContractEvent::FundPot(inner)))
+        },
+        AbiPurchaseModifierEvent => |event| {
+            let inner = PurchaseModifierEvent {
+                expected_roll: map_roll(event.expected_roll),
+                expected_modifier: map_modifier(event.expected_modifier),
+                purchaser: map_identity(event.purchaser),
+            };
+            Some(Event::ContractEvent(ContractEvent::PurchaseModifier(inner)))
         }
 
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        app::init_tracing,
-        events::{
-            ContractEvent,
-            Modifier,
-            NewGameEvent,
-            Roll,
-            Strap,
-            StrapKind,
-        },
-    };
-    use fuels::{
-        prelude::{
-            AssetConfig,
-            AssetId,
-            Contract,
-            LoadConfiguration,
-            TxPolicies,
-            WalletsConfig,
-            launch_custom_provider_and_get_wallets,
-        },
-        programs::calls::Execution,
-        types::Bits256,
-    };
-    use generated_abi::{
-        get_contract_instance,
-        vrf_types::FakeVRFContract,
-    };
-    use url::Url;
-
-    #[tokio::test]
-    async fn next_event_batch__can_get_init_event() {
-        init_tracing();
-
-        let chip_asset_id = AssetId::new([1u8; 32]);
-        let base_assets = vec![
-            AssetConfig {
-                id: AssetId::zeroed(),
-                num_coins: 1,
-                coin_amount: 10_000_000_000,
-            },
-            AssetConfig {
-                id: chip_asset_id,
-                num_coins: 1,
-                coin_amount: 10_000_000_000,
-            },
-        ];
-        let temp_dir = tempdir::TempDir::new("database")
-            .unwrap()
-            .path()
-            .to_path_buf();
-
-        let database_config = DatabaseConfig {
-            cache_capacity: None,
-            max_fds: 512,
-            columns_policy: ColumnsPolicy::Lazy,
-        };
-        let mut wallets = launch_custom_provider_and_get_wallets(
-            WalletsConfig::new_multiple_assets(1, base_assets),
-            None,
-            None,
-        )
-        .await
-        .expect("failed to launch local provider");
-        let wallet = wallets.pop().unwrap();
-
-        let (contract_instance, _contract_id) =
-            get_contract_instance(wallet.clone()).await;
-        let address = wallet.provider().url();
-        let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
-            0u32.into(),
-            Url::parse(address).unwrap(),
-        );
-
-        let mut event_source = FuelIndexerEventSource::new(
-            parse_event_logs,
-            temp_dir,
-            database_config,
-            indexer_config,
-        )
-        .await
-        .unwrap();
-
-        // given
-        let fake_vrf_contract_id = [5; 32];
-
-        // when
-        contract_instance
-            .methods()
-            .initialize(Bits256(fake_vrf_contract_id), chip_asset_id.clone(), 100)
-            .call()
-            .await
-            .unwrap();
-
-        // then
-        let _should_be_empty_first_block = event_source.next_event_batch().await.unwrap();
-        let _checkpoint = event_source.next_event_batch().await.unwrap();
-        let (events, _) = event_source.next_event_batch().await.unwrap();
-        let actual = events.first().unwrap();
-        let expected =
-            Event::init_event(fake_vrf_contract_id.into(), chip_asset_id, 100, 2);
-
-        assert_eq!(actual, &expected);
-    }
-
-    #[tokio::test]
-    async fn next_event_batch__can_get_roll_event() {
-        init_tracing();
-
-        let chip_asset_id = AssetId::new([1u8; 32]);
-        let base_assets = vec![
-            AssetConfig {
-                id: AssetId::zeroed(),
-                num_coins: 1,
-                coin_amount: 10_000_000_000,
-            },
-            AssetConfig {
-                id: chip_asset_id,
-                num_coins: 1,
-                coin_amount: 10_000_000_000,
-            },
-        ];
-        let temp_dir = tempdir::TempDir::new("database")
-            .unwrap()
-            .path()
-            .to_path_buf();
-
-        let database_config = DatabaseConfig {
-            cache_capacity: None,
-            max_fds: 512,
-            columns_policy: ColumnsPolicy::Lazy,
-        };
-        let mut wallets = launch_custom_provider_and_get_wallets(
-            WalletsConfig::new_multiple_assets(1, base_assets),
-            None,
-            None,
-        )
-        .await
-        .expect("failed to launch local provider");
-        let wallet = wallets.pop().unwrap();
-
-        let (contract_instance, _) = get_contract_instance(wallet.clone()).await;
-
-        let vrf_bin_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-            "../../sway-projects/fake-vrf-contract/out/release/fake-vrf-contract.bin",
-        );
-        let vrf_contract =
-            Contract::load_from(vrf_bin_path, LoadConfiguration::default())
-                .expect("failed to load fake vrf contract");
-        let deployment = vrf_contract
-            .deploy(&wallet, TxPolicies::default())
-            .await
-            .expect("failed to deploy fake vrf contract");
-        let vrf_contract_id = deployment.contract_id.clone();
-        let vrf_instance = FakeVRFContract::new(vrf_contract_id.clone(), wallet.clone());
-
-        let address = wallet.provider().url();
-        let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
-            0u32.into(),
-            Url::parse(address).unwrap(),
-        );
-
-        let mut event_source = FuelIndexerEventSource::new(
-            parse_event_logs,
-            temp_dir,
-            database_config,
-            indexer_config,
-        )
-        .await
-        .unwrap();
-
-        contract_instance
-            .methods()
-            .initialize(Bits256(*vrf_contract_id), chip_asset_id.clone(), 1)
-            .call()
-            .await
-            .unwrap();
-
-        let provider = wallet.provider();
-        let next_roll_height = contract_instance
-            .methods()
-            .next_roll_height()
-            .simulate(Execution::state_read_only())
-            .await
-            .unwrap()
-            .value
-            .expect("expected next roll height");
-        let current_height = provider
-            .latest_block_height()
-            .await
-            .expect("failed to read current block height");
-        if next_roll_height > current_height {
-            provider
-                .produce_blocks(next_roll_height - current_height, None)
-                .await
-                .expect("failed to advance blocks");
-        }
-
-        let vrf_number = 0u64;
-        vrf_instance
-            .methods()
-            .set_number(vrf_number)
-            .call()
-            .await
-            .unwrap();
-
-        contract_instance
-            .methods()
-            .roll_dice()
-            .with_contracts(&[&vrf_instance])
-            .call()
-            .await
-            .unwrap();
-
-        let mut actual_event = None;
-        for _ in 0..10 {
-            let (events, _) = event_source.next_event_batch().await.unwrap();
-            if let Some(event) = events.into_iter().find(|event| {
-                matches!(event, Event::ContractEvent(ContractEvent::Roll(_)))
-            }) {
-                actual_event = Some(event);
-                break;
-            }
-        }
-
-        let actual_event = actual_event.expect("expected to receive roll event");
-        let expected = Event::roll_event(0, 1, crate::events::Roll::Two);
-        assert_eq!(actual_event, expected);
-    }
-
-    #[tokio::test]
-    async fn next_event_batch__can_get_new_game_event() {
-        init_tracing();
-
-        let chip_asset_id = AssetId::new([1u8; 32]);
-        let base_assets = vec![
-            AssetConfig {
-                id: AssetId::zeroed(),
-                num_coins: 1,
-                coin_amount: 10_000_000_000,
-            },
-            AssetConfig {
-                id: chip_asset_id,
-                num_coins: 1,
-                coin_amount: 10_000_000_000,
-            },
-        ];
-        let temp_dir = tempdir::TempDir::new("database")
-            .unwrap()
-            .path()
-            .to_path_buf();
-
-        let database_config = DatabaseConfig {
-            cache_capacity: None,
-            max_fds: 512,
-            columns_policy: ColumnsPolicy::Lazy,
-        };
-        let mut wallets = launch_custom_provider_and_get_wallets(
-            WalletsConfig::new_multiple_assets(1, base_assets),
-            None,
-            None,
-        )
-        .await
-        .expect("failed to launch local provider");
-        let wallet = wallets.pop().unwrap();
-
-        let (contract_instance, _) = get_contract_instance(wallet.clone()).await;
-
-        let vrf_bin_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-            "../../sway-projects/fake-vrf-contract/out/release/fake-vrf-contract.bin",
-        );
-        let vrf_contract =
-            Contract::load_from(vrf_bin_path, LoadConfiguration::default())
-                .expect("failed to load fake vrf contract");
-        let deployment = vrf_contract
-            .deploy(&wallet, TxPolicies::default())
-            .await
-            .expect("failed to deploy fake vrf contract");
-        let vrf_contract_id = deployment.contract_id.clone();
-        let vrf_instance = FakeVRFContract::new(vrf_contract_id.clone(), wallet.clone());
-
-        let address = wallet.provider().url();
-        let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
-            0u32.into(),
-            Url::parse(address).unwrap(),
-        );
-
-        let mut event_source = FuelIndexerEventSource::new(
-            parse_event_logs,
-            temp_dir,
-            database_config,
-            indexer_config,
-        )
-        .await
-        .unwrap();
-
-        let seven_vrf_number = 15u64;
-
-        contract_instance
-            .methods()
-            .initialize(Bits256(*vrf_contract_id), chip_asset_id.clone(), 1)
-            .call()
-            .await
-            .unwrap();
-
-        let provider = wallet.provider();
-        let next_roll_height = contract_instance
-            .methods()
-            .next_roll_height()
-            .simulate(Execution::state_read_only())
-            .await
-            .unwrap()
-            .value
-            .expect("expected next roll height");
-        let current_height = provider
-            .latest_block_height()
-            .await
-            .expect("failed to read current block height");
-        if next_roll_height > current_height {
-            provider
-                .produce_blocks(next_roll_height - current_height, None)
-                .await
-                .expect("failed to advance blocks");
-        }
-
-        vrf_instance
-            .methods()
-            .set_number(seven_vrf_number)
-            .call()
-            .await
-            .unwrap();
-
-        contract_instance
-            .methods()
-            .roll_dice()
-            .with_contracts(&[&vrf_instance])
-            .call()
-            .await
-            .unwrap();
-
-        let mut actual_new_game = None;
-        for _ in 0..10 {
-            let (events, _) = event_source.next_event_batch().await.unwrap();
-            for event in events {
-                if let Event::ContractEvent(ContractEvent::NewGame(inner)) = event {
-                    actual_new_game = Some(inner);
-                    break;
-                }
-            }
-            if actual_new_game.is_some() {
-                break;
-            }
-        }
-        if actual_new_game.is_none() {
-            panic!("expected to receive new game event");
-        }
-    }
 }
