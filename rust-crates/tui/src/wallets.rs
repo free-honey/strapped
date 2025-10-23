@@ -1,14 +1,24 @@
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{
+    Result,
+    WrapErr,
+    eyre,
+};
 use eth_keystore::decrypt_key;
 use fuels::{
     accounts::wallet::DEFAULT_DERIVATION_PATH_PREFIX,
     crypto::SecretKey,
-    prelude::{Provider, WalletUnlocked},
+    prelude::{
+        Provider,
+        WalletUnlocked,
+    },
 };
 use rpassword::prompt_password;
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 #[derive(Clone, Debug)]

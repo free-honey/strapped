@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
-use generated_abi::{get_contract_instance, test_helpers::*};
+use generated_abi::{
+    get_contract_instance,
+    test_helpers::*,
+};
 
 #[tokio::test]
 async fn can_get_contract_id() {

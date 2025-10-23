@@ -1,11 +1,24 @@
 use chrono::Utc;
-use color_eyre::eyre::{Result, WrapErr};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use color_eyre::eyre::{
+    Result,
+    WrapErr,
+};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use sha2::{
+    Digest,
+    Sha256,
+};
 use std::{
-    fmt, fs,
+    fmt,
+    fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 pub const DEPLOYMENTS_ROOT: &str = ".deployments";

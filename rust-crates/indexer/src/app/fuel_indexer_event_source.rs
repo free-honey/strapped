@@ -1,7 +1,10 @@
 use crate::{
     Result,
     app::event_source::EventSource,
-    events::Event,
+    events::{
+        Event,
+        Roll as AppRoll,
+    },
 };
 use anyhow::anyhow;
 use fuel_core::{
@@ -46,7 +49,12 @@ use fuels::{
     },
     types::Token,
 };
-use generated_abi::strapped_types::InitializedEvent;
+use generated_abi::strapped_types::{
+    InitializedEvent,
+    Roll as AbiRoll,
+    RollEvent as AbiRollEvent,
+};
+use std::convert::TryFrom;
 use tokio_stream::StreamExt;
 
 pub struct FuelIndexerEventSource<Fn>
@@ -65,84 +73,6 @@ where
 
 impl StorableEvent for Event {}
 
-// use fuel_core::{
-//     service::{
-//         Config,
-//         FuelService,
-//         ServiceTrait,
-//     },
-//     state::rocks_db::{
-//         ColumnsPolicy,
-//         DatabaseConfig,
-//     },
-// };
-// use fuel_indexer::{
-//     fuel_events_manager::port::StorableEvent,
-//     indexer::IndexerConfig,
-//     try_parse_events,
-// };
-// use fuels::{
-//     core::codec::DecoderConfig,
-//     tx::Receipt,
-// };
-// use url::Url;
-//
-// #[tokio::test]
-// async fn defining_logs_indexer() {
-//     fuels::prelude::abigen!(Contract(
-//         name = "OrderBook",
-//         abi = "crates/indexer/processors/receipt_parser/order-book-abi.json"
-//     ));
-//
-//     #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-//     enum Event {
-//         Created { timestamp: u64 },
-//         Matched { timestamp: u64 },
-//     }
-//
-//     impl StorableEvent for Event {}
-//
-//     fn parse_o2_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> {
-//         try_parse_events!(
-//             [decoder, receipt]
-//             OrderCreatedEvent => |event| {
-//                 Some(Event::Created {
-//                     timestamp: event.timestamp.unix,
-//                 })
-//             },
-//             OrderMatchedEvent => |event| {
-//                 Some(Event::Matched{
-//                     timestamp: event.timestamp.unix,
-//                 })
-//             }
-//         )
-//     }
-//
-//     let node = FuelService::new_node(Config::local_node()).await.unwrap();
-//     let url = Url::parse(format!("http://{}", node.bound_address).as_str()).unwrap();
-//     let temp_dir = tempdir::TempDir::new("database").unwrap();
-//     let database_config = DatabaseConfig {
-//         cache_capacity: None,
-//         max_fds: 512,
-//         columns_policy: ColumnsPolicy::Lazy,
-//     };
-//
-//     // Given
-//     let indexer = fuel_indexer::indexer::new_logs_indexer(
-//         parse_o2_logs,
-//         temp_dir.path().to_path_buf(),
-//         database_config,
-//         IndexerConfig::new(0u32.into(), url),
-//     )
-//     .unwrap();
-//     indexer.start_and_await().await.unwrap();
-//
-//     // When
-//     let result = indexer.shared.events_starting_from(0u32.into()).await;
-//
-//     // Then
-//     assert!(result.is_ok());
-// }
 impl<Fn> EventSource for FuelIndexerEventSource<Fn>
 where
     Fn: FnOnce(DecoderConfig, &Receipt) -> Option<Event> + Copy + Send + Sync + 'static,
@@ -190,6 +120,22 @@ where
     }
 }
 
+fn map_roll(roll: AbiRoll) -> AppRoll {
+    match roll {
+        AbiRoll::Two => AppRoll::Two,
+        AbiRoll::Three => AppRoll::Three,
+        AbiRoll::Four => AppRoll::Four,
+        AbiRoll::Five => AppRoll::Five,
+        AbiRoll::Six => AppRoll::Six,
+        AbiRoll::Seven => AppRoll::Seven,
+        AbiRoll::Eight => AppRoll::Eight,
+        AbiRoll::Nine => AppRoll::Nine,
+        AbiRoll::Ten => AppRoll::Ten,
+        AbiRoll::Eleven => AppRoll::Eleven,
+        AbiRoll::Twelve => AppRoll::Twelve,
+    }
+}
+
 fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> {
     try_parse_events!(
         [decoder, receipt]
@@ -202,6 +148,12 @@ fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> 
                 event.first_height,
             );
             Some(inner)
+        },
+        AbiRollEvent => |event| {
+            let game_id = u32::try_from(event.game_id).ok()?;
+            let roll_index = u32::try_from(event.roll_index).ok()?;
+            let rolled_value = map_roll(event.rolled_value);
+            Some(Event::roll_event(game_id, roll_index, rolled_value))
         }
 
     )
@@ -218,19 +170,23 @@ mod tests {
         prelude::{
             AssetConfig,
             AssetId,
-            ContractId,
-            DbType,
-            NodeConfig,
+            Contract,
+            LoadConfiguration,
+            TxPolicies,
             WalletsConfig,
             launch_custom_provider_and_get_wallets,
         },
+        programs::calls::Execution,
         types::Bits256,
     };
-    use generated_abi::get_contract_instance;
+    use generated_abi::{
+        get_contract_instance,
+        vrf_types::FakeVRFContract,
+    };
     use url::Url;
 
     #[tokio::test]
-    async fn next_event__can_get_init_event() {
+    async fn next_event_batch__can_get_init_event() {
         init_tracing();
 
         let chip_asset_id = AssetId::new([1u8; 32]);
@@ -265,7 +221,7 @@ mod tests {
         .expect("failed to launch local provider");
         let wallet = wallets.pop().unwrap();
 
-        let (contract_instance, contract_id) =
+        let (contract_instance, _contract_id) =
             get_contract_instance(wallet.clone()).await;
         let address = wallet.provider().url();
         let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
@@ -283,12 +239,9 @@ mod tests {
         .unwrap();
 
         // given
-        // a fuel indexer event source, and
-        // a node with contract deployed
         let fake_vrf_contract_id = [5; 32];
 
         // when
-        // call the init contract method
         contract_instance
             .methods()
             .initialize(Bits256(fake_vrf_contract_id), chip_asset_id.clone(), 100)
@@ -297,7 +250,6 @@ mod tests {
             .unwrap();
 
         // then
-        // received an init event
         let _should_be_empty_first_block = event_source.next_event_batch().await.unwrap();
         let _checkpoint = event_source.next_event_batch().await.unwrap();
         let (events, _) = event_source.next_event_batch().await.unwrap();
@@ -306,5 +258,130 @@ mod tests {
             Event::init_event(fake_vrf_contract_id.into(), chip_asset_id, 100, 2);
 
         assert_eq!(actual, &expected);
+    }
+
+    #[tokio::test]
+    async fn next_event_batch__can_get_roll_event() {
+        init_tracing();
+
+        let chip_asset_id = AssetId::new([1u8; 32]);
+        let base_assets = vec![
+            AssetConfig {
+                id: AssetId::zeroed(),
+                num_coins: 1,
+                coin_amount: 10_000_000_000,
+            },
+            AssetConfig {
+                id: chip_asset_id,
+                num_coins: 1,
+                coin_amount: 10_000_000_000,
+            },
+        ];
+        let temp_dir = tempdir::TempDir::new("database")
+            .unwrap()
+            .path()
+            .to_path_buf();
+
+        let database_config = DatabaseConfig {
+            cache_capacity: None,
+            max_fds: 512,
+            columns_policy: ColumnsPolicy::Lazy,
+        };
+        let mut wallets = launch_custom_provider_and_get_wallets(
+            WalletsConfig::new_multiple_assets(1, base_assets),
+            None,
+            None,
+        )
+        .await
+        .expect("failed to launch local provider");
+        let wallet = wallets.pop().unwrap();
+
+        let (contract_instance, _) = get_contract_instance(wallet.clone()).await;
+
+        let vrf_bin_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../sway-projects/fake-vrf-contract/out/release/fake-vrf-contract.bin",
+        );
+        let vrf_contract =
+            Contract::load_from(vrf_bin_path, LoadConfiguration::default())
+                .expect("failed to load fake vrf contract");
+        let deployment = vrf_contract
+            .deploy(&wallet, TxPolicies::default())
+            .await
+            .expect("failed to deploy fake vrf contract");
+        let vrf_contract_id = deployment.contract_id.clone();
+        let vrf_instance = FakeVRFContract::new(vrf_contract_id.clone(), wallet.clone());
+
+        let address = wallet.provider().url();
+        let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
+            0u32.into(),
+            Url::parse(address).unwrap(),
+        );
+
+        let mut event_source = FuelIndexerEventSource::new(
+            parse_event_logs,
+            temp_dir,
+            database_config,
+            indexer_config,
+        )
+        .await
+        .unwrap();
+
+        contract_instance
+            .methods()
+            .initialize(Bits256(*vrf_contract_id), chip_asset_id.clone(), 1)
+            .call()
+            .await
+            .unwrap();
+
+        let provider = wallet.provider();
+        let next_roll_height = contract_instance
+            .methods()
+            .next_roll_height()
+            .simulate(Execution::state_read_only())
+            .await
+            .unwrap()
+            .value
+            .expect("expected next roll height");
+        let current_height = provider
+            .latest_block_height()
+            .await
+            .expect("failed to read current block height");
+        if next_roll_height > current_height {
+            provider
+                .produce_blocks(next_roll_height - current_height, None)
+                .await
+                .expect("failed to advance blocks");
+        }
+
+        let vrf_number = 0u64;
+        vrf_instance
+            .methods()
+            .set_number(vrf_number)
+            .call()
+            .await
+            .unwrap();
+
+        contract_instance
+            .methods()
+            .roll_dice()
+            .with_contracts(&[&vrf_instance])
+            .call()
+            .await
+            .unwrap();
+
+        let mut actual_event = None;
+        for _ in 0..10 {
+            let (events, _) = event_source.next_event_batch().await.unwrap();
+            if let Some(event) = events.into_iter().find(|event| {
+                matches!(event, Event::ContractEvent(ContractEvent::Roll(_)))
+            }) {
+                actual_event = Some(event);
+                break;
+            }
+        }
+
+        let actual_event = actual_event.expect("expected to receive roll event");
+        let expected = Event::roll_event(0, 1, crate::events::Roll::Two);
+        assert_eq!(actual_event, expected);
     }
 }
