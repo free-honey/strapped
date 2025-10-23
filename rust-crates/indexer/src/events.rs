@@ -251,3 +251,49 @@ impl Event {
         Event::ContractEvent(ContractEvent::Roll(inner))
     }
 }
+
+impl From<generated_abi::strapped_types::Strap> for Strap {
+    fn from(value: generated_abi::strapped_types::Strap) -> Self {
+        let generated_abi::strapped_types::Strap {
+            level,
+            kind,
+            modifier,
+        } = value;
+        let kind = match kind {
+            generated_abi::strapped_types::StrapKind::Shirt => StrapKind::Shirt,
+            generated_abi::strapped_types::StrapKind::Pants => StrapKind::Pants,
+            generated_abi::strapped_types::StrapKind::Shoes => StrapKind::Shoes,
+            generated_abi::strapped_types::StrapKind::Dress => StrapKind::Dress,
+            generated_abi::strapped_types::StrapKind::Hat => StrapKind::Hat,
+            generated_abi::strapped_types::StrapKind::Glasses => StrapKind::Glasses,
+            generated_abi::strapped_types::StrapKind::Watch => StrapKind::Watch,
+            generated_abi::strapped_types::StrapKind::Ring => StrapKind::Ring,
+            generated_abi::strapped_types::StrapKind::Necklace => StrapKind::Necklace,
+            generated_abi::strapped_types::StrapKind::Earring => StrapKind::Earring,
+            generated_abi::strapped_types::StrapKind::Bracelet => StrapKind::Bracelet,
+            generated_abi::strapped_types::StrapKind::Tattoo => StrapKind::Tattoo,
+            generated_abi::strapped_types::StrapKind::Skirt => StrapKind::Skirt,
+            generated_abi::strapped_types::StrapKind::Piercing => StrapKind::Piercing,
+            generated_abi::strapped_types::StrapKind::Coat => StrapKind::Coat,
+            generated_abi::strapped_types::StrapKind::Scarf => StrapKind::Scarf,
+            generated_abi::strapped_types::StrapKind::Gloves => StrapKind::Gloves,
+            generated_abi::strapped_types::StrapKind::Gown => StrapKind::Gown,
+            generated_abi::strapped_types::StrapKind::Belt => StrapKind::Belt,
+        };
+        let modifier = match modifier {
+            generated_abi::strapped_types::Modifier::Nothing => Modifier::Nothing,
+            generated_abi::strapped_types::Modifier::Burnt => Modifier::Burnt,
+            generated_abi::strapped_types::Modifier::Lucky => Modifier::Lucky,
+            generated_abi::strapped_types::Modifier::Holy => Modifier::Holy,
+            generated_abi::strapped_types::Modifier::Holey => Modifier::Holey,
+            generated_abi::strapped_types::Modifier::Scotch => Modifier::Scotch,
+            generated_abi::strapped_types::Modifier::Soaked => Modifier::Soaked,
+            generated_abi::strapped_types::Modifier::Moldy => Modifier::Moldy,
+            generated_abi::strapped_types::Modifier::Starched => Modifier::Starched,
+            generated_abi::strapped_types::Modifier::Evil => Modifier::Evil,
+            generated_abi::strapped_types::Modifier::Groovy => Modifier::Groovy,
+            generated_abi::strapped_types::Modifier::Delicate => Modifier::Delicate,
+        };
+        Strap::new(level, kind, modifier)
+    }
+}

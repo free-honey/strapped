@@ -130,3 +130,27 @@ pub fn strap_to_sub_id(strap: &strapped_types::Strap) -> SubAssetId {
     sub_id[2] = modifier_bytes;
     SubAssetId::from(sub_id)
 }
+
+pub fn strap_cost(strap: &crate::strapped_types::Strap) -> u64 {
+    match strap.kind {
+        crate::strapped_types::StrapKind::Shirt => 10,
+        crate::strapped_types::StrapKind::Pants => 10,
+        crate::strapped_types::StrapKind::Shoes => 10,
+        crate::strapped_types::StrapKind::Dress => 10,
+        crate::strapped_types::StrapKind::Hat => 20,
+        crate::strapped_types::StrapKind::Glasses => 20,
+        crate::strapped_types::StrapKind::Watch => 20,
+        crate::strapped_types::StrapKind::Ring => 20,
+        crate::strapped_types::StrapKind::Necklace => 50,
+        crate::strapped_types::StrapKind::Earring => 50,
+        crate::strapped_types::StrapKind::Bracelet => 50,
+        crate::strapped_types::StrapKind::Tattoo => 50,
+        crate::strapped_types::StrapKind::Skirt => 50,
+        crate::strapped_types::StrapKind::Piercing => 50,
+        crate::strapped_types::StrapKind::Coat => 100,
+        crate::strapped_types::StrapKind::Scarf => 100,
+        crate::strapped_types::StrapKind::Gloves => 100,
+        crate::strapped_types::StrapKind::Gown => 100,
+        crate::strapped_types::StrapKind::Belt => 200,
+    }
+}

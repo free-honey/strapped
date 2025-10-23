@@ -2,8 +2,13 @@ use crate::{
     Result,
     app::event_source::EventSource,
     events::{
+        ContractEvent,
         Event,
+        Modifier as AppModifier,
+        NewGameEvent as AppNewGameEvent,
         Roll as AppRoll,
+        Strap as AppStrap,
+        StrapKind as AppStrapKind,
     },
 };
 use anyhow::anyhow;
@@ -51,8 +56,12 @@ use fuels::{
 };
 use generated_abi::strapped_types::{
     InitializedEvent,
+    Modifier as AbiModifier,
+    NewGameEvent as AbiNewGameEvent,
     Roll as AbiRoll,
     RollEvent as AbiRollEvent,
+    Strap as AbiStrap,
+    StrapKind as AbiStrapKind,
 };
 use std::convert::TryFrom;
 use tokio_stream::StreamExt;
@@ -136,11 +145,59 @@ fn map_roll(roll: AbiRoll) -> AppRoll {
     }
 }
 
+fn map_modifier(modifier: AbiModifier) -> AppModifier {
+    match modifier {
+        AbiModifier::Nothing => AppModifier::Nothing,
+        AbiModifier::Burnt => AppModifier::Burnt,
+        AbiModifier::Lucky => AppModifier::Lucky,
+        AbiModifier::Holy => AppModifier::Holy,
+        AbiModifier::Holey => AppModifier::Holey,
+        AbiModifier::Scotch => AppModifier::Scotch,
+        AbiModifier::Soaked => AppModifier::Soaked,
+        AbiModifier::Moldy => AppModifier::Moldy,
+        AbiModifier::Starched => AppModifier::Starched,
+        AbiModifier::Evil => AppModifier::Evil,
+        AbiModifier::Groovy => AppModifier::Groovy,
+        AbiModifier::Delicate => AppModifier::Delicate,
+    }
+}
+
+fn map_strap_kind(kind: AbiStrapKind) -> AppStrapKind {
+    match kind {
+        AbiStrapKind::Shirt => AppStrapKind::Shirt,
+        AbiStrapKind::Pants => AppStrapKind::Pants,
+        AbiStrapKind::Shoes => AppStrapKind::Shoes,
+        AbiStrapKind::Dress => AppStrapKind::Dress,
+        AbiStrapKind::Hat => AppStrapKind::Hat,
+        AbiStrapKind::Glasses => AppStrapKind::Glasses,
+        AbiStrapKind::Watch => AppStrapKind::Watch,
+        AbiStrapKind::Ring => AppStrapKind::Ring,
+        AbiStrapKind::Necklace => AppStrapKind::Necklace,
+        AbiStrapKind::Earring => AppStrapKind::Earring,
+        AbiStrapKind::Bracelet => AppStrapKind::Bracelet,
+        AbiStrapKind::Tattoo => AppStrapKind::Tattoo,
+        AbiStrapKind::Skirt => AppStrapKind::Skirt,
+        AbiStrapKind::Piercing => AppStrapKind::Piercing,
+        AbiStrapKind::Coat => AppStrapKind::Coat,
+        AbiStrapKind::Scarf => AppStrapKind::Scarf,
+        AbiStrapKind::Gloves => AppStrapKind::Gloves,
+        AbiStrapKind::Gown => AppStrapKind::Gown,
+        AbiStrapKind::Belt => AppStrapKind::Belt,
+    }
+}
+
+fn map_strap(strap: AbiStrap) -> AppStrap {
+    AppStrap::new(
+        strap.level,
+        map_strap_kind(strap.kind),
+        map_modifier(strap.modifier),
+    )
+}
+
 fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> {
     try_parse_events!(
         [decoder, receipt]
         InitializedEvent => |event| {
-            tracing::info!("xxxxxxxxx");
             let inner = Event::init_event(
                 ContractId::from(event.vrf_contract_id.0),
                 AssetId::from(event.chip_asset_id),
@@ -154,6 +211,31 @@ fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> 
             let roll_index = u32::try_from(event.roll_index).ok()?;
             let rolled_value = map_roll(event.rolled_value);
             Some(Event::roll_event(game_id, roll_index, rolled_value))
+        },
+        AbiNewGameEvent => |event| {
+            let game_id = u32::try_from(event.game_id).ok()?;
+            let new_straps = event
+                .new_straps
+                .into_iter()
+                .map(|(roll, strap, cost)| (map_roll(roll), map_strap(strap), cost))
+                .collect::<Vec<_>>();
+            let new_modifiers = event
+                .new_modifiers
+                .into_iter()
+                .map(|(trigger_roll, modifier_roll, modifier)| {
+                    (
+                        map_roll(trigger_roll),
+                        map_roll(modifier_roll),
+                        map_modifier(modifier),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let inner = AppNewGameEvent {
+                game_id,
+                new_straps,
+                new_modifiers,
+            };
+            Some(Event::ContractEvent(ContractEvent::NewGame(inner)))
         }
 
     )
@@ -164,7 +246,14 @@ mod tests {
     use super::*;
     use crate::{
         app::init_tracing,
-        events::ContractEvent,
+        events::{
+            ContractEvent,
+            Modifier,
+            NewGameEvent,
+            Roll,
+            Strap,
+            StrapKind,
+        },
     };
     use fuels::{
         prelude::{
@@ -383,5 +472,133 @@ mod tests {
         let actual_event = actual_event.expect("expected to receive roll event");
         let expected = Event::roll_event(0, 1, crate::events::Roll::Two);
         assert_eq!(actual_event, expected);
+    }
+
+    #[tokio::test]
+    async fn next_event_batch__can_get_new_game_event() {
+        init_tracing();
+
+        let chip_asset_id = AssetId::new([1u8; 32]);
+        let base_assets = vec![
+            AssetConfig {
+                id: AssetId::zeroed(),
+                num_coins: 1,
+                coin_amount: 10_000_000_000,
+            },
+            AssetConfig {
+                id: chip_asset_id,
+                num_coins: 1,
+                coin_amount: 10_000_000_000,
+            },
+        ];
+        let temp_dir = tempdir::TempDir::new("database")
+            .unwrap()
+            .path()
+            .to_path_buf();
+
+        let database_config = DatabaseConfig {
+            cache_capacity: None,
+            max_fds: 512,
+            columns_policy: ColumnsPolicy::Lazy,
+        };
+        let mut wallets = launch_custom_provider_and_get_wallets(
+            WalletsConfig::new_multiple_assets(1, base_assets),
+            None,
+            None,
+        )
+        .await
+        .expect("failed to launch local provider");
+        let wallet = wallets.pop().unwrap();
+
+        let (contract_instance, _) = get_contract_instance(wallet.clone()).await;
+
+        let vrf_bin_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../sway-projects/fake-vrf-contract/out/release/fake-vrf-contract.bin",
+        );
+        let vrf_contract =
+            Contract::load_from(vrf_bin_path, LoadConfiguration::default())
+                .expect("failed to load fake vrf contract");
+        let deployment = vrf_contract
+            .deploy(&wallet, TxPolicies::default())
+            .await
+            .expect("failed to deploy fake vrf contract");
+        let vrf_contract_id = deployment.contract_id.clone();
+        let vrf_instance = FakeVRFContract::new(vrf_contract_id.clone(), wallet.clone());
+
+        let address = wallet.provider().url();
+        let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
+            0u32.into(),
+            Url::parse(address).unwrap(),
+        );
+
+        let mut event_source = FuelIndexerEventSource::new(
+            parse_event_logs,
+            temp_dir,
+            database_config,
+            indexer_config,
+        )
+        .await
+        .unwrap();
+
+        let seven_vrf_number = 15u64;
+
+        contract_instance
+            .methods()
+            .initialize(Bits256(*vrf_contract_id), chip_asset_id.clone(), 1)
+            .call()
+            .await
+            .unwrap();
+
+        let provider = wallet.provider();
+        let next_roll_height = contract_instance
+            .methods()
+            .next_roll_height()
+            .simulate(Execution::state_read_only())
+            .await
+            .unwrap()
+            .value
+            .expect("expected next roll height");
+        let current_height = provider
+            .latest_block_height()
+            .await
+            .expect("failed to read current block height");
+        if next_roll_height > current_height {
+            provider
+                .produce_blocks(next_roll_height - current_height, None)
+                .await
+                .expect("failed to advance blocks");
+        }
+
+        vrf_instance
+            .methods()
+            .set_number(seven_vrf_number)
+            .call()
+            .await
+            .unwrap();
+
+        contract_instance
+            .methods()
+            .roll_dice()
+            .with_contracts(&[&vrf_instance])
+            .call()
+            .await
+            .unwrap();
+
+        let mut actual_new_game = None;
+        for _ in 0..10 {
+            let (events, _) = event_source.next_event_batch().await.unwrap();
+            for event in events {
+                if let Event::ContractEvent(ContractEvent::NewGame(inner)) = event {
+                    actual_new_game = Some(inner);
+                    break;
+                }
+            }
+            if actual_new_game.is_some() {
+                break;
+            }
+        }
+        if actual_new_game.is_none() {
+            panic!("expected to receive new game event");
+        }
     }
 }
