@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::events::ContractEvent;
+use fuel_core::state::rocks_db::ColumnsPolicy;
 use fuels::{
     prelude::{
         AssetConfig,
