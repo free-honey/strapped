@@ -128,8 +128,6 @@ impl<
         &mut self,
         interrupt: I,
     ) -> Result<RunState> {
-        init_tracing();
-        tracing::info!("Starting indexer");
         tokio::select! {
             batch = self.events.next_event_batch() => {
                 match batch {

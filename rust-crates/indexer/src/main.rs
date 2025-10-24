@@ -37,6 +37,9 @@ struct Args {
 
     #[arg(short, long)]
     port: Option<u16>,
+
+    #[arg(short, long, default_value = "false")]
+    tracing: bool,
 }
 
 async fn handle_interupt() {
@@ -53,9 +56,10 @@ async fn handle_interupt() {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing();
-
     let args = Args::parse();
+    if args.tracing {
+        init_tracing();
+    }
     let contract_id_str = args.contract_id;
     let contract_id = ContractId::from_str(&contract_id_str).unwrap();
 
@@ -80,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
     let metadata = InMemoryMetadataStorage::new();
     let mut app = App::new(events, api, snapshots, metadata, contract_id);
 
+    tracing::info!("Starting indexer service");
     loop {
         let interrupt = handle_interupt();
         match app.run(interrupt).await.unwrap() {
