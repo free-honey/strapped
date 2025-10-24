@@ -43,7 +43,7 @@ mod tests;
 
 pub mod fuel_indexer_event_source;
 
-pub mod reqwest_query_api;
+pub mod actix_query_api;
 
 pub mod event_source;
 pub mod query_api;

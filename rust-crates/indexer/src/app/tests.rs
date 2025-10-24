@@ -81,13 +81,14 @@ impl EventSource for PendingEventSource {
     }
 }
 
-pub struct FakeSnapshotStorage {
+#[derive(Clone)]
+pub struct InMemorySnapshotStorage {
     snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
     account_snapshots: Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>>,
     historical_snapshots: Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>,
 }
 
-impl FakeSnapshotStorage {
+impl InMemorySnapshotStorage {
     pub fn new() -> Self {
         Self {
             snapshot: Arc::new(Mutex::new(None)),
@@ -123,7 +124,7 @@ impl FakeSnapshotStorage {
     }
 }
 
-impl SnapshotStorage for FakeSnapshotStorage {
+impl SnapshotStorage for InMemorySnapshotStorage {
     fn latest_snapshot(&self) -> crate::Result<(OverviewSnapshot, u32)> {
         let guard = self.snapshot.lock().unwrap();
         match &*guard {
@@ -190,11 +191,11 @@ impl SnapshotStorage for FakeSnapshotStorage {
 }
 
 #[derive(Default)]
-pub struct FakeMetadataStorage {
+pub struct InMemoryMetadataStorage {
     straps: HashMap<AssetId, Strap>,
 }
 
-impl MetadataStorage for FakeMetadataStorage {
+impl MetadataStorage for InMemoryMetadataStorage {
     fn strap_asset_id(&self, strap_id: &AssetId) -> crate::Result<Option<Strap>> {
         Ok(self.straps.get(strap_id).cloned())
     }
@@ -262,10 +263,10 @@ fn arb_init_event() -> Event {
 async fn run__initialize_event__creates_first_snapshot() {
     // given
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
-    let snapshot_storage = FakeSnapshotStorage::new();
+    let snapshot_storage = InMemorySnapshotStorage::new();
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = FakeQueryApi::new();
     let mut app = App::new(
         event_source,
@@ -304,10 +305,10 @@ async fn run__roll_event__updates_snapshot() {
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 105);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 105);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -355,11 +356,11 @@ async fn run__new_game_event__resets_overview_snapshot() {
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 200);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 200);
     let snapshot_copy = snapshot_storage.snapshot();
     let historical_copy = snapshot_storage.historical_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -425,10 +426,10 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
     };
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(first_snapshot.clone(), 150);
+        InMemorySnapshotStorage::new_with_snapshot(first_snapshot.clone(), 150);
     let historical_copy = snapshot_storage.historical_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -494,10 +495,10 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
     let historical_copy = snapshot_storage.historical_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -558,10 +559,10 @@ async fn run__modifier_triggered_event__activates_modifier() {
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 220);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 220);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -604,10 +605,10 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     existing_snapshot.total_bets[4].0 = 50; // Roll::Six index
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -643,10 +644,10 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 300);
+        InMemorySnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 300);
     let accounts_map = snapshot_storage.account_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -671,7 +672,7 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
         .unwrap();
     app.run().await.unwrap();
 
-    let key = FakeSnapshotStorage::identity_key(&player);
+    let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
     let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 150);
@@ -689,10 +690,10 @@ async fn run__place_strap_bet_event__records_strap_bet() {
         vec![(Strap::new(1, StrapKind::Gloves, Modifier::Lucky), 1)];
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 410);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 410);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -729,10 +730,10 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
+        InMemorySnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
     let accounts_map = snapshot_storage.account_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -759,7 +760,7 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
         .unwrap();
     app.run().await.unwrap();
 
-    let key = FakeSnapshotStorage::identity_key(&player);
+    let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
     let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 0);
@@ -776,10 +777,10 @@ async fn run__claim_rewards_event__reduces_pot() {
     existing_snapshot.pot_size = 500;
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 510);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 510);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -814,10 +815,10 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
+        InMemorySnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
     let accounts_map = snapshot_storage.account_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -842,7 +843,7 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
         .unwrap();
     app.run().await.unwrap();
 
-    let key = FakeSnapshotStorage::identity_key(&player);
+    let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
     let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 0);
@@ -856,10 +857,10 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
+        InMemorySnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
     let accounts_map = snapshot_storage.account_snapshots();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -900,7 +901,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
         .unwrap();
     app.run().await.unwrap();
 
-    let key = FakeSnapshotStorage::identity_key(&player);
+    let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
     let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 0);
@@ -921,10 +922,10 @@ async fn run__fund_pot_event__increases_pot() {
     existing_snapshot.pot_size = 75;
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 610);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 610);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -963,10 +964,10 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
         vec![(Roll::Two, Roll::Four, Modifier::Holy, false)];
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 710);
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 710);
     let snapshot_copy = snapshot_storage.snapshot();
 
-    let metadata_storage = FakeMetadataStorage::default();
+    let metadata_storage = InMemoryMetadataStorage::default();
     let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
@@ -1034,14 +1035,14 @@ async fn run__latest_snapshot_query__returns_latest_snapshot() {
     let height = 1000;
 
     let snapshot_storage =
-        FakeSnapshotStorage::new_with_snapshot(snapshot.clone(), height);
+        InMemorySnapshotStorage::new_with_snapshot(snapshot.clone(), height);
 
     let (query_api, sender) = FakeQueryApi::new_with_sender();
     let mut app = App::new(
         PendingEventSource,
         query_api,
         snapshot_storage,
-        FakeMetadataStorage::default(),
+        InMemoryMetadataStorage::default(),
         zero_contract_id(),
     );
 
