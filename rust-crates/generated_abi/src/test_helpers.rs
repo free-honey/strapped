@@ -43,14 +43,15 @@ pub async fn get_vrf_contract_instance(
 ) -> (vrf_types::FakeVRFContract<Wallet>, ContractId) {
     let contract = Contract::load_from(fake_vrf_bin_path(), LoadConfiguration::default())
         .expect("failed to load fake VRF contract binary");
-    let contract_id = contract
+    let response = contract
         .deploy(&wallet, TxPolicies::default())
         .await
         .expect("failed to deploy fake VRF contract");
+    let contract_id = response.contract_id;
 
     let instance = vrf_types::FakeVRFContract::new(contract_id.clone(), wallet);
 
-    (instance, contract_id.into())
+    (instance, contract_id)
 }
 
 pub struct TestContext {
@@ -180,7 +181,7 @@ impl TestContext {
             .owner_instance
             .methods()
             .next_roll_height()
-            .simulate(Execution::StateReadOnly)
+            .simulate(Execution::state_read_only())
             .await
             .expect("simulate next_roll_height failed")
             .value
@@ -205,7 +206,7 @@ impl TestContext {
     }
 
     pub async fn advance_to_block_height(&self, height: u32) {
-        let provider = self.owner.provider().expect("owner has no provider");
+        let provider = self.owner.provider();
         let current_height = provider
             .latest_block_height()
             .await
