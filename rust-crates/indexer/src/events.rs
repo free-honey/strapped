@@ -29,7 +29,7 @@ pub enum ContractEvent {
     PurchaseModifier(PurchaseModifierEvent),
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum Roll {
     Two,
     Three,
@@ -44,7 +44,7 @@ pub enum Roll {
     Twelve,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum StrapKind {
     Shirt,
     Pants,
@@ -67,7 +67,7 @@ pub enum StrapKind {
     Belt,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum Modifier {
     Nothing,
     Burnt,

@@ -11,7 +11,7 @@ pub struct OverviewSnapshot {
     pub(crate) pot_size: u64,
     pub(crate) rewards: Vec<(Roll, Strap, u64)>,
     pub(crate) total_bets: [(u64, Vec<(Strap, u64)>); 10],
-    pub(crate) modifiers_active: [bool; 10],
+    pub(crate) modifiers_active: [Option<Modifier>; 10],
     pub(crate) modifier_shop: Vec<(Roll, Roll, Modifier, bool)>,
 }
 
@@ -48,7 +48,7 @@ impl Default for OverviewSnapshot {
             pot_size: 0,
             rewards: Vec::new(),
             total_bets,
-            modifiers_active: [false; 10],
+            modifiers_active: [None; 10],
             modifier_shop: Vec::new(),
         }
     }
@@ -64,14 +64,36 @@ pub struct AccountSnapshot {
     pub claimed_rewards: Option<(u64, Vec<(Strap, u64)>)>,
 }
 
-#[allow(dead_code)]
-// Historical shapshot that is persisted after current game ends. Updated as each event occurs
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoricalSnapshot {
-    game_id: u32,
-    rolls: Vec<Roll>,
-    // The roll for which a modifier was activated, and the roll index at which it was activated
-    // This allows the player to see which modifiers are available for their bet straps
-    modifiers_active: Vec<(Roll, u32)>,
-    // TODO: we can add additional interesting data here that isn't necessary, like how much was
-    //   bet, won, lost, etc.
+    pub game_id: u32,
+    pub rolls: Vec<Roll>,
+    pub modifiers: Vec<ActiveModifier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveModifier {
+    pub roll_index: u32,
+    pub modifier: Modifier,
+    pub modifier_roll: Roll,
+}
+
+impl ActiveModifier {
+    pub fn new(roll_height: u32, modifier: Modifier, modifier_roll: Roll) -> Self {
+        Self {
+            roll_index: roll_height,
+            modifier,
+            modifier_roll,
+        }
+    }
+}
+
+impl HistoricalSnapshot {
+    pub fn new(game_id: u32, rolls: Vec<Roll>, modifiers: Vec<ActiveModifier>) -> Self {
+        Self {
+            game_id,
+            rolls,
+            modifiers,
+        }
+    }
 }

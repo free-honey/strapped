@@ -23,14 +23,20 @@ use crate::{
         RollEvent,
         Strap,
     },
-    snapshot::OverviewSnapshot,
+    snapshot::{
+        ActiveModifier,
+        HistoricalSnapshot,
+        OverviewSnapshot,
+    },
 };
-use anyhow::anyhow;
 use fuels::{
     tx::ContractIdExt,
     types::ContractId,
 };
 use std::cmp;
+
+#[cfg(test)]
+mod tests;
 
 pub mod fuel_indexer_event_source;
 
@@ -44,6 +50,7 @@ pub struct App<Events, API, Snapshots, Metadata> {
     snapshots: Snapshots,
     metadata: Metadata,
     contract_id: ContractId,
+    historical_modifiers: Vec<ActiveModifier>,
 }
 
 fn roll_to_index(roll: &Roll) -> Option<usize> {
@@ -54,12 +61,12 @@ fn roll_to_index(roll: &Roll) -> Option<usize> {
         Four => Some(2),
         Five => Some(3),
         Six => Some(4),
-        Eight => Some(5),
-        Nine => Some(6),
-        Ten => Some(7),
-        Eleven => Some(8),
-        Twelve => Some(9),
-        Seven => None,
+        Seven => Some(5),
+        Eight => Some(6),
+        Nine => Some(7),
+        Ten => Some(8),
+        Eleven => Some(9),
+        Twelve => Some(10),
     }
 }
 
@@ -70,9 +77,6 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
         bets.push((strap.clone(), amount));
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
     pub fn new(
@@ -88,6 +92,7 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
             snapshots,
             metadata,
             contract_id,
+            historical_modifiers: Vec::new(),
         }
     }
 }
@@ -199,7 +204,7 @@ impl<
         tracing::info!("Handling ModifierTriggeredEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         if let Some(idx) = roll_to_index(&event.modifier_roll) {
-            snapshot.modifiers_active[idx] = true;
+            snapshot.modifiers_active[idx] = Some(event.modifier);
         }
         for entry in &mut snapshot.modifier_shop {
             let (_trigger_roll, modifier_roll, modifier, is_active) = entry;
@@ -207,6 +212,14 @@ impl<
                 *is_active = true;
             }
         }
+        let roll_index = event.roll_index;
+
+        let active_modifier = ActiveModifier {
+            roll_index,
+            modifier: event.modifier,
+            modifier_roll: event.modifier_roll,
+        };
+        self.historical_modifiers.push(active_modifier);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 
@@ -217,9 +230,18 @@ impl<
             new_straps,
             new_modifiers,
         } = event;
-        let game_id: u32 = game_id
-            .try_into()
-            .map_err(|_| anyhow!("game id {} overflows u32", game_id))?;
+
+        if let Ok((previous_snapshot, _)) = self.snapshots.latest_snapshot() {
+            let historical = HistoricalSnapshot::new(
+                previous_snapshot.game_id,
+                previous_snapshot.rolls.clone(),
+                self.historical_modifiers.clone(),
+            );
+            self.historical_modifiers.clear();
+            let _ = self
+                .snapshots
+                .write_historical_snapshot(previous_snapshot.game_id, &historical);
+        }
 
         let mut snapshot = OverviewSnapshot::default();
         snapshot.game_id = game_id;
@@ -350,8 +372,9 @@ impl<
     ) -> Result<()> {
         tracing::info!("Handling PurchaseModifierEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
+        let modifier = event.expected_modifier;
         if let Some(idx) = roll_to_index(&event.expected_roll) {
-            snapshot.modifiers_active[idx] = true;
+            snapshot.modifiers_active[idx] = Some(modifier);
         }
         for entry in &mut snapshot.modifier_shop {
             let (_trigger_roll, modifier_roll, modifier, purchased) = entry;
