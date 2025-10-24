@@ -60,7 +60,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .owner_contract()
         .methods()
         .payouts()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -74,7 +74,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -85,7 +85,13 @@ async fn _claim_rewards__adds_chips_to_wallet(
         ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
     }
 
-    let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    let balance_before: u64 = ctx
+        .alice()
+        .get_asset_balance(&chip_asset_id)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
 
     // when
     if expected_multiplier != 0 {
@@ -100,7 +106,13 @@ async fn _claim_rewards__adds_chips_to_wallet(
 
     // then
     let expected = balance_before + bet_amount * expected_multiplier;
-    let actual = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    let actual: u64 = ctx
+        .alice()
+        .get_asset_balance(&chip_asset_id)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
     prop_assert_eq!(expected, actual);
     Ok(())
 }
@@ -120,7 +132,7 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -130,7 +142,13 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
     ctx.advance_and_roll(SIX_VRF_NUMBER).await;
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
-    let balance_before = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    let balance_before: u64 = ctx
+        .alice()
+        .get_asset_balance(&chip_asset_id)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
 
     // when
     ctx.alice_contract()
@@ -142,7 +160,13 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .unwrap();
 
     // then
-    let balance_after = ctx.alice().get_asset_balance(&chip_asset_id).await.unwrap();
+    let balance_after: u64 = ctx
+        .alice()
+        .get_asset_balance(&chip_asset_id)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
     let expected = balance_before + bet_amount * 2 * 3;
     assert_eq!(balance_after, expected);
 }
@@ -160,7 +184,7 @@ async fn claim_rewards__cannot_claim_rewards_for_current_game() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -200,7 +224,7 @@ async fn claim_rewards__do_not_reward_bets_placed_after_roll() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -235,7 +259,7 @@ async fn claim_rewards__cannot_claim_rewards_twice() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -313,7 +337,7 @@ mod _claim_rewards__can_receive_strap_token {
             .alice_contract()
             .methods()
             .current_game_id()
-            .simulate(Execution::StateReadOnly)
+            .simulate(Execution::state_read_only())
             .await
             .unwrap()
             .value;
@@ -322,7 +346,7 @@ mod _claim_rewards__can_receive_strap_token {
             .owner_contract()
             .methods()
             .strap_rewards()
-            .simulate(Execution::StateReadOnly)
+            .simulate(Execution::state_read_only())
             .await
             .unwrap()
             .value;
@@ -364,7 +388,13 @@ mod _claim_rewards__can_receive_strap_token {
 
         let mut balances_before = HashMap::new();
         for (strap_asset_id, _) in expected_straps_rewards.iter() {
-            let balance = ctx.alice().get_asset_balance(strap_asset_id).await.unwrap();
+            let balance: u64 = ctx
+                .alice()
+                .get_asset_balance(strap_asset_id)
+                .await
+                .unwrap()
+                .try_into()
+                .unwrap();
             balances_before.insert(strap_asset_id.clone(), balance);
         }
 
@@ -383,11 +413,13 @@ mod _claim_rewards__can_receive_strap_token {
         // then
         for (strap_asset_id, reward_amount) in expected_straps_rewards.iter() {
             let strap = asset_id_to_strap.get(strap_asset_id).unwrap();
-            let balance_before = balances_before.get(strap_asset_id).unwrap();
-            let balance_after = ctx
+            let balance_before: u64 = *balances_before.get(strap_asset_id).unwrap();
+            let balance_after: u64 = ctx
                 .alice()
                 .get_asset_balance(&strap_asset_id)
                 .await
+                .unwrap()
+                .try_into()
                 .unwrap();
 
             let expected = balance_before + reward_amount;
@@ -431,7 +463,7 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -479,7 +511,7 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;
@@ -547,7 +579,7 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             .alice_contract()
             .methods()
             .current_game_id()
-            .simulate(Execution::StateReadOnly)
+            .simulate(Execution::state_read_only())
             .await
             .unwrap()
             .value;
@@ -649,7 +681,7 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
         .alice_contract()
         .methods()
         .current_game_id()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;

@@ -4,12 +4,12 @@ use std::path::{
 };
 
 use fuels::{
-    accounts::wallet::WalletUnlocked,
+    accounts::wallet::Wallet,
     macros::abigen,
     programs::contract::Contract,
     types::{
-        Bytes32,
         ContractId,
+        SubAssetId,
     },
 };
 
@@ -59,28 +59,29 @@ pub fn contract_id() -> ContractId {
 }
 
 pub async fn get_contract_instance(
-    wallet: WalletUnlocked,
-) -> (strapped_types::MyContract<WalletUnlocked>, ContractId) {
+    wallet: Wallet,
+) -> (strapped_types::MyContract<Wallet>, ContractId) {
     let contract = Contract::load_from(strapped_bin_path(), Default::default())
         .expect("failed to load strapped contract binary");
-    let contract_id = contract
+    let res = contract
         .deploy(&wallet, Default::default())
         .await
         .expect("failed to deploy strapped contract");
 
+    let contract_id = res.contract_id;
     let instance = strapped_types::MyContract::new(contract_id.clone(), wallet);
 
-    (instance, contract_id.into())
+    (instance, contract_id)
 }
 
 pub async fn separate_contract_instance(
     id: &ContractId,
-    wallet: WalletUnlocked,
-) -> strapped_types::MyContract<WalletUnlocked> {
+    wallet: Wallet,
+) -> strapped_types::MyContract<Wallet> {
     strapped_types::MyContract::new(*id, wallet)
 }
 
-pub fn strap_to_sub_id(strap: &strapped_types::Strap) -> Bytes32 {
+pub fn strap_to_sub_id(strap: &strapped_types::Strap) -> SubAssetId {
     use strapped_types::{
         Modifier,
         StrapKind,
@@ -126,5 +127,29 @@ pub fn strap_to_sub_id(strap: &strapped_types::Strap) -> Bytes32 {
     sub_id[0] = level_bytes;
     sub_id[1] = kind_bytes;
     sub_id[2] = modifier_bytes;
-    Bytes32::from(sub_id)
+    SubAssetId::from(sub_id)
+}
+
+pub fn strap_cost(strap: &crate::strapped_types::Strap) -> u64 {
+    match strap.kind {
+        crate::strapped_types::StrapKind::Shirt => 10,
+        crate::strapped_types::StrapKind::Pants => 10,
+        crate::strapped_types::StrapKind::Shoes => 10,
+        crate::strapped_types::StrapKind::Dress => 10,
+        crate::strapped_types::StrapKind::Hat => 20,
+        crate::strapped_types::StrapKind::Glasses => 20,
+        crate::strapped_types::StrapKind::Watch => 20,
+        crate::strapped_types::StrapKind::Ring => 20,
+        crate::strapped_types::StrapKind::Necklace => 50,
+        crate::strapped_types::StrapKind::Earring => 50,
+        crate::strapped_types::StrapKind::Bracelet => 50,
+        crate::strapped_types::StrapKind::Tattoo => 50,
+        crate::strapped_types::StrapKind::Skirt => 50,
+        crate::strapped_types::StrapKind::Piercing => 50,
+        crate::strapped_types::StrapKind::Coat => 100,
+        crate::strapped_types::StrapKind::Scarf => 100,
+        crate::strapped_types::StrapKind::Gloves => 100,
+        crate::strapped_types::StrapKind::Gown => 100,
+        crate::strapped_types::StrapKind::Belt => 200,
+    }
 }

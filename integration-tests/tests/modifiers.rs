@@ -44,7 +44,7 @@ async fn purchase_modifier__activates_modifier_for_current_game() {
         .owner_instance()
         .methods()
         .active_modifiers()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;

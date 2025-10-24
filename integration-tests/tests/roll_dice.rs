@@ -29,7 +29,7 @@ async fn roll_dice__adds_roll_to_roll_history() {
         .owner_instance()
         .methods()
         .roll_history()
-        .simulate(Execution::StateReadOnly)
+        .simulate(Execution::state_read_only())
         .await
         .unwrap()
         .value;

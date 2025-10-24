@@ -10,7 +10,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 fuels = { workspace = true }
+fuel-core = { version = "0.47.1" }
+fuel-indexer = { workspace = true, features = ["rocksdb"] }
 generated_abi = { workspace = true }
+tempdir = "0.3.7"
 tokio = { version = "1.48.0", features = ["macros", "rt"] }
 tracing = { workspace = true }
 tracing-subscriber = "0.3.20"
+url = "2.5.7"
+fuel-core-services = "0.47.1"
+serde = { version = "1.0.225", features = ["derive"] }
+tokio-stream = "0.1.17"

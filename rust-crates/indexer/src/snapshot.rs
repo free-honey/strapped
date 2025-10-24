@@ -1,4 +1,8 @@
-use generated_abi::strapped_types::*;
+use crate::events::{
+    Modifier,
+    Roll,
+    Strap,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OverviewSnapshot {

@@ -21,12 +21,11 @@ use color_eyre::eyre::{
 use fuels::{
     accounts::{
         ViewOnlyAccount,
-        wallet::WalletUnlocked,
+        wallet::Wallet,
     },
     prelude::{
         AssetConfig,
         AssetId,
-        Bech32ContractId,
         CallParameters,
         ContractId,
         Execution,
@@ -46,6 +45,7 @@ use fuels::{
     types::Bits256,
 };
 use futures::future::try_join_all;
+use generated_abi::strap_cost;
 use rand::Rng;
 use std::{
     collections::{
@@ -101,8 +101,8 @@ pub enum NetworkKind {
 
 #[derive(Clone)]
 pub enum VrfClient {
-    Fake(fake_vrf::FakeVRFContract<WalletUnlocked>),
-    Pseudo(pseudo_vrf::PseudoVRFContract<WalletUnlocked>),
+    Fake(fake_vrf::FakeVRFContract<Wallet>),
+    Pseudo(pseudo_vrf::PseudoVRFContract<Wallet>),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -138,8 +138,8 @@ pub struct AppSnapshot {
 }
 
 pub struct Clients {
-    pub owner: strapped::MyContract<WalletUnlocked>,
-    pub alice: strapped::MyContract<WalletUnlocked>,
+    pub owner: strapped::MyContract<Wallet>,
+    pub alice: strapped::MyContract<Wallet>,
     pub vrf: Option<VrfClient>,
     pub vrf_mode: VrfMode,
     pub contract_id: ContractId,
@@ -149,7 +149,7 @@ pub struct Clients {
 }
 
 impl Clients {
-    fn instance(&self, who: WalletKind) -> &strapped::MyContract<WalletUnlocked> {
+    fn instance(&self, who: WalletKind) -> &strapped::MyContract<Wallet> {
         match who {
             WalletKind::Owner => &self.owner,
             WalletKind::Alice => &self.alice,
@@ -210,34 +210,41 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
 
     // Deploy strapped
     let strap_bin = choose_binary(&STRAPPED_BIN_CANDIDATES)?;
-    let strapped_id = Contract::load_from(strap_bin, LoadConfiguration::default())?
+    let response = Contract::load_from(strap_bin, LoadConfiguration::default())?
         .deploy(&owner, TxPolicies::default())
         .await?;
-    let contract_id: ContractId = strapped_id.clone().into();
-    let owner_instance = strapped::MyContract::new(strapped_id.clone(), owner.clone());
-    let alice_instance = strapped::MyContract::new(strapped_id.clone(), alice.clone());
+    let strapped_contract_id = response.contract_id;
+    let owner_instance =
+        strapped::MyContract::new(strapped_contract_id.clone(), owner.clone());
+    let alice_instance =
+        strapped::MyContract::new(strapped_contract_id.clone(), alice.clone());
 
     let (vrf_client, vrf_contract_id): (VrfClient, ContractId) = match vrf_mode {
         VrfMode::Fake => {
             let vrf_bin = "fake-vrf-contract/out/release/fake-vrf-contract.bin";
-            let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
+            let response = Contract::load_from(vrf_bin, LoadConfiguration::default())?
                 .deploy(&owner, TxPolicies::default())
                 .await?;
-            let instance = fake_vrf::FakeVRFContract::new(vrf_id.clone(), owner.clone());
+            let vrf_contract_id = response.contract_id;
+            let instance =
+                fake_vrf::FakeVRFContract::new(vrf_contract_id.clone(), owner.clone());
             instance.methods().set_number(19).call().await?;
-            (VrfClient::Fake(instance), vrf_id.into())
+            (VrfClient::Fake(instance), vrf_contract_id.into())
         }
         VrfMode::Pseudo => {
             let vrf_bin = choose_binary(&VRF_BIN_CANDIDATES)?;
-            let vrf_id = Contract::load_from(vrf_bin, LoadConfiguration::default())?
+            let reponse = Contract::load_from(vrf_bin, LoadConfiguration::default())?
                 .deploy(&owner, TxPolicies::default())
                 .await?;
-            let instance =
-                pseudo_vrf::PseudoVRFContract::new(vrf_id.clone(), owner.clone());
+            let vrf_contract_id = reponse.contract_id;
+            let instance = pseudo_vrf::PseudoVRFContract::new(
+                vrf_contract_id.clone(),
+                owner.clone(),
+            );
             let mut random_gen = rand::rng();
             let entropy = random_gen.random();
             instance.methods().set_entropy(entropy).call().await?;
-            (VrfClient::Pseudo(instance), vrf_id.into())
+            (VrfClient::Pseudo(instance), vrf_contract_id.into())
         }
     };
 
@@ -265,7 +272,7 @@ pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
         alice: alice_instance,
         vrf: Some(vrf_client),
         vrf_mode,
-        contract_id,
+        contract_id: strapped_contract_id,
         chip_asset_id,
         network: NetworkKind::InMemory,
         safe_script_gas_limit,
@@ -277,8 +284,7 @@ async fn get_contract_asset_balance(
     cid: &ContractId,
     aid: &AssetId,
 ) -> Result<u64> {
-    let bech: Bech32ContractId = (*cid).into();
-    let bal = provider.get_contract_asset_balance(&bech, *aid).await?;
+    let bal = provider.get_contract_asset_balance(cid, aid).await?;
     Ok(bal)
 }
 
@@ -569,7 +575,7 @@ impl AppController {
                         .with_tx_policies(
                             TxPolicies::default().with_script_gas_limit(safe_limit),
                         )
-                        .simulate(Execution::Realistic)
+                        .simulate(Execution::realistic())
                         .await?
                         .value;
                     Ok::<_, color_eyre::eyre::Report>((roll, bets))
@@ -591,7 +597,7 @@ impl AppController {
             .methods()
             .get_my_bets_for_game(game_id)
             .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
-            .simulate(Execution::Realistic)
+            .simulate(Execution::realistic())
             .await?
             .value;
         Ok(bets)
@@ -604,7 +610,7 @@ impl AppController {
             .methods()
             .current_game_id()
             .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
-            .simulate(Execution::Realistic)
+            .simulate(Execution::realistic())
             .await?
             .value;
         if current_game_id_u32 == 0 {
@@ -622,7 +628,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await?
                     .value;
                 if rolls.is_empty() {
@@ -634,7 +640,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await?
                     .value;
                 self.active_modifiers_by_game
@@ -648,7 +654,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await?
                     .value;
                 self.active_modifiers_by_game.insert(game_id, modifiers);
@@ -662,7 +668,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await?
                     .value;
                 if !strap_rewards.is_empty() {
@@ -825,10 +831,8 @@ impl AppController {
                 safe_script_gas_limit,
             )
             .await?;
-            // let vrf_contract_id: ContractId = record.vrf_contract_id.unwrap().into();
             let vrf_contract_id =
-                Bech32ContractId::from_str(&record.clone().vrf_contract_id.unwrap());
-            let vrf_contract_id = ContractId::from(vrf_contract_id.unwrap());
+                ContractId::from_str(&record.clone().vrf_contract_id.unwrap()).unwrap();
 
             // Initialize contracts
             if let Some(VrfClient::Pseudo(vrf_instance)) = &clients.vrf {
@@ -889,15 +893,20 @@ impl AppController {
             .expect("compatible deployments list should not be empty")
             .clone();
 
-        let contract_bech32 = Bech32ContractId::from_str(&selected.contract_id)
-            .wrap_err("Deployment record contains an invalid contract id")?;
-        let contract_id: ContractId = contract_bech32.clone().into();
+        let trimmed_contract_id_string = &selected.contract_id.trim_start_matches("fuel");
+        let contract_id =
+            ContractId::from_str(trimmed_contract_id_string).map_err(|e| {
+                eyre!(
+                    "Deployment record contains an invalid contract id: {e:?}, {:?}",
+                    trimmed_contract_id_string
+                )
+            })?;
 
         tracing::info!("j");
         let owner_instance =
-            strapped::MyContract::new(contract_bech32.clone(), owner_wallet.clone());
+            strapped::MyContract::new(contract_id.clone(), owner_wallet.clone());
         let alice_instance =
-            strapped::MyContract::new(contract_bech32.clone(), alice_wallet.clone());
+            strapped::MyContract::new(contract_id.clone(), alice_wallet.clone());
 
         let chip_asset_id = if let Some(id_hex) = selected.chip_asset_id.as_ref() {
             AssetId::from_str(id_hex).map_err(|e| {
@@ -910,7 +919,7 @@ impl AppController {
             //     .with_tx_policies(
             //         TxPolicies::default().with_script_gas_limit(safe_script_limit),
             //     )
-            //     .simulate(Execution::Realistic)
+            //     .simulate(Execution::realistic())
             //     .await?
             //     .value
             panic!("Deployment record is missing chip asset id");
@@ -920,8 +929,9 @@ impl AppController {
             selected.vrf_contract_id.as_ref()
         {
             tracing::info!("ka");
-            let vrf_bech32 = Bech32ContractId::from_str(vrf_id)
-                .wrap_err("Deployment record contains an invalid VRF contract id")?;
+            let vrf_bech32 = ContractId::from_str(vrf_id).map_err(|e| {
+                eyre!("Deployment record contains an invalid VRF contract id: {e:?}")
+            })?;
             (
                 Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
                     vrf_bech32.clone(),
@@ -937,16 +947,15 @@ impl AppController {
                 .with_tx_policies(
                     TxPolicies::default().with_script_gas_limit(safe_script_gas_limit),
                 )
-                .simulate(Execution::Realistic)
+                .simulate(Execution::realistic())
                 .await?
                 .value;
             let id = ContractId::new(vrf_bits.0);
             let vrf_client = if vrf_bits.0 == [0u8; 32] {
                 None
             } else {
-                let vrf_bech32: Bech32ContractId = id.into();
                 Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
-                    vrf_bech32,
+                    id,
                     owner_wallet.clone(),
                 )))
             };
@@ -974,8 +983,8 @@ impl AppController {
     async fn deploy_new_remote_contract(
         url: &str,
         vrf_mode: VrfMode,
-        owner_wallet: WalletUnlocked,
-        alice_wallet: WalletUnlocked,
+        owner_wallet: Wallet,
+        alice_wallet: Wallet,
         chip_asset_id: AssetId,
         bytecode_hash: &str,
         safe_script_gas_limit: u64,
@@ -984,78 +993,58 @@ impl AppController {
         let strap_salt = rand::rng().random::<[u8; 32]>();
         let strapped = load_contract(&STRAPPED_BIN_CANDIDATES, strap_salt)?;
         tracing::info!("deploying strapped contract...");
-        let strapped_id = strapped
+        let response = strapped
             .clone()
             .smart_deploy(&owner_wallet, TxPolicies::default(), 4_096)
             .await?;
-        let contract_id: ContractId = strapped_id.clone().into();
+        let contract_id: ContractId = response.contract_id;
 
         let owner_instance =
-            strapped::MyContract::new(strapped_id.clone(), owner_wallet.clone());
+            strapped::MyContract::new(contract_id.clone(), owner_wallet.clone());
         let alice_instance =
-            strapped::MyContract::new(strapped_id.clone(), alice_wallet.clone());
+            strapped::MyContract::new(contract_id.clone(), alice_wallet.clone());
 
-        let (
-            vrf_client,
-            _vrf_contract_id,
-            vrf_salt_hex,
-            vrf_contract_bech32,
-            vrf_bytecode_hash,
-        ) = match vrf_mode {
-            VrfMode::Fake => {
-                return Err(eyre!(
-                    "Fake VRF mode is only supported in in-memory deployments"
-                ));
-            }
-            VrfMode::Pseudo => {
-                let vrf_salt = rand::rng().random::<[u8; 32]>();
-                let vrf_contract = load_contract(&VRF_BIN_CANDIDATES, vrf_salt)?;
-                let vrf_contract = vrf_contract
-                    .clone()
-                    .deploy(&owner_wallet, TxPolicies::default())
-                    .await?;
-                let vrf_instance = pseudo_vrf::PseudoVRFContract::new(
-                    vrf_contract.clone(),
-                    owner_wallet.clone(),
-                );
-                // let mut random_gen = rand::rng();
-                // let entropy = random_gen.random();
-                // vrf_instance.methods().set_entropy(entropy).call().await?;
-                let vrf_contract_id: ContractId = vrf_contract.clone().into();
-                tracing::info!("VRF contract deployed: {:?}", vrf_contract_id);
-                let vrf_contract_bech32: Bech32ContractId =
-                    vrf_contract_id.clone().into();
-                let vrf_hash_hex = choose_binary(&VRF_BIN_CANDIDATES)
-                    .and_then(|path| deployment::compute_bytecode_hash(path))
-                    .ok()
-                    .map(|hash| format!("0x{}", hash));
-                (
-                    Some(VrfClient::Pseudo(vrf_instance)),
-                    vrf_contract_id,
-                    Some(format!("0x{}", hex::encode(vrf_salt))),
-                    Some(vrf_contract_bech32.to_string()),
-                    vrf_hash_hex,
-                )
-            }
-        };
+        let (vrf_client, vrf_contract_id, vrf_salt_hex, vrf_bytecode_hash) =
+            match vrf_mode {
+                VrfMode::Fake => {
+                    return Err(eyre!(
+                        "Fake VRF mode is only supported in in-memory deployments"
+                    ));
+                }
+                VrfMode::Pseudo => {
+                    let vrf_salt = rand::rng().random::<[u8; 32]>();
+                    let vrf_contract = load_contract(&VRF_BIN_CANDIDATES, vrf_salt)?;
+                    let vrf_contract = vrf_contract
+                        .clone()
+                        .deploy(&owner_wallet, TxPolicies::default())
+                        .await?;
+                    let vrf_contract_id = vrf_contract.contract_id;
+                    let vrf_instance = pseudo_vrf::PseudoVRFContract::new(
+                        vrf_contract_id.clone(),
+                        owner_wallet.clone(),
+                    );
+                    // let mut random_gen = rand::rng();
+                    // let entropy = random_gen.random();
+                    // vrf_instance.methods().set_entropy(entropy).call().await?;
+                    tracing::info!("VRF contract deployed: {:?}", vrf_contract_id);
+                    let vrf_hash_hex = choose_binary(&VRF_BIN_CANDIDATES)
+                        .and_then(|path| deployment::compute_bytecode_hash(path))
+                        .ok()
+                        .map(|hash| format!("0x{}", hash));
+                    (
+                        Some(VrfClient::Pseudo(vrf_instance)),
+                        vrf_contract_id,
+                        Some(format!("0x{}", hex::encode(vrf_salt))),
+                        vrf_hash_hex,
+                    )
+                }
+            };
 
-        // owner_instance
-        //     .methods()
-        //     .initialize(Bits256(*vrf_contract_id), chip_asset_id, 10)
-        //     .call()
-        //     .await?;
-
-        // let fund_call = CallParameters::new(1_000_000u64, chip_asset_id, 1_000_000);
-        // owner_instance
-        //     .methods()
-        //     .fund()
-        //     .call_params(fund_call)?
-        //     .call()
-        //     .await?;
+        let vrf_contract_bech32 = Some(vrf_contract_id.to_string());
 
         let record = deployment::DeploymentRecord {
             deployed_at: Utc::now().to_rfc3339(),
-            contract_id: strapped_id.to_string(),
+            contract_id: contract_id.to_string(),
             bytecode_hash: bytecode_hash.to_string(),
             network_url: url.to_string(),
             chip_asset_id: Some(format!(
@@ -1096,11 +1085,7 @@ impl AppController {
 
         let who = self.wallet;
         let me = self.clients.instance(who).clone();
-        let provider = me
-            .account()
-            .provider()
-            .ok_or_else(|| eyre!("no provider"))?
-            .clone();
+        let provider = me.account().provider().clone();
         let safe_limit = self.clients.safe_script_gas_limit;
 
         let provider_for_height = provider.clone();
@@ -1133,7 +1118,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await
                     .map(|r| r.value)
                     .map_err(color_eyre::eyre::Report::from)
@@ -1150,7 +1135,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await
                     .map(|r| r.value)
                     .map_err(color_eyre::eyre::Report::from)
@@ -1169,7 +1154,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await
                     .map(|r| r.value)
                     .map_err(color_eyre::eyre::Report::from);
@@ -1187,7 +1172,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await
                     .map(|r| r.value)
                     .map_err(color_eyre::eyre::Report::from);
@@ -1205,7 +1190,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await
                     .map(|r| r.value)
                     .map_err(color_eyre::eyre::Report::from)
@@ -1222,7 +1207,7 @@ impl AppController {
                     .with_tx_policies(
                         TxPolicies::default().with_script_gas_limit(safe_limit),
                     )
-                    .simulate(Execution::Realistic)
+                    .simulate(Execution::realistic())
                     .await
                     .map(|r| r.value)
                     .map_err(color_eyre::eyre::Report::from)
@@ -1401,9 +1386,11 @@ impl AppController {
             let sub = strapped_contract::strap_to_sub_id(&s);
             let aid = self.clients.contract_id.asset_id(&sub);
             let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            strap_balance = strap_balance.saturating_add(bal);
+            strap_balance = strap_balance
+                .saturating_add(bal.try_into().expect("naively convert 128 to u64"));
             if bal > 0 {
-                owned_straps.push((s, bal));
+                owned_straps
+                    .push((s, bal.try_into().expect("naively convert u128 to u64")));
             }
         }
 
@@ -1476,7 +1463,9 @@ impl AppController {
             active_modifiers,
             owned_straps,
             pot_balance,
-            chip_balance,
+            chip_balance: chip_balance
+                .try_into()
+                .expect("naively assuming this will fit into u64"),
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
             vrf_mode: self.clients.vrf_mode,
@@ -1571,7 +1560,7 @@ impl AppController {
             .methods()
             .modifier_triggers()
             .with_tx_policies(self.script_policies())
-            .simulate(Execution::Realistic)
+            .simulate(Execution::realistic())
             .await?
             .value;
         if let Some((_, target, modifier, _triggered)) = triggers
@@ -1623,7 +1612,7 @@ impl AppController {
             .methods()
             .next_roll_height()
             .with_tx_policies(self.script_policies())
-            .simulate(Execution::Realistic)
+            .simulate(Execution::realistic())
             .await
             .wrap_err(format!(
                 "with gas limit: {}",
@@ -1631,13 +1620,7 @@ impl AppController {
             ))?
             .value
             .ok_or_else(|| eyre!("Next roll height not scheduled"))?;
-        let provider = self
-            .clients
-            .owner
-            .account()
-            .provider()
-            .ok_or_else(|| eyre!("no provider"))?
-            .clone();
+        let provider = self.clients.owner.account().provider().clone();
         let current_height = provider
             .latest_block_height()
             .await
@@ -1737,7 +1720,11 @@ impl AppController {
             let sub = strapped_contract::strap_to_sub_id(strap);
             let aid = self.clients.contract_id.asset_id(&sub);
             let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            pre_straps.push((strap.clone(), bal));
+            pre_straps.push((
+                strap.clone(),
+                bal.try_into()
+                    .expect("naively assuming this will fit into u64"),
+            ));
         }
 
         let mut claimed_ok = false;
@@ -1773,7 +1760,7 @@ impl AppController {
                 .or_insert_with(Vec::new);
             for (roll, strap) in &upgraded_straps {
                 if !entry.iter().any(|(_, existing, _)| existing == strap) {
-                    let cost = Self::strap_cost(strap);
+                    let cost = strap_cost(strap);
                     entry.push((roll.clone(), strap.clone(), cost));
                 }
             }
@@ -1799,7 +1786,7 @@ impl AppController {
             let sub = strapped_contract::strap_to_sub_id(&s);
             let aid = self.clients.contract_id.asset_id(&sub);
             let post = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            let d = post.saturating_sub(pre);
+            let d = post.saturating_sub(pre as u128);
             if d > 0 {
                 strap_deltas.push(format!("{} x{}", super_compact_strap(&s), d));
             }
@@ -1960,30 +1947,6 @@ fn super_compact_strap(s: &strapped::Strap) -> String {
 }
 
 impl AppController {
-    fn strap_cost(strap: &strapped::Strap) -> u64 {
-        match strap.kind {
-            strapped::StrapKind::Shirt => 10,
-            strapped::StrapKind::Pants => 10,
-            strapped::StrapKind::Shoes => 10,
-            strapped::StrapKind::Dress => 10,
-            strapped::StrapKind::Hat => 20,
-            strapped::StrapKind::Glasses => 20,
-            strapped::StrapKind::Watch => 20,
-            strapped::StrapKind::Ring => 20,
-            strapped::StrapKind::Necklace => 50,
-            strapped::StrapKind::Earring => 50,
-            strapped::StrapKind::Bracelet => 50,
-            strapped::StrapKind::Tattoo => 50,
-            strapped::StrapKind::Skirt => 50,
-            strapped::StrapKind::Piercing => 50,
-            strapped::StrapKind::Coat => 100,
-            strapped::StrapKind::Scarf => 100,
-            strapped::StrapKind::Gloves => 100,
-            strapped::StrapKind::Gown => 100,
-            strapped::StrapKind::Belt => 200,
-        }
-    }
-
     fn script_policies(&self) -> TxPolicies {
         TxPolicies::default().with_script_gas_limit(self.clients.safe_script_gas_limit)
     }

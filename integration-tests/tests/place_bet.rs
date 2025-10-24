@@ -45,7 +45,7 @@ async fn place_bet__adds_bets_to_list() {
         .alice_instance()
         .methods()
         .get_my_bets(roll.clone())
-        .simulate(Execution::Realistic)
+        .simulate(Execution::realistic())
         .await
         .unwrap()
         .value;
@@ -106,7 +106,7 @@ async fn place_bet__can_bet_strap() {
         .alice_instance()
         .methods()
         .get_my_bets(roll)
-        .simulate(Execution::Realistic)
+        .simulate(Execution::realistic())
         .await
         .unwrap()
         .value;

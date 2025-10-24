@@ -1,5 +1,5 @@
 use fuels::{
-    accounts::wallet::WalletUnlocked,
+    accounts::wallet::Wallet,
     prelude::{
         AssetConfig,
         AssetId,
@@ -39,28 +39,29 @@ fn fake_vrf_bin_path() -> std::path::PathBuf {
 }
 
 pub async fn get_vrf_contract_instance(
-    wallet: WalletUnlocked,
-) -> (vrf_types::FakeVRFContract<WalletUnlocked>, ContractId) {
+    wallet: Wallet,
+) -> (vrf_types::FakeVRFContract<Wallet>, ContractId) {
     let contract = Contract::load_from(fake_vrf_bin_path(), LoadConfiguration::default())
         .expect("failed to load fake VRF contract binary");
-    let contract_id = contract
+    let response = contract
         .deploy(&wallet, TxPolicies::default())
         .await
         .expect("failed to deploy fake VRF contract");
+    let contract_id = response.contract_id;
 
     let instance = vrf_types::FakeVRFContract::new(contract_id.clone(), wallet);
 
-    (instance, contract_id.into())
+    (instance, contract_id)
 }
 
 pub struct TestContext {
-    alice: WalletUnlocked,
-    owner: WalletUnlocked,
+    alice: Wallet,
+    owner: Wallet,
     contract_id: ContractId,
     chip_asset_id: AssetId,
-    owner_instance: strapped_types::MyContract<WalletUnlocked>,
-    alice_instance: strapped_types::MyContract<WalletUnlocked>,
-    vrf_instance: vrf_types::FakeVRFContract<WalletUnlocked>,
+    owner_instance: strapped_types::MyContract<Wallet>,
+    alice_instance: strapped_types::MyContract<Wallet>,
+    vrf_instance: vrf_types::FakeVRFContract<Wallet>,
 }
 
 impl TestContext {
@@ -135,11 +136,11 @@ impl TestContext {
         }
     }
 
-    pub fn alice(&self) -> WalletUnlocked {
+    pub fn alice(&self) -> Wallet {
         self.alice.clone()
     }
 
-    pub fn owner(&self) -> WalletUnlocked {
+    pub fn owner(&self) -> Wallet {
         self.owner.clone()
     }
 
@@ -151,27 +152,27 @@ impl TestContext {
         self.chip_asset_id
     }
 
-    pub fn owner_contract(&self) -> strapped_types::MyContract<WalletUnlocked> {
+    pub fn owner_contract(&self) -> strapped_types::MyContract<Wallet> {
         self.owner_instance.clone()
     }
 
-    pub fn alice_contract(&self) -> strapped_types::MyContract<WalletUnlocked> {
+    pub fn alice_contract(&self) -> strapped_types::MyContract<Wallet> {
         self.alice_instance.clone()
     }
 
-    pub fn vrf_contract(&self) -> vrf_types::FakeVRFContract<WalletUnlocked> {
+    pub fn vrf_contract(&self) -> vrf_types::FakeVRFContract<Wallet> {
         self.vrf_instance.clone()
     }
 
-    pub fn owner_instance(&self) -> strapped_types::MyContract<WalletUnlocked> {
+    pub fn owner_instance(&self) -> strapped_types::MyContract<Wallet> {
         self.owner_contract()
     }
 
-    pub fn alice_instance(&self) -> strapped_types::MyContract<WalletUnlocked> {
+    pub fn alice_instance(&self) -> strapped_types::MyContract<Wallet> {
         self.alice_contract()
     }
 
-    pub fn vrf_instance(&self) -> vrf_types::FakeVRFContract<WalletUnlocked> {
+    pub fn vrf_instance(&self) -> vrf_types::FakeVRFContract<Wallet> {
         self.vrf_contract()
     }
 
@@ -180,7 +181,7 @@ impl TestContext {
             .owner_instance
             .methods()
             .next_roll_height()
-            .simulate(Execution::StateReadOnly)
+            .simulate(Execution::state_read_only())
             .await
             .expect("simulate next_roll_height failed")
             .value
@@ -205,7 +206,7 @@ impl TestContext {
     }
 
     pub async fn advance_to_block_height(&self, height: u32) {
-        let provider = self.owner.provider().expect("owner has no provider");
+        let provider = self.owner.provider();
         let current_height = provider
             .latest_block_height()
             .await
@@ -218,7 +219,7 @@ impl TestContext {
     }
 }
 
-pub async fn get_wallet() -> WalletUnlocked {
+pub async fn get_wallet() -> Wallet {
     let mut wallets = launch_custom_provider_and_get_wallets(
         WalletsConfig::new(Some(1), Some(1), Some(1_000_000_000)),
         None,

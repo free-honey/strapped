@@ -14,7 +14,16 @@ version = "0.1.0"
 
 [workspace.dependencies]
 anyhow = "1.0.100"
-fuels = "0.70.0"
 tracing = "0.1.41"
 
+# Fuel Crates
+fuels = "0.76.0"
+fuel-indexer = { git = "https://github.com/FuelLabs/fuel-rust-indexer", branch = "main" }
+
+# Local Crates
 generated_abi = { path = "rust-crates/generated_abi" }
+
+[workspace.dev-dependencies]
+
+[patch.crates-io]
+fuels = { git = "https://github.com/FuelLabs/fuels-rs/", branch = "feature/log-id-expose" }

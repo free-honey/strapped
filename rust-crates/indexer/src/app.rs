@@ -3,22 +3,36 @@ use crate::{
     app::{
         event_source::EventSource,
         query_api::QueryAPI,
-        snapshot_storage::{MetadataStorage, SnapshotStorage},
+        snapshot_storage::{
+            MetadataStorage,
+            SnapshotStorage,
+        },
     },
-    events::{ContractEvent, Event},
+    events::{
+        ClaimRewardsEvent,
+        ContractEvent,
+        Event,
+        FundPotEvent,
+        InitializedEvent,
+        ModifierTriggeredEvent,
+        NewGameEvent,
+        PlaceChipBetEvent,
+        PlaceStrapBetEvent,
+        PurchaseModifierEvent,
+        Roll,
+        RollEvent,
+        Strap,
+    },
     snapshot::OverviewSnapshot,
 };
 use anyhow::anyhow;
-use fuels::{tx::ContractIdExt, types::ContractId};
-use generated_abi::{
-    strap_to_sub_id,
-    strapped_types::{
-        ClaimRewardsEvent, FundPotEvent, InitializedEvent, ModifierTriggeredEvent,
-        NewGameEvent, PlaceChipBetEvent, PlaceStrapBetEvent, PurchaseModifierEvent, Roll,
-        RollEvent, Strap,
-    },
+use fuels::{
+    tx::ContractIdExt,
+    types::ContractId,
 };
 use std::cmp;
+
+pub mod fuel_indexer_event_source;
 
 pub mod event_source;
 pub mod query_api;
@@ -78,7 +92,7 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
     }
 }
 
-fn init_tracing() {
+pub(crate) fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
@@ -94,10 +108,13 @@ impl<
     pub async fn run(&mut self) -> Result<()> {
         init_tracing();
         tokio::select! {
-            event = self.events.next_event() => {
-                match event {
-                    Ok((ev, height)) => {
-                        self.handle_event(ev, height)
+            batch = self.events.next_event_batch() => {
+                match batch {
+                    Ok((events, height)) => {
+                        for event in events {
+                            self.handle_event(event, height)?;
+                        }
+                        Ok(())
                     }
                     Err(e) => {
                         Err(e)
@@ -114,7 +131,7 @@ impl<
     }
 
     fn remember_strap(&mut self, strap: &Strap) {
-        let sub_id = strap_to_sub_id(strap);
+        let sub_id = strap.sub_id();
         let asset_id = self.contract_id.asset_id(&sub_id);
         let _ = self.metadata.record_new_asset_id(&asset_id, strap);
     }
