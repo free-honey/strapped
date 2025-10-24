@@ -45,6 +45,10 @@ pub mod fuel_indexer_event_source;
 
 pub mod actix_query_api;
 
+pub mod in_memory_snapshot_storage;
+
+pub mod in_memory_metadata_storage;
+
 pub mod event_source;
 pub mod query_api;
 pub mod snapshot_storage;
