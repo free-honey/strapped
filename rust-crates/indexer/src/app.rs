@@ -2,7 +2,10 @@ use crate::{
     Result,
     app::{
         event_source::EventSource,
-        query_api::QueryAPI,
+        query_api::{
+            Query,
+            QueryAPI,
+        },
         snapshot_storage::{
             MetadataStorage,
             SnapshotStorage,
@@ -39,6 +42,8 @@ use std::cmp;
 mod tests;
 
 pub mod fuel_indexer_event_source;
+
+pub mod reqwest_query_api;
 
 pub mod event_source;
 pub mod query_api;
@@ -112,6 +117,7 @@ impl<
 {
     pub async fn run(&mut self) -> Result<()> {
         init_tracing();
+        tracing::info!("Starting indexer");
         tokio::select! {
             batch = self.events.next_event_batch() => {
                 match batch {
@@ -128,7 +134,7 @@ impl<
             }
             query = self.api.query() => {
                 match query {
-                    Ok(_) => Ok(()),
+                    Ok(inner) => self.handle_query(inner),
                     Err(e) => Err(e),
                 }
             }
@@ -176,6 +182,17 @@ impl<
                     self.handle_purchase_modifier_event(event, height)
                 }
             },
+        }
+    }
+
+    fn handle_query(&self, query: Query) -> Result<()> {
+        tracing::info!("Handling query {:?}", query);
+        match query {
+            Query::LatestSnapshot(sender) => {
+                let snapshot = self.snapshots.latest_snapshot()?;
+                sender.send(snapshot).unwrap();
+                Ok(())
+            }
         }
     }
 

@@ -43,14 +43,22 @@ use std::{
         Mutex,
     },
 };
+use tokio::sync::{
+    mpsc,
+    oneshot,
+};
 
 pub struct FakeEventSource {
-    recv: tokio::sync::mpsc::Receiver<(Vec<Event>, u32)>,
+    recv: mpsc::Receiver<(Vec<Event>, u32)>,
 }
 
 impl FakeEventSource {
-    pub fn new_with_sender() -> (Self, tokio::sync::mpsc::Sender<(Vec<Event>, u32)>) {
-        let (send, recv) = tokio::sync::mpsc::channel(10);
+    pub fn new() -> Self {
+        let (_, recv) = mpsc::channel(10);
+        FakeEventSource { recv }
+    }
+    pub fn new_with_sender() -> (Self, mpsc::Sender<(Vec<Event>, u32)>) {
+        let (send, recv) = mpsc::channel(10);
         let recv = FakeEventSource { recv };
         (recv, send)
     }
@@ -62,6 +70,14 @@ impl EventSource for FakeEventSource {
             Some((events, height)) => Ok((events, height)),
             None => Err(anyhow::anyhow!("No more events")),
         }
+    }
+}
+
+pub struct PendingEventSource;
+
+impl EventSource for PendingEventSource {
+    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
+        pending().await
     }
 }
 
@@ -197,10 +213,34 @@ fn zero_contract_id() -> ContractId {
     ContractId::from([0u8; 32])
 }
 
-pub struct FakeQueryApi;
+pub struct FakeQueryApi {
+    receiver: mpsc::Receiver<Query>,
+}
+
+impl FakeQueryApi {
+    pub fn new() -> Self {
+        let (_, receiver) = mpsc::channel(10);
+        Self { receiver }
+    }
+    pub fn new_with_sender() -> (Self, mpsc::Sender<Query>) {
+        let (sender, receiver) = mpsc::channel(10);
+        (Self { receiver }, sender)
+    }
+}
 
 impl QueryAPI for FakeQueryApi {
-    async fn query(&self) -> crate::Result<Query> {
+    async fn query(&mut self) -> crate::Result<Query> {
+        self.receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No query received"))
+    }
+}
+
+pub struct PendingQueryApi;
+
+impl QueryAPI for PendingQueryApi {
+    async fn query(&mut self) -> Result<Query> {
         pending().await
     }
 }
@@ -226,7 +266,7 @@ async fn run__initialize_event__creates_first_snapshot() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = FakeQueryApi::new();
     let mut app = App::new(
         event_source,
         query_api,
@@ -268,7 +308,7 @@ async fn run__roll_event__updates_snapshot() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -320,7 +360,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
     let historical_copy = snapshot_storage.historical_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -389,7 +429,7 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
     let historical_copy = snapshot_storage.historical_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -458,7 +498,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
     let historical_copy = snapshot_storage.historical_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -522,7 +562,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -568,7 +608,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -607,7 +647,7 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
     let accounts_map = snapshot_storage.account_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -653,7 +693,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -693,7 +733,7 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
     let accounts_map = snapshot_storage.account_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -740,7 +780,7 @@ async fn run__claim_rewards_event__reduces_pot() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -778,7 +818,7 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
     let accounts_map = snapshot_storage.account_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -820,7 +860,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
     let accounts_map = snapshot_storage.account_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -885,7 +925,7 @@ async fn run__fund_pot_event__increases_pot() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -927,7 +967,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
     let snapshot_copy = snapshot_storage.snapshot();
 
     let metadata_storage = FakeMetadataStorage::default();
-    let query_api = FakeQueryApi;
+    let query_api = PendingQueryApi;
     let mut app = App::new(
         event_source,
         query_api,
@@ -955,4 +995,63 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
     expected.modifiers_active[2] = Some(Modifier::Holy);
     expected.modifier_shop[0].3 = true;
     assert_eq!(expected, actual);
+}
+
+fn arb_snapshot() -> OverviewSnapshot {
+    OverviewSnapshot {
+        game_id: 1234,
+        rolls: vec![Roll::Two, Roll::Three, Roll::Four, Roll::Five, Roll::Six],
+        pot_size: 999999999,
+        rewards: vec![(
+            Roll::Ten,
+            Strap {
+                level: 88,
+                kind: StrapKind::Shirt,
+                modifier: Modifier::Nothing,
+            },
+            4444,
+        )],
+        total_bets: [
+            (100, vec![]),
+            (200, vec![]),
+            (300, vec![]),
+            (400, vec![]),
+            (500, vec![]),
+            (600, vec![]),
+            (700, vec![]),
+            (800, vec![]),
+            (900, vec![]),
+            (1000, vec![]),
+        ],
+        modifiers_active: [None; 10],
+        modifier_shop: vec![],
+    }
+}
+#[tokio::test]
+async fn run__latest_snapshot_query__returns_latest_snapshot() {
+    // given
+    let snapshot = arb_snapshot();
+    let height = 1000;
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(snapshot.clone(), height);
+
+    let (query_api, sender) = FakeQueryApi::new_with_sender();
+    let mut app = App::new(
+        PendingEventSource,
+        query_api,
+        snapshot_storage,
+        FakeMetadataStorage::default(),
+        zero_contract_id(),
+    );
+
+    // when
+    let (one_send, one_recv) = oneshot::channel();
+    let query = Query::LatestSnapshot(one_send);
+    sender.send(query).await.unwrap();
+    app.run().await.unwrap();
+
+    // then
+    let response = one_recv.await.unwrap();
+    assert_eq!(response, (snapshot, height));
 }
