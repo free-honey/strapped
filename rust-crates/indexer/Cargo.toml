@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { version = "4.5.50", features = ["derive"] }
 fuels = { workspace = true }
 fuel-core = { version = "0.47.1" }
 fuel-indexer = { workspace = true, features = ["rocksdb"] }
@@ -21,3 +22,7 @@ url = "2.5.7"
 fuel-core-services = "0.47.1"
 serde = { version = "1.0.225", features = ["derive"] }
 tokio-stream = "0.1.17"
+actix-web = "4.9.0"
+
+[dev-dependencies]
+reqwest = { version = "0.12.7", features = ["json"] }

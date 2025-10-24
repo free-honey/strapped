@@ -2,7 +2,10 @@ use crate::{
     Result,
     app::{
         event_source::EventSource,
-        query_api::QueryAPI,
+        query_api::{
+            Query,
+            QueryAPI,
+        },
         snapshot_storage::{
             MetadataStorage,
             SnapshotStorage,
@@ -39,6 +42,12 @@ use std::cmp;
 mod tests;
 
 pub mod fuel_indexer_event_source;
+
+pub mod actix_query_api;
+
+pub mod in_memory_snapshot_storage;
+
+pub mod in_memory_metadata_storage;
 
 pub mod event_source;
 pub mod query_api;
@@ -97,10 +106,15 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
     }
 }
 
-pub(crate) fn init_tracing() {
+pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
+}
+
+pub enum RunState {
+    Exit,
+    Continue,
 }
 
 impl<
@@ -110,8 +124,10 @@ impl<
     Metadata: MetadataStorage,
 > App<Events, API, Snapshots, Metadata>
 {
-    pub async fn run(&mut self) -> Result<()> {
-        init_tracing();
+    pub async fn run<I: Future<Output = ()>>(
+        &mut self,
+        interrupt: I,
+    ) -> Result<RunState> {
         tokio::select! {
             batch = self.events.next_event_batch() => {
                 match batch {
@@ -119,7 +135,7 @@ impl<
                         for event in events {
                             self.handle_event(event, height)?;
                         }
-                        Ok(())
+                        Ok(RunState::Continue)
                     }
                     Err(e) => {
                         Err(e)
@@ -128,9 +144,16 @@ impl<
             }
             query = self.api.query() => {
                 match query {
-                    Ok(_) => Ok(()),
+                    Ok(inner) => {
+                        self.handle_query(inner)?;
+                        Ok(RunState::Continue)
+                    }
                     Err(e) => Err(e),
                 }
+            }
+            _ = interrupt => {
+                tracing::info!("Interrupt received, exiting");
+                Ok(RunState::Exit)
             }
         }
     }
@@ -176,6 +199,17 @@ impl<
                     self.handle_purchase_modifier_event(event, height)
                 }
             },
+        }
+    }
+
+    fn handle_query(&self, query: Query) -> Result<()> {
+        tracing::info!("Handling query {:?}", query);
+        match query {
+            Query::LatestSnapshot(sender) => {
+                let snapshot = self.snapshots.latest_snapshot()?;
+                sender.send(snapshot).unwrap();
+                Ok(())
+            }
         }
     }
 

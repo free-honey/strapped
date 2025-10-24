@@ -3,8 +3,12 @@ use crate::events::{
     Roll,
     Strap,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OverviewSnapshot {
     pub(crate) game_id: u32,
     pub(crate) rolls: Vec<Roll>,
