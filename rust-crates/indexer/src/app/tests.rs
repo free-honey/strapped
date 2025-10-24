@@ -68,6 +68,7 @@ impl EventSource for FakeEventSource {
 pub struct FakeSnapshotStorage {
     snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
     account_snapshots: Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>>,
+    historical_snapshots: Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>,
 }
 
 impl FakeSnapshotStorage {
@@ -75,6 +76,7 @@ impl FakeSnapshotStorage {
         Self {
             snapshot: Arc::new(Mutex::new(None)),
             account_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            historical_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -82,6 +84,7 @@ impl FakeSnapshotStorage {
         Self {
             snapshot: Arc::new(Mutex::new(Some((snapshot, height)))),
             account_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            historical_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -93,6 +96,10 @@ impl FakeSnapshotStorage {
         &self,
     ) -> Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>> {
         self.account_snapshots.clone()
+    }
+
+    pub fn historical_snapshots(&self) -> Arc<Mutex<HashMap<u32, HistoricalSnapshot>>> {
+        self.historical_snapshots.clone()
     }
 
     pub fn identity_key(account: &Identity) -> String {
@@ -147,16 +154,22 @@ impl SnapshotStorage for FakeSnapshotStorage {
         todo!()
     }
 
-    fn historical_snapshots(&self, _game_id: u32) -> crate::Result<HistoricalSnapshot> {
-        todo!()
+    fn historical_snapshots(&self, game_id: u32) -> crate::Result<HistoricalSnapshot> {
+        let guard = self.historical_snapshots.lock().unwrap();
+        guard
+            .get(&game_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No historical snapshot found"))
     }
 
     fn write_historical_snapshot(
         &mut self,
-        _game_id: u32,
-        _snapshot: &HistoricalSnapshot,
+        game_id: u32,
+        snapshot: &HistoricalSnapshot,
     ) -> crate::Result<()> {
-        todo!()
+        let mut guard = self.historical_snapshots.lock().unwrap();
+        guard.insert(game_id, snapshot.clone());
+        Ok(())
     }
 }
 
@@ -304,6 +317,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
     let snapshot_storage =
         FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 200);
     let snapshot_copy = snapshot_storage.snapshot();
+    let historical_copy = snapshot_storage.historical_snapshots();
 
     let metadata_storage = FakeMetadataStorage::default();
     let query_api = FakeQueryApi;
@@ -349,6 +363,148 @@ async fn run__new_game_event__resets_overview_snapshot() {
         false,
     )];
     assert_eq!(expected, actual);
+
+    let historical = historical_copy.lock().unwrap();
+    let stored = historical
+        .get(&existing_snapshot.game_id)
+        .expect("expected historical snapshot");
+    assert_eq!(stored.game_id, existing_snapshot.game_id);
+    assert_eq!(stored.rolls, existing_snapshot.rolls);
+    assert!(stored.modifiers.is_empty());
+}
+
+#[tokio::test]
+async fn run__multiple_new_game_events__persists_historical_snapshots() {
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
+
+    let first_snapshot = OverviewSnapshot {
+        game_id: 1,
+        rolls: vec![Roll::Two, Roll::Three],
+        pot_size: 250,
+        ..OverviewSnapshot::default()
+    };
+
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(first_snapshot.clone(), 150);
+    let historical_copy = snapshot_storage.historical_snapshots();
+
+    let metadata_storage = FakeMetadataStorage::default();
+    let query_api = FakeQueryApi;
+    let mut app = App::new(
+        event_source,
+        query_api,
+        snapshot_storage,
+        metadata_storage,
+        zero_contract_id(),
+    );
+
+    let first_new_game = ContractEvent::NewGame(NewGameEvent {
+        game_id: 2,
+        new_straps: vec![],
+        new_modifiers: vec![],
+    });
+    let second_new_game = ContractEvent::NewGame(NewGameEvent {
+        game_id: 3,
+        new_straps: vec![],
+        new_modifiers: vec![],
+    });
+
+    event_sender
+        .send((vec![Event::ContractEvent(first_new_game)], 210))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    // update snapshot to imitate game progress
+    let mut mid_snapshot = OverviewSnapshot::default();
+    mid_snapshot.game_id = 2;
+    mid_snapshot.pot_size = 500;
+    app.snapshots
+        .update_snapshot(&mid_snapshot, 220)
+        .expect("update snapshot");
+
+    event_sender
+        .send((vec![Event::ContractEvent(second_new_game)], 230))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    let historical = historical_copy.lock().unwrap();
+    let stored_first = historical
+        .get(&first_snapshot.game_id)
+        .expect("missing first historical snapshot");
+    assert_eq!(stored_first.rolls, first_snapshot.rolls);
+    assert!(stored_first.modifiers.is_empty());
+
+    let stored_second = historical
+        .get(&2)
+        .expect("missing second historical snapshot");
+    assert_eq!(stored_second.rolls, mid_snapshot.rolls);
+    assert!(stored_second.modifiers.is_empty());
+}
+
+#[tokio::test]
+async fn run__new_game_event__captures_triggered_modifiers_in_history() {
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
+
+    let existing_snapshot = OverviewSnapshot {
+        game_id: 5,
+        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false)],
+        rolls: vec![Roll::Two],
+        ..OverviewSnapshot::default()
+    };
+    let snapshot_storage =
+        FakeSnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
+    let historical_copy = snapshot_storage.historical_snapshots();
+
+    let metadata_storage = FakeMetadataStorage::default();
+    let query_api = FakeQueryApi;
+    let mut app = App::new(
+        event_source,
+        query_api,
+        snapshot_storage,
+        metadata_storage,
+        zero_contract_id(),
+    );
+
+    let expected_index = 321;
+    let modifier_event = ContractEvent::ModifierTriggered(ModifierTriggeredEvent {
+        game_id: existing_snapshot.game_id,
+        roll_index: expected_index,
+        trigger_roll: Roll::Two,
+        modifier_roll: Roll::Four,
+        modifier: Modifier::Holy,
+    });
+
+    event_sender
+        .send((vec![Event::ContractEvent(modifier_event)], 305))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    let new_game_event = ContractEvent::NewGame(NewGameEvent {
+        game_id: 6,
+        new_straps: vec![],
+        new_modifiers: vec![],
+    });
+
+    event_sender
+        .send((vec![Event::ContractEvent(new_game_event)], 310))
+        .await
+        .unwrap();
+    app.run().await.unwrap();
+
+    let historical = historical_copy.lock().unwrap();
+    let stored = historical
+        .get(&existing_snapshot.game_id)
+        .expect("expected historical snapshot");
+    assert_eq!(stored.rolls, existing_snapshot.rolls);
+    let active_modifier = ActiveModifier::new(expected_index, Modifier::Holy, Roll::Four);
+    assert_eq!(stored.modifiers, vec![active_modifier]);
+
+    // ensure modifiers for new game start fresh
+    let next_entry = historical.get(&6);
+    assert!(next_entry.is_none());
 }
 
 #[tokio::test]
@@ -394,7 +550,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
     // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.modifiers_active[2] = true;
+    expected.modifiers_active[2] = Some(Modifier::Holy);
     expected.modifier_shop[0].3 = true;
     assert_eq!(expected, actual);
 }
@@ -796,7 +952,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
     // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.modifiers_active[2] = true;
+    expected.modifiers_active[2] = Some(Modifier::Holy);
     expected.modifier_shop[0].3 = true;
     assert_eq!(expected, actual);
 }
