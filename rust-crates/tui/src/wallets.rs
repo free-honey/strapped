@@ -5,11 +5,12 @@ use color_eyre::eyre::{
 };
 use eth_keystore::decrypt_key;
 use fuels::{
-    accounts::wallet::DEFAULT_DERIVATION_PATH_PREFIX,
     crypto::SecretKey,
     prelude::{
         Provider,
-        WalletUnlocked,
+        Wallet,
+        derivation::DEFAULT_DERIVATION_PATH,
+        private_key::PrivateKeySigner,
     },
 };
 use rpassword::prompt_password;
@@ -87,7 +88,7 @@ pub fn find_wallet(dir: &Path, name: &str) -> Result<WalletDescriptor> {
 pub fn unlock_wallet(
     descriptor: &WalletDescriptor,
     provider: &Provider,
-) -> Result<WalletUnlocked> {
+) -> Result<Wallet> {
     let prompt = format!("Enter password for wallet '{}': ", descriptor.name);
     let password = prompt_password(prompt).wrap_err("Failed to read wallet password")?;
 
@@ -95,27 +96,22 @@ pub fn unlock_wallet(
         .map_err(|_| eyre!("Invalid password for wallet '{}'", descriptor.name))?;
 
     if let Ok(secret_key) = SecretKey::try_from(secret.as_slice()) {
-        return Ok(WalletUnlocked::new_from_private_key(
-            secret_key,
-            Some(provider.clone()),
-        ));
+        let signer = PrivateKeySigner::new(secret_key.clone());
+        return Ok(Wallet::new(signer, provider.clone()));
     }
 
     if let Ok(mnemonic) = std::str::from_utf8(&secret) {
         let word_count = mnemonic.split_whitespace().count();
         if word_count >= 12 {
-            let derivation_path = format!("{DEFAULT_DERIVATION_PATH_PREFIX}/0'/0/0");
-            return WalletUnlocked::new_from_mnemonic_phrase_with_path(
+            // let derivation_path = format!("{DEFAULT_DERIVATION_PATH_PREFIX}/0'/0/0");
+            let private_key = SecretKey::new_from_mnemonic_phrase_with_path(
                 mnemonic,
-                Some(provider.clone()),
-                &derivation_path,
-            )
-            .wrap_err_with(|| {
-                format!(
-                    "Failed to derive account from mnemonic stored in wallet '{}'",
-                    descriptor.name
-                )
-            });
+                DEFAULT_DERIVATION_PATH,
+            )?;
+            return Ok(Wallet::new(
+                PrivateKeySigner::new(private_key),
+                provider.clone(),
+            ));
         }
     }
 
