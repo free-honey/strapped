@@ -10,3 +10,4 @@ cc 757809f2508534edc6bedffd840e65f9f71f261683f355223153c45f3240e5a3 # shrinks to
 cc 8a3a9174bf25a255ee5b46f6edd238af76578ca68aa6b7370495a15f5c909cec # shrinks to seven_mult = 319
 cc 8564887a4a60682dae23d45f1dac02b76be4b5b9414a726d074ba24aac58e947 # shrinks to seven_vrf_number = 23420
 cc 606ace4a4814850c7814ca83edf714cf793beb37890619c693fa74d618735bef # shrinks to seven_vrf_number = 4480
+cc 7bcef50267e82d8271a53ca364536cc0bbb5503a18fefed13a423f12d186762b # shrinks to (vrf_number, bet_amount) = (0, 1)

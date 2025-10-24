@@ -106,10 +106,15 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
     }
 }
 
-pub(crate) fn init_tracing() {
+pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init();
+}
+
+pub enum RunState {
+    Exit,
+    Continue,
 }
 
 impl<
@@ -119,7 +124,10 @@ impl<
     Metadata: MetadataStorage,
 > App<Events, API, Snapshots, Metadata>
 {
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run<I: Future<Output = ()>>(
+        &mut self,
+        interrupt: I,
+    ) -> Result<RunState> {
         init_tracing();
         tracing::info!("Starting indexer");
         tokio::select! {
@@ -129,7 +137,7 @@ impl<
                         for event in events {
                             self.handle_event(event, height)?;
                         }
-                        Ok(())
+                        Ok(RunState::Continue)
                     }
                     Err(e) => {
                         Err(e)
@@ -138,9 +146,16 @@ impl<
             }
             query = self.api.query() => {
                 match query {
-                    Ok(inner) => self.handle_query(inner),
+                    Ok(inner) => {
+                        self.handle_query(inner)?;
+                        Ok(RunState::Continue)
+                    }
                     Err(e) => Err(e),
                 }
+            }
+            _ = interrupt => {
+                tracing::info!("Interrupt received, exiting");
+                Ok(RunState::Exit)
             }
         }
     }

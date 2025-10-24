@@ -7,15 +7,15 @@ use crate::{
     snapshot::OverviewSnapshot,
 };
 use actix_web::{
+    App,
+    HttpServer,
     dev::ServerHandle,
     error::ErrorInternalServerError,
     web,
-    App,
-    HttpServer,
 };
 use anyhow::{
-    anyhow,
     Context,
+    anyhow,
 };
 use serde::{
     Deserialize,
@@ -44,15 +44,17 @@ pub struct ActixQueryApi {
 }
 
 impl ActixQueryApi {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(port: Option<u16>) -> Result<Self> {
         let (sender, receiver) = mpsc::channel(16);
 
-        let listener = TcpListener::bind(("127.0.0.1", 0))
+        let listener = TcpListener::bind(("127.0.0.1", port.unwrap_or(0)))
             .context("failed to bind HTTP listener for query API")?;
         let address = listener
             .local_addr()
             .context("failed to read listener address")?;
         let base_url = format!("http://{}", address);
+
+        tracing::info!("query API listening on {}", base_url);
 
         let server_sender = sender.clone();
         let server = HttpServer::new(move || {
@@ -108,12 +110,9 @@ async fn handle_latest_snapshot(
     let (response_sender, response_receiver) = oneshot::channel();
     let query = Query::LatestSnapshot(response_sender);
 
-    sender
-        .get_ref()
-        .clone()
-        .send(query)
-        .await
-        .map_err(|_| ErrorInternalServerError("unable to forward latest snapshot query"))?;
+    sender.get_ref().clone().send(query).await.map_err(|_| {
+        ErrorInternalServerError("unable to forward latest snapshot query")
+    })?;
 
     let (snapshot, block_height) = response_receiver
         .await
@@ -133,7 +132,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_and_respond_to_latest_snapshot() {
         // given
-        let mut api = ActixQueryApi::new().await.unwrap();
+        let mut api = ActixQueryApi::new(None).await.unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}/snapshot/latest", api.base_url());
         let expected_snapshot = OverviewSnapshot::new();

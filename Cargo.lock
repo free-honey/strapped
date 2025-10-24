@@ -3742,6 +3742,7 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "anyhow",
+ "clap",
  "fuel-core",
  "fuel-core-services",
  "fuel-indexer",

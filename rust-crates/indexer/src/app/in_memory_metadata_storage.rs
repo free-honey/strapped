@@ -10,6 +10,12 @@ pub struct InMemoryMetadataStorage {
     straps: HashMap<AssetId, Strap>,
 }
 
+impl InMemoryMetadataStorage {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 impl MetadataStorage for InMemoryMetadataStorage {
     fn strap_asset_id(&self, strap_id: &AssetId) -> crate::Result<Option<Strap>> {
         Ok(self.straps.get(strap_id).cloned())

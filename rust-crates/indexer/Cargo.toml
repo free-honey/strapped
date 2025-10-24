@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { version = "4.5.50", features = ["derive"] }
 fuels = { workspace = true }
 fuel-core = { version = "0.47.1" }
 fuel-indexer = { workspace = true, features = ["rocksdb"] }

@@ -159,7 +159,7 @@ async fn run__initialize_event__creates_first_snapshot() {
         .send((vec![init_event], init_height))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let expected = OverviewSnapshot::new();
@@ -201,7 +201,7 @@ async fn run__roll_event__updates_snapshot() {
         .send((vec![roll_event], roll_height))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let expected = {
@@ -265,7 +265,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
         .send((vec![Event::ContractEvent(new_game_event)], new_game_height))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
@@ -329,7 +329,7 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
         .send((vec![Event::ContractEvent(first_new_game)], 210))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // update snapshot to imitate game progress
     let mut mid_snapshot = OverviewSnapshot::default();
@@ -343,7 +343,7 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
         .send((vec![Event::ContractEvent(second_new_game)], 230))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let historical = historical_copy.lock().unwrap();
     let stored_first = historical
@@ -396,7 +396,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         .send((vec![Event::ContractEvent(modifier_event)], 305))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let new_game_event = ContractEvent::NewGame(NewGameEvent {
         game_id: 6,
@@ -408,7 +408,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         .send((vec![Event::ContractEvent(new_game_event)], 310))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let historical = historical_copy.lock().unwrap();
     let stored = historical
@@ -461,7 +461,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
         .send((vec![Event::ContractEvent(modifier_event)], event_height))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
@@ -505,7 +505,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
         .send((vec![Event::ContractEvent(chip_event)], 305))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
@@ -545,7 +545,7 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
         .send((vec![Event::ContractEvent(chip_event)], 305))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
@@ -592,7 +592,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
         .send((vec![Event::ContractEvent(strap_event)], 415))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
@@ -633,7 +633,7 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
         .send((vec![Event::ContractEvent(strap_event)], 415))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
@@ -677,7 +677,7 @@ async fn run__claim_rewards_event__reduces_pot() {
         .send((vec![Event::ContractEvent(claim_event)], 515))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
@@ -716,7 +716,7 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
         .send((vec![Event::ContractEvent(claim_event)], 515))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
@@ -759,7 +759,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
         .send((vec![Event::ContractEvent(new_game)], 100))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let player = Identity::Address(Address::from([9u8; 32]));
     let claim_event = ContractEvent::ClaimRewards(ClaimRewardsEvent {
@@ -774,7 +774,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
         .send((vec![Event::ContractEvent(claim_event)], 520))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
@@ -820,7 +820,7 @@ async fn run__fund_pot_event__increases_pot() {
         .send((vec![Event::ContractEvent(fund_event)], 615))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
@@ -863,7 +863,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
         .send((vec![Event::ContractEvent(purchase_event)], 715))
         .await
         .unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
@@ -925,7 +925,7 @@ async fn run__latest_snapshot_query__returns_latest_snapshot() {
     let (one_send, one_recv) = oneshot::channel();
     let query = Query::LatestSnapshot(one_send);
     sender.send(query).await.unwrap();
-    app.run().await.unwrap();
+    app.run(pending()).await.unwrap();
 
     // then
     let response = one_recv.await.unwrap();

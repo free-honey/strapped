@@ -203,8 +203,7 @@ fn map_identity(identity: Identity) -> Identity {
     identity
 }
 
-#[allow(dead_code)]
-fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> {
+pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Event> {
     try_parse_events!(
         [decoder, receipt]
         InitializedEvent => |event| {
