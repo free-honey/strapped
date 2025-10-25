@@ -265,19 +265,19 @@ impl<
             new_modifiers,
         } = event;
 
-        if let Ok((previous_snapshot, _)) = self.snapshots.latest_snapshot() {
-            let historical = HistoricalSnapshot::new(
-                previous_snapshot.game_id,
-                previous_snapshot.rolls.clone(),
-                self.historical_modifiers.clone(),
-            );
-            self.historical_modifiers.clear();
-            let _ = self
-                .snapshots
-                .write_historical_snapshot(previous_snapshot.game_id, &historical);
-        }
+        let (previous_snapshot, _) = self.snapshots.latest_snapshot()?;
+        let historical = HistoricalSnapshot::new(
+            previous_snapshot.game_id,
+            previous_snapshot.rolls.clone(),
+            self.historical_modifiers.clone(),
+        );
+        self.historical_modifiers.clear();
+        let _ = self
+            .snapshots
+            .write_historical_snapshot(previous_snapshot.game_id, &historical);
 
         let mut snapshot = OverviewSnapshot::default();
+        snapshot.pot_size = previous_snapshot.pot_size;
         snapshot.game_id = game_id;
         snapshot.rewards = new_straps.clone();
         snapshot.modifier_shop = new_modifiers
