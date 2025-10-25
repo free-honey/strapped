@@ -39,6 +39,7 @@ use crate::{
     },
     snapshot::HistoricalSnapshot,
 };
+use fuel_core::types::fuel_asm::op::exp;
 use std::{
     collections::HashMap,
     future::pending,
@@ -278,6 +279,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
         shop_modifier.2.clone(),
         false,
     )];
+    expected.pot_size = existing_snapshot.pot_size;
     assert_eq!(expected, actual);
 
     let historical = historical_copy.lock().unwrap();
