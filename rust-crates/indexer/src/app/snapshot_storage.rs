@@ -31,6 +31,7 @@ pub trait SnapshotStorage {
     fn update_account_snapshot(
         &mut self,
         account: &Identity,
+        game_id: u32,
         account_snapshot: &AccountSnapshot,
         height: u32,
     ) -> crate::Result<()>;

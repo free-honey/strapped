@@ -60,7 +60,7 @@ impl Default for OverviewSnapshot {
 
 // Used for current game, as well as historical games
 // Historical snapshots can be used to claim rewards for past games
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountSnapshot {
     pub total_chip_bet: u64,
     pub strap_bets: Vec<(Strap, u64)>,

@@ -3,6 +3,7 @@ use crate::{
     app::{
         event_source::EventSource,
         query_api::{
+            AccountSnapshotQuery,
             Query,
             QueryAPI,
         },
@@ -32,6 +33,7 @@ use crate::{
         OverviewSnapshot,
     },
 };
+use anyhow::anyhow;
 use fuels::{
     tx::ContractIdExt,
     types::ContractId,
@@ -210,6 +212,16 @@ impl<
                 sender.send(snapshot).unwrap();
                 Ok(())
             }
+            Query::LatestAccountSnapshot(inner) => {
+                let AccountSnapshotQuery { identity, sender } = inner;
+                let snapshot = self.snapshots.latest_account_snapshot(&identity)?;
+                sender.send(snapshot)
+                    .map_err(
+                        |(snapshot, height)|
+                            anyhow!("Could not send `LatestAccountSnapshot` response for {identity:?}: {snapshot:?} at {height:?}")
+                    )?;
+                Ok(())
+            }
         }
     }
 
@@ -301,6 +313,7 @@ impl<
     ) -> Result<()> {
         tracing::info!("Handling PlaceChipBetEvent at height {}", height);
         let PlaceChipBetEvent {
+            game_id,
             player,
             amount,
             roll,
@@ -321,8 +334,12 @@ impl<
             .unwrap_or_default();
         account_snapshot.total_chip_bet =
             account_snapshot.total_chip_bet.saturating_add(amount);
-        self.snapshots
-            .update_account_snapshot(&player, &account_snapshot, height)
+        self.snapshots.update_account_snapshot(
+            &player,
+            game_id,
+            &account_snapshot,
+            height,
+        )
     }
 
     fn handle_place_strap_bet_event(
@@ -332,6 +349,7 @@ impl<
     ) -> Result<()> {
         tracing::info!("Handling PlaceStrapBetEvent at height {}", height);
         let PlaceStrapBetEvent {
+            game_id,
             player,
             amount,
             bet_roll_index,
@@ -355,8 +373,12 @@ impl<
             .unwrap_or_default();
         accumulate_strap(&mut account_snapshot.strap_bets, &strap, amount);
         self.remember_strap(&strap);
-        self.snapshots
-            .update_account_snapshot(&player, &account_snapshot, height)
+        self.snapshots.update_account_snapshot(
+            &player,
+            game_id,
+            &account_snapshot,
+            height,
+        )
     }
 
     fn handle_claim_rewards_event(
@@ -366,6 +388,7 @@ impl<
     ) -> Result<()> {
         tracing::info!("Handling ClaimRewardsEvent at height {}", height);
         let ClaimRewardsEvent {
+            game_id,
             player,
             total_chips_winnings,
             total_strap_winnings,
@@ -388,8 +411,12 @@ impl<
             self.remember_strap(strap);
         }
         account_snapshot.claimed_rewards = Some((total_chips_winnings, strap_rewards));
-        self.snapshots
-            .update_account_snapshot(&player, &account_snapshot, height)
+        self.snapshots.update_account_snapshot(
+            &player,
+            game_id,
+            &account_snapshot,
+            height,
+        )
     }
 
     fn handle_fund_pot_event(&mut self, event: FundPotEvent, height: u32) -> Result<()> {
