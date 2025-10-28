@@ -18,7 +18,7 @@ pub enum Query {
 impl Query {
     pub fn latest_account_summary(
         identity: Identity,
-        sender: oneshot::Sender<(AccountSnapshot, u32)>,
+        sender: oneshot::Sender<Option<(AccountSnapshot, u32)>>,
     ) -> Query {
         let inner = AccountSnapshotQuery { identity, sender };
         Query::LatestAccountSnapshot(inner)
@@ -28,5 +28,5 @@ impl Query {
 #[derive(Debug)]
 pub struct AccountSnapshotQuery {
     pub identity: Identity,
-    pub sender: oneshot::Sender<(AccountSnapshot, u32)>,
+    pub sender: oneshot::Sender<Option<(AccountSnapshot, u32)>>,
 }

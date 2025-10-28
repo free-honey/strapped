@@ -217,8 +217,15 @@ impl<
                 let snapshot = self.snapshots.latest_account_snapshot(&identity)?;
                 sender.send(snapshot)
                     .map_err(
-                        |(snapshot, height)|
-                            anyhow!("Could not send `LatestAccountSnapshot` response for {identity:?}: {snapshot:?} at {height:?}")
+                        |maybe_snapshot|
+                            match maybe_snapshot {
+                                Some((snapshot, height)) => {
+                                    anyhow!("Could not send `LatestAccountSnapshot` response for {identity:?}: {snapshot:?} at {height:?}")
+                                }
+                                None => {
+                                    anyhow!("Could not send `LatestAccountSnapshot` response for {identity:?}, also it was `None` btw")
+                                }
+                            }
                     )?;
                 Ok(())
             }
@@ -329,7 +336,7 @@ impl<
 
         let mut account_snapshot = self
             .snapshots
-            .latest_account_snapshot(&player)
+            .latest_account_snapshot(&player)?
             .map(|(snap, _)| snap)
             .unwrap_or_default();
         account_snapshot.total_chip_bet =
@@ -368,7 +375,7 @@ impl<
 
         let mut account_snapshot = self
             .snapshots
-            .latest_account_snapshot(&player)
+            .latest_account_snapshot(&player)?
             .map(|(snap, _)| snap)
             .unwrap_or_default();
         accumulate_strap(&mut account_snapshot.strap_bets, &strap, amount);
@@ -400,7 +407,7 @@ impl<
 
         let mut account_snapshot = self
             .snapshots
-            .latest_account_snapshot(&player)
+            .latest_account_snapshot(&player)?
             .map(|(snap, _)| snap)
             .unwrap_or_default();
         account_snapshot.total_chip_won = account_snapshot

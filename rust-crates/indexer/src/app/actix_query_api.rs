@@ -152,7 +152,7 @@ async fn handle_latest_snapshot(
 async fn handle_account_snapshot(
     sender: web::Data<mpsc::Sender<Query>>,
     account_identity: web::Path<String>,
-) -> actix_web::Result<web::Json<LatestAccountSnapshotDto>> {
+) -> actix_web::Result<web::Json<Option<LatestAccountSnapshotDto>>> {
     tracing::info!("received account snapshot request");
     let (response_sender, response_receiver) = oneshot::channel();
     let inner = Address::from_str(&account_identity)
@@ -164,14 +164,17 @@ async fn handle_account_snapshot(
         ErrorInternalServerError("unable to forward latest snapshot query")
     })?;
 
-    let (snapshot, block_height) = response_receiver
+    if let Some((snapshot, block_height)) = response_receiver
         .await
-        .map_err(|_| ErrorInternalServerError("latest snapshot responder dropped"))?;
-
-    Ok(web::Json(LatestAccountSnapshotDto {
-        snapshot,
-        block_height,
-    }))
+        .map_err(|_| ErrorInternalServerError("latest snapshot responder dropped"))?
+    {
+        Ok(web::Json(Some(LatestAccountSnapshotDto {
+            snapshot,
+            block_height,
+        })))
+    } else {
+        Ok(web::Json(None))
+    }
 }
 
 #[allow(non_snake_case)]
@@ -249,7 +252,7 @@ mod tests {
             let AccountSnapshotQuery { identity, sender } = inner;
             assert_eq!(expected_identity, identity);
             sender
-                .send((expected_snapshot.clone(), expected_height))
+                .send(Some((expected_snapshot.clone(), expected_height)))
                 .unwrap();
         } else {
             panic!("expected latest account snapshot query got {:?}", query);

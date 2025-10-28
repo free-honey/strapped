@@ -18,7 +18,7 @@ pub trait SnapshotStorage {
     fn latest_account_snapshot(
         &self,
         account: &Identity,
-    ) -> crate::Result<(AccountSnapshot, u32)>;
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>>;
 
     /// write or overwrite snapshot at given block height
     fn update_snapshot(

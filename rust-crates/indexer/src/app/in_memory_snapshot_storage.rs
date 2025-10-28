@@ -73,16 +73,15 @@ impl SnapshotStorage for InMemorySnapshotStorage {
     fn latest_account_snapshot(
         &self,
         account: &Identity,
-    ) -> crate::Result<(AccountSnapshot, u32)> {
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>> {
         let key = Self::identity_key(account);
         let guard = self.account_snapshots.lock().unwrap();
         let game_id = self.latest_game_id;
-        guard
+        let maybe_snapshot = guard
             .get(&key)
-            .ok_or_else(|| anyhow::anyhow!("No account snapshot found"))?
-            .get(&game_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No account snapshot found"))
+            .and_then(|inner| inner.get(&game_id))
+            .cloned();
+        Ok(maybe_snapshot)
     }
 
     fn update_snapshot(
