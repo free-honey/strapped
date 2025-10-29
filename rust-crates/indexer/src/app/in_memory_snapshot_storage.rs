@@ -17,14 +17,16 @@ use std::{
 
 #[derive(Clone)]
 pub struct InMemorySnapshotStorage {
+    latest_game_id: u32,
     snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
-    account_snapshots: Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>>,
+    account_snapshots: Arc<Mutex<HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>>>,
     historical_snapshots: Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>,
 }
 
 impl InMemorySnapshotStorage {
     pub fn new() -> Self {
         Self {
+            latest_game_id: 0,
             snapshot: Arc::new(Mutex::new(None)),
             account_snapshots: Arc::new(Mutex::new(HashMap::new())),
             historical_snapshots: Arc::new(Mutex::new(HashMap::new())),
@@ -33,6 +35,7 @@ impl InMemorySnapshotStorage {
 
     pub fn new_with_snapshot(snapshot: OverviewSnapshot, height: u32) -> Self {
         Self {
+            latest_game_id: 0,
             snapshot: Arc::new(Mutex::new(Some((snapshot, height)))),
             account_snapshots: Arc::new(Mutex::new(HashMap::new())),
             historical_snapshots: Arc::new(Mutex::new(HashMap::new())),
@@ -45,7 +48,7 @@ impl InMemorySnapshotStorage {
 
     pub fn account_snapshots(
         &self,
-    ) -> Arc<Mutex<HashMap<String, (AccountSnapshot, u32)>>> {
+    ) -> Arc<Mutex<HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>>> {
         self.account_snapshots.clone()
     }
 
@@ -70,13 +73,29 @@ impl SnapshotStorage for InMemorySnapshotStorage {
     fn latest_account_snapshot(
         &self,
         account: &Identity,
-    ) -> crate::Result<(AccountSnapshot, u32)> {
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>> {
         let key = Self::identity_key(account);
         let guard = self.account_snapshots.lock().unwrap();
-        guard
+        let game_id = self.latest_game_id;
+        let maybe_snapshot = guard
             .get(&key)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No account snapshot found"))
+            .and_then(|inner| inner.get(&game_id))
+            .cloned();
+        Ok(maybe_snapshot)
+    }
+
+    fn account_snapshot_at(
+        &self,
+        account: &Identity,
+        game_id: u32,
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>> {
+        let key = Self::identity_key(account);
+        let guard = self.account_snapshots.lock().unwrap();
+        let maybe_snapshot = guard
+            .get(&key)
+            .and_then(|inner| inner.get(&game_id))
+            .cloned();
+        Ok(maybe_snapshot)
     }
 
     fn update_snapshot(
@@ -85,6 +104,7 @@ impl SnapshotStorage for InMemorySnapshotStorage {
         height: u32,
     ) -> crate::Result<()> {
         let mut guard = self.snapshot.lock().unwrap();
+        self.latest_game_id = snapshot.game_id;
         *guard = Some((snapshot.clone(), height));
         Ok(())
     }
@@ -92,12 +112,14 @@ impl SnapshotStorage for InMemorySnapshotStorage {
     fn update_account_snapshot(
         &mut self,
         account: &Identity,
+        game_id: u32,
         account_snapshot: &AccountSnapshot,
         height: u32,
     ) -> crate::Result<()> {
         let key = Self::identity_key(account);
         let mut guard = self.account_snapshots.lock().unwrap();
-        guard.insert(key, (account_snapshot.clone(), height));
+        let inner_map = guard.entry(key).or_default();
+        inner_map.insert(game_id, (account_snapshot.clone(), height));
         Ok(())
     }
 

@@ -7,16 +7,12 @@ use crate::{
         ContractEvent,
         Event,
     },
-    snapshot::AccountSnapshot,
 };
 use anyhow::Result;
-use fuels::{
-    prelude::AssetId,
-    types::{
-        Address,
-        ContractId,
-        Identity,
-    },
+use fuels::types::{
+    Address,
+    ContractId,
+    Identity,
 };
 
 use crate::{
@@ -37,17 +33,8 @@ use crate::{
         Strap,
         StrapKind,
     },
-    snapshot::HistoricalSnapshot,
 };
-use fuel_core::types::fuel_asm::op::exp;
-use std::{
-    collections::HashMap,
-    future::pending,
-    sync::{
-        Arc,
-        Mutex,
-    },
-};
+use std::future::pending;
 use tokio::sync::{
     mpsc,
     oneshot,
@@ -58,10 +45,6 @@ pub struct FakeEventSource {
 }
 
 impl FakeEventSource {
-    pub fn new() -> Self {
-        let (_, recv) = mpsc::channel(10);
-        FakeEventSource { recv }
-    }
     pub fn new_with_sender() -> (Self, mpsc::Sender<(Vec<Event>, u32)>) {
         let (send, recv) = mpsc::channel(10);
         let recv = FakeEventSource { recv };
@@ -95,10 +78,6 @@ pub struct FakeQueryApi {
 }
 
 impl FakeQueryApi {
-    pub fn new() -> Self {
-        let (_, receiver) = mpsc::channel(10);
-        Self { receiver }
-    }
     pub fn new_with_sender() -> (Self, mpsc::Sender<Query>) {
         let (sender, receiver) = mpsc::channel(10);
         (Self { receiver }, sender)
@@ -551,7 +530,13 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
 
     let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
-    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    let game_id = 0;
+    let (account_snapshot, _) = account_guard
+        .get(&key)
+        .unwrap()
+        .get(&game_id)
+        .cloned()
+        .unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 150);
     assert!(account_snapshot.strap_bets.is_empty());
     assert_eq!(account_snapshot.total_chip_won, 0);
@@ -638,8 +623,14 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
     app.run(pending()).await.unwrap();
 
     let key = InMemorySnapshotStorage::identity_key(&player);
+    let game_id = 0;
     let account_guard = accounts_map.lock().unwrap();
-    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    let (account_snapshot, _) = account_guard
+        .get(&key)
+        .unwrap()
+        .get(&game_id)
+        .cloned()
+        .unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 0);
     assert_eq!(account_snapshot.total_chip_won, 0);
     assert_eq!(account_snapshot.claimed_rewards, None);
@@ -720,9 +711,15 @@ async fn run__claim_rewards_event__updates_account_snapshot() {
         .unwrap();
     app.run(pending()).await.unwrap();
 
+    let game_id = 0;
     let key = InMemorySnapshotStorage::identity_key(&player);
     let account_guard = accounts_map.lock().unwrap();
-    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    let (account_snapshot, _) = account_guard
+        .get(&key)
+        .unwrap()
+        .get(&game_id)
+        .cloned()
+        .unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 0);
     assert!(account_snapshot.strap_bets.is_empty());
     assert_eq!(account_snapshot.total_chip_won, 120);
@@ -765,7 +762,7 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
 
     let player = Identity::Address(Address::from([9u8; 32]));
     let claim_event = ContractEvent::ClaimRewards(ClaimRewardsEvent {
-        game_id: 1,
+        game_id: 0,
         player: player.clone(),
         enabled_modifiers: vec![(Roll::Two, Modifier::Lucky)],
         total_chips_winnings: 75,
@@ -779,8 +776,14 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
     app.run(pending()).await.unwrap();
 
     let key = InMemorySnapshotStorage::identity_key(&player);
+    let game_id = 0;
     let account_guard = accounts_map.lock().unwrap();
-    let (account_snapshot, _) = account_guard.get(&key).cloned().unwrap();
+    let (account_snapshot, _) = account_guard
+        .get(&key)
+        .unwrap()
+        .get(&game_id)
+        .cloned()
+        .unwrap();
     assert_eq!(account_snapshot.total_chip_bet, 0);
     assert!(account_snapshot.strap_bets.is_empty());
     assert_eq!(account_snapshot.total_chip_won, 75);
@@ -932,4 +935,134 @@ async fn run__latest_snapshot_query__returns_latest_snapshot() {
     // then
     let response = one_recv.await.unwrap();
     assert_eq!(response, (snapshot, height));
+}
+
+#[tokio::test]
+async fn run__latest_account_snapshot_query__returns_latest_account_snapshot() {
+    // given
+    let overview_snapshot = OverviewSnapshot {
+        game_id: 42,
+        ..OverviewSnapshot::default()
+    };
+    let overview_height = 500;
+    let identity = Identity::Address(Address::from([9u8; 32]));
+    let expected_snapshot = crate::snapshot::AccountSnapshot::default();
+    let expected_height = 777;
+
+    let mut snapshot_storage = InMemorySnapshotStorage::new();
+    snapshot_storage
+        .update_snapshot(&overview_snapshot, overview_height)
+        .unwrap();
+    snapshot_storage
+        .update_account_snapshot(
+            &identity,
+            overview_snapshot.game_id,
+            &expected_snapshot,
+            expected_height,
+        )
+        .unwrap();
+
+    let (query_api, sender) = FakeQueryApi::new_with_sender();
+    let mut app = App::new(
+        PendingEventSource,
+        query_api,
+        snapshot_storage,
+        InMemoryMetadataStorage::default(),
+        zero_contract_id(),
+    );
+
+    // when
+    let (one_send, one_recv) = oneshot::channel();
+    let query = Query::latest_account_summary(identity.clone(), one_send);
+    sender.send(query).await.unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let response = one_recv.await.unwrap();
+    assert_eq!(
+        response,
+        Some((expected_snapshot, expected_height))
+    );
+}
+
+#[tokio::test]
+async fn run__historical_snapshot_query__returns_historical_snapshot() {
+    // given
+    let game_id = 1337u32;
+    let expected_snapshot = crate::snapshot::HistoricalSnapshot::new(
+        game_id,
+        vec![Roll::Six, Roll::Seven],
+        vec![ActiveModifier::new(3, Modifier::Lucky, Roll::Six)],
+    );
+
+    let mut snapshot_storage = InMemorySnapshotStorage::new();
+    snapshot_storage
+        .write_historical_snapshot(game_id, &expected_snapshot)
+        .unwrap();
+
+    let (query_api, sender) = FakeQueryApi::new_with_sender();
+    let mut app = App::new(
+        PendingEventSource,
+        query_api,
+        snapshot_storage,
+        InMemoryMetadataStorage::default(),
+        zero_contract_id(),
+    );
+
+    // when
+    let (one_send, one_recv) = oneshot::channel();
+    let query = Query::historical_snapshot(game_id, one_send);
+    sender.send(query).await.unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let response = one_recv.await.unwrap();
+    assert_eq!(response, Some(expected_snapshot));
+}
+
+#[tokio::test]
+async fn run__historical_account_snapshot_query__returns_historical_account_snapshot() {
+    // given
+    let identity = Identity::Address(Address::from([5u8; 32]));
+    let game_id = 21u32;
+    let expected_snapshot = crate::snapshot::AccountSnapshot {
+        total_chip_bet: 99,
+        strap_bets: vec![(Strap::new(1, StrapKind::Hat, Modifier::Lucky), 88)],
+        total_chip_won: 77,
+        claimed_rewards: Some((55, vec![])),
+    };
+    let expected_height = 4242;
+
+    let mut snapshot_storage = InMemorySnapshotStorage::new();
+    snapshot_storage
+        .update_account_snapshot(
+            &identity,
+            game_id,
+            &expected_snapshot,
+            expected_height,
+        )
+        .unwrap();
+
+    let (query_api, sender) = FakeQueryApi::new_with_sender();
+    let mut app = App::new(
+        PendingEventSource,
+        query_api,
+        snapshot_storage,
+        InMemoryMetadataStorage::default(),
+        zero_contract_id(),
+    );
+
+    // when
+    let (one_send, one_recv) = oneshot::channel();
+    let query =
+        Query::historical_account_summary(identity.clone(), game_id, one_send);
+    sender.send(query).await.unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let response = one_recv.await.unwrap();
+    assert_eq!(
+        response,
+        Some((expected_snapshot, expected_height))
+    );
 }

@@ -18,7 +18,14 @@ pub trait SnapshotStorage {
     fn latest_account_snapshot(
         &self,
         account: &Identity,
-    ) -> crate::Result<(AccountSnapshot, u32)>;
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>>;
+
+    /// retrieve account snapshot for the given game id
+    fn account_snapshot_at(
+        &self,
+        account: &Identity,
+        game_id: u32,
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>>;
 
     /// write or overwrite snapshot at given block height
     fn update_snapshot(
@@ -31,6 +38,7 @@ pub trait SnapshotStorage {
     fn update_account_snapshot(
         &mut self,
         account: &Identity,
+        game_id: u32,
         account_snapshot: &AccountSnapshot,
         height: u32,
     ) -> crate::Result<()>;

@@ -3750,6 +3750,7 @@ dependencies = [
  "generated_abi",
  "reqwest",
  "serde",
+ "serde_json",
  "tempdir",
  "tokio",
  "tokio-stream",
