@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
             RunState::Continue => continue,
             RunState::Exit => {
                 tracing::info!("Exiting indexer service");
-                return Ok(())
+                return Ok(());
             }
         }
     }

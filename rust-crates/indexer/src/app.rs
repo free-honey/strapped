@@ -4,6 +4,8 @@ use crate::{
         event_source::EventSource,
         query_api::{
             AccountSnapshotQuery,
+            HistoricalAccountSnapshotQuery,
+            HistoricalSnapshotQuery,
             Query,
             QueryAPI,
         },
@@ -225,8 +227,44 @@ impl<
                                 None => {
                                     anyhow!("Could not send `LatestAccountSnapshot` response for {identity:?}, also it was `None` btw")
                                 }
+                        }
+                    )?;
+                Ok(())
+            }
+            Query::HistoricalSnapshot(inner) => {
+                let HistoricalSnapshotQuery { game_id, sender } = inner;
+                let snapshot = self.snapshots.historical_snapshots(game_id)?;
+                sender.send(Some(snapshot))
+                    .map_err(
+                        |maybe_snapshot|
+                            match maybe_snapshot {
+                                Some(snapshot) => {
+                                    anyhow!("Could not send `HistoricalSnapshot` response for {game_id:?}: {snapshot:?}")
+                                }
+                                None => {
+                                    anyhow!("Could not send `HistoricalSnapshot` response for {game_id:?}, also it was `None` btw")
+                                }
                             }
                     )?;
+                Ok(())
+            }
+            Query::HistoricalAccountSnapshot(inner) => {
+                let HistoricalAccountSnapshotQuery {
+                    identity,
+                    game_id,
+                    sender,
+                } = inner;
+                let snapshot = self.snapshots.account_snapshot_at(&identity, game_id)?;
+                sender
+                    .send(snapshot)
+                    .map_err(|maybe_snapshot| match maybe_snapshot {
+                        Some((snapshot, height)) => anyhow!(
+                            "Could not send `HistoricalAccountSnapshot` response for {identity:?} at {game_id:?}: {snapshot:?} at {height:?}"
+                        ),
+                        None => anyhow!(
+                            "Could not send `HistoricalAccountSnapshot` response for {identity:?} at {game_id:?}, also it was `None` btw"
+                        ),
+                    })?;
                 Ok(())
             }
         }

@@ -84,6 +84,20 @@ impl SnapshotStorage for InMemorySnapshotStorage {
         Ok(maybe_snapshot)
     }
 
+    fn account_snapshot_at(
+        &self,
+        account: &Identity,
+        game_id: u32,
+    ) -> crate::Result<Option<(AccountSnapshot, u32)>> {
+        let key = Self::identity_key(account);
+        let guard = self.account_snapshots.lock().unwrap();
+        let maybe_snapshot = guard
+            .get(&key)
+            .and_then(|inner| inner.get(&game_id))
+            .cloned();
+        Ok(maybe_snapshot)
+    }
+
     fn update_snapshot(
         &mut self,
         snapshot: &OverviewSnapshot,

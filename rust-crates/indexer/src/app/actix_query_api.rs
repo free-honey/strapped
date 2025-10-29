@@ -6,6 +6,7 @@ use crate::{
     },
     snapshot::{
         AccountSnapshot,
+        HistoricalSnapshot,
         OverviewSnapshot,
     },
 };
@@ -54,6 +55,11 @@ struct LatestAccountSnapshotDto {
     block_height: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct HistoricalSnapshotDto {
+    snapshot: HistoricalSnapshot,
+}
+
 pub struct ActixQueryApi {
     receiver: mpsc::Receiver<Query>,
     base_url: String,
@@ -83,8 +89,16 @@ impl ActixQueryApi {
                 .app_data(web::Data::new(sender))
                 .route("/snapshot/latest", web::get().to(handle_latest_snapshot))
                 .route(
+                    "/account/{identity}/{game_id}",
+                    web::get().to(handle_historical_account_snapshot),
+                )
+                .route(
                     "/account/{identity}",
                     web::get().to(handle_account_snapshot),
+                )
+                .route(
+                    "/historical/{game_id}",
+                    web::get().to(handle_historical_snapshot),
                 )
         })
         .listen(listener)
@@ -177,11 +191,72 @@ async fn handle_account_snapshot(
     }
 }
 
+async fn handle_historical_account_snapshot(
+    sender: web::Data<mpsc::Sender<Query>>,
+    path: web::Path<(String, u32)>,
+) -> actix_web::Result<web::Json<Option<LatestAccountSnapshotDto>>> {
+    tracing::info!("received historical account snapshot request");
+    let (identity_str, game_id) = path.into_inner();
+    let (response_sender, response_receiver) = oneshot::channel();
+    let inner = Address::from_str(&identity_str)
+        .map_err(|_| UrlencodedError::Payload(PayloadError::EncodingCorrupted))?;
+    let identity = Identity::Address(inner);
+    let query = Query::historical_account_summary(identity, game_id, response_sender);
+
+    sender.get_ref().clone().send(query).await.map_err(|_| {
+        ErrorInternalServerError("unable to forward historical account snapshot query")
+    })?;
+
+    if let Some((snapshot, block_height)) = response_receiver.await.map_err(|_| {
+        ErrorInternalServerError("historical account snapshot responder dropped")
+    })? {
+        Ok(web::Json(Some(LatestAccountSnapshotDto {
+            snapshot,
+            block_height,
+        })))
+    } else {
+        Ok(web::Json(None))
+    }
+}
+
+async fn handle_historical_snapshot(
+    sender: web::Data<mpsc::Sender<Query>>,
+    game_id: web::Path<u32>,
+) -> actix_web::Result<web::Json<Option<HistoricalSnapshotDto>>> {
+    tracing::info!("received historical snapshot request for {}", game_id);
+    let (response_sender, response_receiver) = oneshot::channel();
+    let query = Query::historical_snapshot(*game_id, response_sender);
+
+    sender.get_ref().clone().send(query).await.map_err(|_| {
+        ErrorInternalServerError("unable to forward historical snapshot query")
+    })?;
+
+    if let Some(snapshot) = response_receiver
+        .await
+        .map_err(|_| ErrorInternalServerError("historical snapshot responder dropped"))?
+    {
+        Ok(web::Json(Some(HistoricalSnapshotDto { snapshot })))
+    } else {
+        Ok(web::Json(None))
+    }
+}
+
 #[allow(non_snake_case)]
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::query_api::AccountSnapshotQuery;
+    use crate::{
+        app::query_api::{
+            AccountSnapshotQuery,
+            HistoricalAccountSnapshotQuery,
+            HistoricalSnapshotQuery,
+        },
+        events::{
+            Modifier,
+            Roll,
+        },
+        snapshot::ActiveModifier,
+    };
 
     #[tokio::test]
     async fn query__can_get_and_respond_to_latest_overview_snapshot() {
@@ -256,6 +331,97 @@ mod tests {
                 .unwrap();
         } else {
             panic!("expected latest account snapshot query got {:?}", query);
+        }
+
+        // then
+        let response = client_task.await.unwrap();
+        assert_eq!(response, expected_response);
+    }
+
+    #[tokio::test]
+    async fn query__can_get_historical_account_snapshot() {
+        // given
+        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let client = reqwest::Client::new();
+        let expected_identity = Identity::default();
+        let expected_identity_str = match &expected_identity {
+            Identity::Address(address) => address.to_string(),
+            Identity::ContractId(contract) => contract.to_string(),
+        };
+        let expected_game_id = 7u32;
+        let url = format!(
+            "{}/account/{expected_identity_str}/{expected_game_id}",
+            api.base_url()
+        );
+        let expected_snapshot = AccountSnapshot::default();
+        let expected_height = 1337;
+        let expected_response = LatestAccountSnapshotDto {
+            snapshot: expected_snapshot.clone(),
+            block_height: expected_height,
+        };
+
+        let client_task = tokio::spawn(async move {
+            let response = client.get(url).send().await.unwrap();
+            response.json::<LatestAccountSnapshotDto>().await.unwrap()
+        });
+
+        // when
+        let query = api.query().await.unwrap();
+
+        if let Query::HistoricalAccountSnapshot(inner) = query {
+            let HistoricalAccountSnapshotQuery {
+                identity,
+                game_id,
+                sender,
+            } = inner;
+            assert_eq!(expected_identity, identity);
+            assert_eq!(expected_game_id, game_id);
+            sender
+                .send(Some((expected_snapshot.clone(), expected_height)))
+                .unwrap();
+        } else {
+            panic!("expected historical account snapshot query got {:?}", query);
+        }
+
+        // then
+        let response = client_task.await.unwrap();
+        assert_eq!(response, expected_response);
+    }
+
+    #[tokio::test]
+    async fn query__can_get_historical_snapshot() {
+        // given
+        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let client = reqwest::Client::new();
+        let expected_game_id = 7u32;
+        let url = format!("{}/historical/{expected_game_id}", api.base_url());
+        let expected_snapshot = HistoricalSnapshot::new(
+            expected_game_id,
+            vec![Roll::Six, Roll::Seven],
+            vec![ActiveModifier::new(1, Modifier::Lucky, Roll::Six)],
+        );
+        let expected_response = HistoricalSnapshotDto {
+            snapshot: expected_snapshot.clone(),
+        };
+
+        let client_task = tokio::spawn(async move {
+            let response = client.get(url).send().await.unwrap();
+            response
+                .json::<Option<HistoricalSnapshotDto>>()
+                .await
+                .unwrap()
+                .expect("expected historical snapshot response")
+        });
+
+        // when
+        let query = api.query().await.unwrap();
+
+        if let Query::HistoricalSnapshot(inner) = query {
+            let HistoricalSnapshotQuery { game_id, sender } = inner;
+            assert_eq!(expected_game_id, game_id);
+            sender.send(Some(expected_snapshot.clone())).unwrap();
+        } else {
+            panic!("expected historical snapshot query got {:?}", query);
         }
 
         // then

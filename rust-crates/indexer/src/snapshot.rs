@@ -68,14 +68,14 @@ pub struct AccountSnapshot {
     pub claimed_rewards: Option<(u64, Vec<(Strap, u64)>)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoricalSnapshot {
     pub game_id: u32,
     pub rolls: Vec<Roll>,
     pub modifiers: Vec<ActiveModifier>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveModifier {
     pub roll_index: u32,
     pub modifier: Modifier,
