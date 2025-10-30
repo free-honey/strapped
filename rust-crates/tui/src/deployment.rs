@@ -218,10 +218,8 @@ fn sanitize_profile_tag(input: &str) -> String {
             result.push(ch.to_ascii_lowercase());
         } else if ch == '-' {
             result.push('-');
-        } else if ch.is_ascii_whitespace() || ch == '_' {
-            if !result.ends_with('_') {
-                result.push('_');
-            }
+        } else if (ch.is_ascii_whitespace() || ch == '_') && !result.ends_with('_') {
+            result.push('_');
         }
     }
     result.trim_matches('_').to_string()

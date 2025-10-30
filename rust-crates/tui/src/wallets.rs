@@ -96,7 +96,7 @@ pub fn unlock_wallet(
         .map_err(|_| eyre!("Invalid password for wallet '{}'", descriptor.name))?;
 
     if let Ok(secret_key) = SecretKey::try_from(secret.as_slice()) {
-        let signer = PrivateKeySigner::new(secret_key.clone());
+        let signer = PrivateKeySigner::new(secret_key);
         return Ok(Wallet::new(signer, provider.clone()));
     }
 

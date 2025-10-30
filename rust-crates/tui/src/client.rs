@@ -1840,20 +1840,20 @@ impl AppController {
         for (idx, roll) in rolls.iter().enumerate() {
             if let Some((_, bets)) = bets_hist.iter().find(|(r, _)| r == roll) {
                 for (bet, _amount, bet_roll_index) in bets {
-                    if *bet_roll_index <= idx as u32 {
-                        if let strapped::Bet::Strap(strap) = bet {
-                            let mut new_strap = strap.clone();
-                            new_strap.level = new_strap.level.saturating_add(1);
-                            if let Some(modifier) = Self::modifier_override_for_roll(
-                                &active_modifiers,
-                                roll,
-                                *bet_roll_index,
-                                enabled,
-                            ) {
-                                new_strap.modifier = modifier;
-                            }
-                            upgrades.push((roll.clone(), new_strap));
+                    if *bet_roll_index <= idx as u32
+                        && let strapped::Bet::Strap(strap) = bet
+                    {
+                        let mut new_strap = strap.clone();
+                        new_strap.level = new_strap.level.saturating_add(1);
+                        if let Some(modifier) = Self::modifier_override_for_roll(
+                            &active_modifiers,
+                            roll,
+                            *bet_roll_index,
+                            enabled,
+                        ) {
+                            new_strap.modifier = modifier;
                         }
+                        upgrades.push((roll.clone(), new_strap));
                     }
                 }
             }
@@ -2209,6 +2209,7 @@ pub struct RewardInfo {
     pub count: u64,
 }
 
+#[allow(clippy::complexity)]
 #[derive(Clone, Debug)]
 pub struct PreviousGameSummary {
     pub game_id: u32,

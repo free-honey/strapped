@@ -1,28 +1,26 @@
-name: Rust
+name: CI
 
 on:
   push:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  REGISTRY: ghcr.io
   RUST_VERSION: 1.90.0
   NIGHTLY_RUST_VERSION: nightly-2025-03-20
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
       - name: Install Fuel toolchain
         run: curl -sSf https://install.fuel.network | sh
       - name: Add fuelup to PATH
@@ -32,6 +30,64 @@ jobs:
       - name: Add Forc to PATH
         run: export PATH="${HOME}/.fuelup/bin:${PATH}"
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --all-features
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Fuel toolchain
+        run: curl -sSf https://install.fuel.network | sh
+      - name: Add fuelup to PATH
+        run: echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
+      - name: Install Forc components
+        run: fuelup toolchain install latest
+      - name: Add Forc to PATH
+        run: export PATH="${HOME}/.fuelup/bin:${PATH}"
+      - name: Clippy
+        run: cargo clippy --all-features
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.NIGHTLY_RUST_VERSION }}
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Fuel toolchain
+        run: curl -sSf https://install.fuel.network | sh
+      - name: Add fuelup to PATH
+        run: echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
+      - name: Install Forc components
+        run: fuelup toolchain install latest
+      - name: Add Forc to PATH
+        run: export PATH="${HOME}/.fuelup/bin:${PATH}"
+      - name: Formatting
+        run: cargo +${{ env.NIGHTLY_RUST_VERSION }} fmt --all -- --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Fuel toolchain
+        run: curl -sSf https://install.fuel.network | sh
+      - name: Add fuelup to PATH
+        run: echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
+      - name: Install Forc components
+        run: fuelup toolchain install latest
+      - name: Add Forc to PATH
+        run: export PATH="${HOME}/.fuelup/bin:${PATH}"
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo nextest run --all-features

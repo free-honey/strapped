@@ -92,34 +92,17 @@ enum Mode {
     StrapBet(StrapBetState),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct BetState {
     amount: u64,
 }
 
-impl Default for BetState {
-    fn default() -> Self {
-        BetState { amount: 0 }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct ClaimState {
     game_idx: usize,
     mod_idx: usize,
     selected: Vec<(strapped::Roll, strapped::Modifier)>,
     focus: ClaimFocus,
-}
-
-impl Default for ClaimState {
-    fn default() -> Self {
-        ClaimState {
-            game_idx: 0,
-            mod_idx: 0,
-            selected: Vec::new(),
-            focus: ClaimFocus::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -169,9 +152,7 @@ pub fn draw(state: &mut UiState, snap: &AppSnapshot) -> Result<()> {
     state.prev_games = snap.previous_games.clone();
     state.current_vrf = snap.vrf_number;
     // If game changed, reset shop selection and update items
-    let game_changed = state
-        .last_game_id
-        .map_or(true, |g| g != snap.current_game_id);
+    let game_changed = state.last_game_id != Some(snap.current_game_id);
     state.shop_items = snap.modifier_triggers.clone();
     state.owned_straps = snap.owned_straps.clone();
     if game_changed {
@@ -235,12 +216,12 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                         return Ok(UserEvent::Redraw);
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
-                        if let Some(g) = state.prev_games.get(cs.game_idx) {
-                            if !g.modifiers.is_empty() {
-                                cs.focus = ClaimFocus::Modifiers;
-                                cs.mod_idx =
-                                    cs.mod_idx.min(g.modifiers.len().saturating_sub(1));
-                            }
+                        if let Some(g) = state.prev_games.get(cs.game_idx)
+                            && !g.modifiers.is_empty()
+                        {
+                            cs.focus = ClaimFocus::Modifiers;
+                            cs.mod_idx =
+                                cs.mod_idx.min(g.modifiers.len().saturating_sub(1));
                         }
                         return Ok(UserEvent::Redraw);
                     }
@@ -276,39 +257,38 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                                 }
                             }
                             ClaimFocus::Modifiers => {
-                                if let Some(g) = state.prev_games.get(cs.game_idx) {
-                                    if !g.modifiers.is_empty() {
-                                        cs.mod_idx =
-                                            (cs.mod_idx + 1).min(g.modifiers.len() - 1);
-                                    }
+                                if let Some(g) = state.prev_games.get(cs.game_idx)
+                                    && !g.modifiers.is_empty()
+                                {
+                                    cs.mod_idx =
+                                        (cs.mod_idx + 1).min(g.modifiers.len() - 1);
                                 }
                             }
                         }
                         return Ok(UserEvent::Redraw);
                     }
                     KeyCode::Char(' ') => {
-                        if cs.focus != ClaimFocus::Modifiers {
-                            if let Some(g) = state.prev_games.get(cs.game_idx) {
-                                if !g.modifiers.is_empty() {
-                                    cs.focus = ClaimFocus::Modifiers;
-                                } else {
-                                    return Ok(UserEvent::Redraw);
-                                }
+                        if cs.focus != ClaimFocus::Modifiers
+                            && let Some(g) = state.prev_games.get(cs.game_idx)
+                        {
+                            if !g.modifiers.is_empty() {
+                                cs.focus = ClaimFocus::Modifiers;
+                            } else {
+                                return Ok(UserEvent::Redraw);
                             }
                         }
-                        if let Some(g) = state.prev_games.get(cs.game_idx) {
-                            if let Some((r, m, _idx)) = g.modifiers.get(cs.mod_idx) {
-                                if let Some(pos) = cs
-                                    .selected
-                                    .iter()
-                                    .position(|(rr, mm)| rr == r && mm == m)
-                                {
-                                    cs.selected.remove(pos);
-                                } else {
-                                    cs.selected.push((r.clone(), m.clone()));
-                                }
+                        if let Some(g) = state.prev_games.get(cs.game_idx)
+                            && let Some((r, m, _idx)) = g.modifiers.get(cs.mod_idx)
+                        {
+                            if let Some(pos) =
+                                cs.selected.iter().position(|(rr, mm)| rr == r && mm == m)
+                            {
+                                cs.selected.remove(pos);
+                            } else {
+                                cs.selected.push((r.clone(), m.clone()));
                             }
                         }
+
                         return Ok(UserEvent::Redraw);
                     }
                     KeyCode::Enter => {
@@ -975,15 +955,9 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct VrfState {
     value: u64,
-}
-
-impl Default for VrfState {
-    fn default() -> Self {
-        VrfState { value: 0 }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
