@@ -979,10 +979,7 @@ async fn run__latest_account_snapshot_query__returns_latest_account_snapshot() {
 
     // then
     let response = one_recv.await.unwrap();
-    assert_eq!(
-        response,
-        Some((expected_snapshot, expected_height))
-    );
+    assert_eq!(response, Some((expected_snapshot, expected_height)));
 }
 
 #[tokio::test]
@@ -1035,12 +1032,7 @@ async fn run__historical_account_snapshot_query__returns_historical_account_snap
 
     let mut snapshot_storage = InMemorySnapshotStorage::new();
     snapshot_storage
-        .update_account_snapshot(
-            &identity,
-            game_id,
-            &expected_snapshot,
-            expected_height,
-        )
+        .update_account_snapshot(&identity, game_id, &expected_snapshot, expected_height)
         .unwrap();
 
     let (query_api, sender) = FakeQueryApi::new_with_sender();
@@ -1054,15 +1046,11 @@ async fn run__historical_account_snapshot_query__returns_historical_account_snap
 
     // when
     let (one_send, one_recv) = oneshot::channel();
-    let query =
-        Query::historical_account_summary(identity.clone(), game_id, one_send);
+    let query = Query::historical_account_summary(identity.clone(), game_id, one_send);
     sender.send(query).await.unwrap();
     app.run(pending()).await.unwrap();
 
     // then
     let response = one_recv.await.unwrap();
-    assert_eq!(
-        response,
-        Some((expected_snapshot, expected_height))
-    );
+    assert_eq!(response, Some((expected_snapshot, expected_height)));
 }
