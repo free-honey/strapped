@@ -9,6 +9,10 @@ use crate::{
         StoredStrap,
         StoredStrapReward,
     },
+    indexer_client::{
+        AccountData,
+        IndexerClient,
+    },
     ui,
     wallets,
 };
@@ -42,7 +46,10 @@ use fuels::{
         Regular,
     },
     tx::ContractIdExt,
-    types::Bits256,
+    types::{
+        Bits256,
+        Identity,
+    },
 };
 use futures::future::try_join_all;
 use generated_abi::strap_cost;
@@ -181,6 +188,7 @@ pub struct AppConfig {
     pub network: NetworkTarget,
     pub wallets: WalletConfig,
     pub deploy_if_missing: bool,
+    pub indexer_url: Option<String>,
 }
 
 pub async fn init_local(vrf_mode: VrfMode) -> Result<Clients> {
@@ -294,6 +302,9 @@ pub struct AppController {
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub status: String,
+    indexer: Option<IndexerClient>,
+    owner_identity: Identity,
+    alice_identity: Identity,
     last_seen_game_id_owner: Option<u32>,
     last_seen_game_id_alice: Option<u32>,
     shared_last_roll_history: Vec<strapped::Roll>,
@@ -318,13 +329,20 @@ impl AppController {
         clients: Clients,
         initial_vrf: u64,
         history_store: HistoryStore,
+        indexer: Option<IndexerClient>,
     ) -> Self {
+        let owner_identity = Identity::Address(clients.owner.account().address().clone());
+        let alice_identity = Identity::Address(clients.alice.account().address().clone());
+
         Self {
             clients,
             wallet: WalletKind::Alice,
             selected_roll: strapped::Roll::Six,
             vrf_number: initial_vrf,
             status: String::from("Ready"),
+            indexer,
+            owner_identity,
+            alice_identity,
             last_seen_game_id_owner: None,
             last_seen_game_id_alice: None,
             shared_last_roll_history: Vec::new(),
@@ -358,6 +376,376 @@ impl AppController {
     fn invalidate_cache(&mut self) {
         self.last_snapshot = None;
         self.last_snapshot_time = None;
+    }
+
+    async fn finalize_snapshot(
+        &mut self,
+        data: SnapshotSourceData,
+    ) -> Result<AppSnapshot> {
+        let SnapshotSourceData {
+            current_block_height,
+            next_roll_height,
+            current_game_id,
+            roll_history,
+            strap_rewards,
+            modifier_triggers,
+            active_modifiers,
+            my_bets,
+            owner_bets,
+            alice_bets,
+        } = data;
+
+        let all_rolls = all_rolls();
+        self.active_modifiers_by_game
+            .insert(current_game_id, active_modifiers.clone());
+
+        self.strap_rewards_by_game
+            .entry(current_game_id)
+            .or_insert_with(|| strap_rewards.clone());
+
+        let last_seen_opt = match self.wallet {
+            WalletKind::Owner => self.last_seen_game_id_owner,
+            WalletKind::Alice => self.last_seen_game_id_alice,
+        };
+        if let Some(prev) = last_seen_opt {
+            if current_game_id > prev {
+                let owner_bets_prev = self.prev_owner_bets.clone();
+                let alice_bets_prev = self.prev_alice_bets.clone();
+                let mut completed_rolls = self.shared_last_roll_history.clone();
+                if !completed_rolls
+                    .last()
+                    .map(|r| matches!(r, strapped::Roll::Seven))
+                    .unwrap_or(false)
+                {
+                    completed_rolls.push(strapped::Roll::Seven);
+                }
+                let modifiers_for_prev = self
+                    .active_modifiers_by_game
+                    .get(&prev)
+                    .cloned()
+                    .unwrap_or_default();
+                self.upsert_shared_game(prev, completed_rolls, modifiers_for_prev);
+                self.owner_bets_hist.insert(prev, owner_bets_prev.clone());
+                self.alice_bets_hist.insert(prev, alice_bets_prev.clone());
+                if owner_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
+                    self.owner_claimed.insert(prev);
+                }
+                if alice_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
+                    self.alice_claimed.insert(prev);
+                }
+                self.persist_history()?;
+                self.shared_prev_games
+                    .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+                if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
+                    self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+                }
+                self.last_seen_game_id_owner = Some(current_game_id);
+                self.last_seen_game_id_alice = Some(current_game_id);
+            }
+        }
+        match self.wallet {
+            WalletKind::Owner => self.last_seen_game_id_owner = Some(current_game_id),
+            WalletKind::Alice => self.last_seen_game_id_alice = Some(current_game_id),
+        };
+
+        self.prev_owner_bets = owner_bets.clone();
+        self.prev_alice_bets = alice_bets.clone();
+
+        let who = self.wallet;
+        let me = self.clients.instance(who).clone();
+        let provider = me.account().provider().clone();
+
+        let pot_balance = get_contract_asset_balance(
+            &provider,
+            &self.clients.contract_id,
+            &self.clients.chip_asset_id,
+        )
+        .await
+        .wrap_err("fetching pot balance failed")?;
+
+        let chip_balance = me
+            .account()
+            .get_asset_balance(&self.clients.chip_asset_id)
+            .await
+            .wrap_err("fetching wallet chip balance failed")?;
+
+        self.shared_last_roll_history = roll_history.clone();
+
+        let mut cells = Vec::new();
+        let mut unique_straps: Vec<strapped::Strap> = Vec::new();
+        for (r, bets) in &my_bets {
+            let chip_total: u64 = bets
+                .iter()
+                .filter_map(|(b, amt, _)| match b {
+                    strapped::Bet::Chip => Some(*amt),
+                    _ => None,
+                })
+                .sum();
+            let mut straps: Vec<(strapped::Strap, u64)> = Vec::new();
+            for (b, amt, _) in bets {
+                if let strapped::Bet::Strap(s) = b {
+                    if let Some((_es, total)) = straps.iter_mut().find(|(es, _)| es == s)
+                    {
+                        *total += *amt;
+                    } else {
+                        straps.push((s.clone(), *amt));
+                    }
+                    if !unique_straps.iter().any(|es| *es == *s) {
+                        unique_straps.push(s.clone());
+                    }
+                }
+            }
+            let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
+            let mut rewards: Vec<RewardInfo> = Vec::new();
+            for (_rr, s, cost) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
+                if let Some(existing) = rewards
+                    .iter_mut()
+                    .find(|info| info.strap == *s && info.cost == *cost)
+                {
+                    existing.count += 1;
+                } else {
+                    rewards.push(RewardInfo {
+                        strap: s.clone(),
+                        cost: *cost,
+                        count: 1,
+                    });
+                }
+                if !unique_straps.iter().any(|es| *es == *s) {
+                    unique_straps.push(s.clone());
+                }
+            }
+            cells.push(RollCell {
+                roll: r.clone(),
+                chip_total,
+                strap_total,
+                straps,
+                rewards,
+            });
+        }
+
+        for (_gid, list) in &self.strap_rewards_by_game {
+            for (_r, s, _) in list {
+                if !unique_straps.iter().any(|es| *es == *s) {
+                    unique_straps.push(s.clone());
+                }
+            }
+        }
+
+        let mut owned_straps: Vec<(strapped::Strap, u64)> = Vec::new();
+        for s in unique_straps {
+            let sub = strapped_contract::strap_to_sub_id(&s);
+            let aid = self.clients.contract_id.asset_id(&sub);
+            let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
+            if bal > 0 {
+                owned_straps
+                    .push((s, bal.try_into().expect("naively convert u128 to u64")));
+            }
+        }
+
+        let mut summaries: Vec<PreviousGameSummary> = Vec::new();
+        for sg in &self.shared_prev_games {
+            let bets = match self.wallet {
+                WalletKind::Owner => self
+                    .owner_bets_hist
+                    .get(&sg.game_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                WalletKind::Alice => self
+                    .alice_bets_hist
+                    .get(&sg.game_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            };
+            let mut summary_cells = Vec::new();
+            for r in &all_rolls {
+                let bets_for = bets
+                    .iter()
+                    .find(|(rr, _)| rr == r)
+                    .map(|(_, b)| b)
+                    .cloned()
+                    .unwrap_or_default();
+                let chip_total: u64 = bets_for
+                    .iter()
+                    .filter_map(|(b, amt, _)| match b {
+                        strapped::Bet::Chip => Some(*amt),
+                        _ => None,
+                    })
+                    .sum();
+                let strap_total: u64 = bets_for
+                    .iter()
+                    .filter_map(|(b, amt, _)| match b {
+                        strapped::Bet::Strap(_) => Some(*amt),
+                        _ => None,
+                    })
+                    .sum();
+                summary_cells.push(RollCell {
+                    roll: r.clone(),
+                    chip_total,
+                    strap_total,
+                    straps: Vec::new(),
+                    rewards: Vec::new(),
+                });
+            }
+            let claimed = match self.wallet {
+                WalletKind::Owner => self.owner_claimed.contains(&sg.game_id),
+                WalletKind::Alice => self.alice_claimed.contains(&sg.game_id),
+            };
+            summaries.push(PreviousGameSummary {
+                game_id: sg.game_id,
+                cells: summary_cells,
+                modifiers: sg.modifiers.clone(),
+                rolls: sg.rolls.clone(),
+                bets_by_roll: bets,
+                claimed,
+            });
+        }
+
+        let snapshot = AppSnapshot {
+            wallet: self.wallet,
+            current_game_id,
+            roll_history,
+            modifier_triggers,
+            active_modifiers,
+            owned_straps,
+            pot_balance,
+            chip_balance: chip_balance
+                .try_into()
+                .expect("naively assuming this will fit into u64"),
+            selected_roll: self.selected_roll.clone(),
+            vrf_number: self.vrf_number,
+            vrf_mode: self.clients.vrf_mode,
+            current_block_height,
+            next_roll_height,
+            status: self.status.clone(),
+            cells,
+            previous_games: summaries,
+            errors: self.errors.iter().rev().take(5).cloned().collect(),
+        };
+
+        Ok(snapshot)
+    }
+
+    async fn snapshot_with_indexer(
+        &mut self,
+        client: IndexerClient,
+    ) -> Result<AppSnapshot> {
+        let overview = client
+            .latest_overview()
+            .await?
+            .ok_or_else(|| eyre!("indexer returned no overview snapshot"))?;
+
+        let owner_account = client
+            .latest_account_snapshot(&self.owner_identity)
+            .await?
+            .unwrap_or_else(AccountData::empty);
+        let alice_account = client
+            .latest_account_snapshot(&self.alice_identity)
+            .await?
+            .unwrap_or_else(AccountData::empty);
+
+        let my_bets = match self.wallet {
+            WalletKind::Owner => owner_account.per_roll_bets.clone(),
+            WalletKind::Alice => alice_account.per_roll_bets.clone(),
+        };
+
+        let safe_limit = self.clients.safe_script_gas_limit;
+        let me_for_active = self.clients.instance(self.wallet).clone();
+        let active_modifiers = me_for_active
+            .methods()
+            .active_modifiers()
+            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
+            .simulate(Execution::realistic())
+            .await
+            .map(|r| r.value)
+            .map_err(color_eyre::eyre::Report::from)
+            .wrap_err("active_modifiers call failed")?;
+
+        self.backfill_recent_games_indexer(overview.game_id, &client)
+            .await?;
+
+        let data = SnapshotSourceData {
+            current_block_height: overview.current_block_height,
+            next_roll_height: overview.next_roll_height,
+            current_game_id: overview.game_id,
+            roll_history: overview.rolls.clone(),
+            strap_rewards: overview.rewards.clone(),
+            modifier_triggers: overview.modifier_shop.clone(),
+            active_modifiers,
+            my_bets,
+            owner_bets: owner_account.per_roll_bets,
+            alice_bets: alice_account.per_roll_bets,
+        };
+
+        self.finalize_snapshot(data).await
+    }
+
+    async fn backfill_recent_games_indexer(
+        &mut self,
+        current_game_id: u32,
+        client: &IndexerClient,
+    ) -> Result<()> {
+        if current_game_id == 0 {
+            return Ok(());
+        }
+
+        let start = current_game_id.saturating_sub(GAME_HISTORY_DEPTH as u32);
+        for game_id in start..current_game_id {
+            let needs_game = !self.shared_prev_games.iter().any(|g| g.game_id == game_id);
+            let needs_modifiers = !self.active_modifiers_by_game.contains_key(&game_id);
+            let needs_rewards = !self.strap_rewards_by_game.contains_key(&game_id);
+
+            if needs_game || needs_modifiers || needs_rewards {
+                if let Some(hist) = client.historical_snapshot(game_id).await? {
+                    if needs_game && !hist.rolls.is_empty() {
+                        self.upsert_shared_game(
+                            game_id,
+                            hist.rolls.clone(),
+                            hist.modifiers.clone(),
+                        );
+                    }
+                    if needs_modifiers {
+                        self.active_modifiers_by_game
+                            .insert(game_id, hist.modifiers.clone());
+                    }
+                    if needs_rewards {
+                        self.strap_rewards_by_game
+                            .insert(game_id, hist.strap_rewards.clone());
+                    }
+                }
+            }
+
+            if !self.owner_bets_hist.contains_key(&game_id) {
+                if let Some(account) = client
+                    .historical_account_snapshot(&self.owner_identity, game_id)
+                    .await?
+                {
+                    self.owner_bets_hist
+                        .insert(game_id, account.per_roll_bets.clone());
+                    if account.claimed_rewards.is_some() {
+                        self.owner_claimed.insert(game_id);
+                    }
+                }
+            }
+            if !self.alice_bets_hist.contains_key(&game_id) {
+                if let Some(account) = client
+                    .historical_account_snapshot(&self.alice_identity, game_id)
+                    .await?
+                {
+                    self.alice_bets_hist
+                        .insert(game_id, account.per_roll_bets.clone());
+                    if account.claimed_rewards.is_some() {
+                        self.alice_claimed.insert(game_id);
+                    }
+                }
+            }
+        }
+
+        self.shared_prev_games
+            .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+        if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
+            self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+        }
+        Ok(())
     }
 
     fn set_status(&mut self, message: impl Into<String>) {
@@ -519,9 +907,13 @@ impl AppController {
             network,
             wallets,
             deploy_if_missing,
+            indexer_url,
         } = config;
+        let indexer_client = indexer_url.map(IndexerClient::new).transpose()?;
         match network {
-            NetworkTarget::InMemory => Self::new_local(vrf_mode).await,
+            NetworkTarget::InMemory => {
+                Self::new_local(vrf_mode, indexer_client.clone()).await
+            }
             NetworkTarget::Devnet { url } => {
                 tracing::info!("Connecting to devnet at URL: {url}");
                 Self::new_remote(
@@ -530,6 +922,7 @@ impl AppController {
                     url,
                     wallets,
                     deploy_if_missing,
+                    indexer_client.clone(),
                 )
                 .await
             }
@@ -541,6 +934,7 @@ impl AppController {
                     url,
                     wallets,
                     deploy_if_missing,
+                    indexer_client.clone(),
                 )
                 .await
             }
@@ -552,6 +946,7 @@ impl AppController {
                     url,
                     wallets,
                     deploy_if_missing,
+                    indexer_client,
                 )
                 .await
             }
@@ -714,7 +1109,10 @@ impl AppController {
         Ok(updated_any)
     }
 
-    pub async fn new_local(vrf_mode: VrfMode) -> Result<Self> {
+    pub async fn new_local(
+        vrf_mode: VrfMode,
+        indexer: Option<IndexerClient>,
+    ) -> Result<Self> {
         let clients = init_local(vrf_mode).await?;
         let initial_vrf = match vrf_mode {
             VrfMode::Fake => 19,
@@ -722,9 +1120,12 @@ impl AppController {
         };
         let history_store =
             deployment::HistoryStore::new(deployment::DeploymentEnv::Local, None)?;
-        let mut controller = Self::from_clients(clients, initial_vrf, history_store);
+        let mut controller =
+            Self::from_clients(clients, initial_vrf, history_store, indexer);
         controller.load_history_from_disk()?;
-        let _ = controller.backfill_recent_games().await?;
+        if controller.indexer.is_none() {
+            let _ = controller.backfill_recent_games().await?;
+        }
         controller.persist_history()?;
         Ok(controller)
     }
@@ -734,6 +1135,7 @@ impl AppController {
         url: String,
         wallet_config: WalletConfig,
         deploy_if_missing: bool,
+        indexer: Option<IndexerClient>,
     ) -> Result<Self> {
         if matches!(vrf_mode, VrfMode::Fake) {
             return Err(eyre!(
@@ -877,10 +1279,16 @@ impl AppController {
 
             store.append(record)?;
             // initialize contracts
-            let mut controller =
-                Self::from_clients(clients, initial_vrf, history_store.clone());
+            let mut controller = Self::from_clients(
+                clients,
+                initial_vrf,
+                history_store.clone(),
+                indexer.clone(),
+            );
             controller.load_history_from_disk()?;
-            let _ = controller.backfill_recent_games().await?;
+            if controller.indexer.is_none() {
+                let _ = controller.backfill_recent_games().await?;
+            }
             controller.persist_history()?;
             return Ok(controller);
         }
@@ -973,7 +1381,8 @@ impl AppController {
             safe_script_gas_limit,
         };
 
-        let mut controller = Self::from_clients(clients, initial_vrf, history_store);
+        let mut controller =
+            Self::from_clients(clients, initial_vrf, history_store, indexer);
         controller.load_history_from_disk()?;
         let _ = controller.backfill_recent_games().await?;
         controller.persist_history()?;
@@ -1079,6 +1488,19 @@ impl AppController {
             {
                 if last.elapsed() < self.refresh_ttl() {
                     return Ok(cache);
+                }
+            }
+        }
+
+        if let Some(indexer) = self.indexer.clone() {
+            match self.snapshot_with_indexer(indexer).await {
+                Ok(snapshot) => {
+                    self.last_snapshot = Some(snapshot.clone());
+                    self.last_snapshot_time = Some(Instant::now());
+                    return Ok(snapshot);
+                }
+                Err(err) => {
+                    self.push_errors(vec![format!("Indexer snapshot failed: {err:?}")]);
                 }
             }
         }
@@ -1219,18 +1641,12 @@ impl AppController {
             }
         )?;
 
-        self.active_modifiers_by_game
-            .insert(current_game_id, active_modifiers.clone());
-
-        // My bets by roll
         let my_bets = self
             .fetch_bets_for(self.wallet)
             .await
             .wrap_err("fetching bets for active wallet failed")?;
-        let all_rolls = all_rolls();
 
-        // Refresh current bets for both users on each tick so rollover can snapshot both reliably
-        let (new_owner_bets, new_alice_bets) = tokio::try_join!(
+        let (owner_bets, alice_bets) = tokio::try_join!(
             async {
                 self.fetch_bets_for(WalletKind::Owner)
                     .await
@@ -1243,243 +1659,22 @@ impl AppController {
             }
         )?;
 
-        // Remember strap rewards for this current game (for later claim delta display)
-        self.strap_rewards_by_game
-            .entry(current_game_id)
-            .or_insert_with(|| strap_rewards.clone());
-
-        // detect rollover using the active wallet's last seen id (avoid holding mutable borrow across await)
-        let last_seen_opt = match self.wallet {
-            WalletKind::Owner => self.last_seen_game_id_owner,
-            WalletKind::Alice => self.last_seen_game_id_alice,
-        };
-        if let Some(prev) = last_seen_opt {
-            if current_game_id > prev {
-                let owner_bets = self.prev_owner_bets.clone();
-                let alice_bets = self.prev_alice_bets.clone();
-                let mut completed_rolls = self.shared_last_roll_history.clone();
-                if !completed_rolls
-                    .last()
-                    .map(|r| matches!(r, strapped::Roll::Seven))
-                    .unwrap_or(false)
-                {
-                    completed_rolls.push(strapped::Roll::Seven);
-                }
-                let modifiers_for_prev = self
-                    .active_modifiers_by_game
-                    .get(&prev)
-                    .cloned()
-                    .unwrap_or_default();
-                self.upsert_shared_game(prev, completed_rolls, modifiers_for_prev);
-                self.owner_bets_hist.insert(prev, owner_bets.clone());
-                self.alice_bets_hist.insert(prev, alice_bets.clone());
-                if owner_bets.iter().all(|(_, bets)| bets.is_empty()) {
-                    self.owner_claimed.insert(prev);
-                }
-                if alice_bets.iter().all(|(_, bets)| bets.is_empty()) {
-                    self.alice_claimed.insert(prev);
-                }
-                self.persist_history()?;
-                self.shared_prev_games
-                    .sort_by(|a, b| b.game_id.cmp(&a.game_id));
-                if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
-                    self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
-                }
-                self.last_seen_game_id_owner = Some(current_game_id);
-                self.last_seen_game_id_alice = Some(current_game_id);
-            }
-        }
-        match self.wallet {
-            WalletKind::Owner => self.last_seen_game_id_owner = Some(current_game_id),
-            WalletKind::Alice => self.last_seen_game_id_alice = Some(current_game_id),
-        };
-        // Update cached prev bets for next rollover detection
-        self.prev_owner_bets = new_owner_bets;
-        self.prev_alice_bets = new_alice_bets;
-
-        let pot_balance = get_contract_asset_balance(
-            &provider,
-            &self.clients.contract_id,
-            &self.clients.chip_asset_id,
-        )
-        .await
-        .wrap_err("fetching pot balance failed")?;
-
-        let chip_balance = me
-            .account()
-            .get_asset_balance(&self.clients.chip_asset_id)
-            .await
-            .wrap_err("fetching wallet chip balance failed")?;
-
-        // update shared rolls (one game globally)
-        // update shared rolls (one game globally)
-        self.shared_last_roll_history = roll_history.clone();
-
-        // build cells for UI
-        let mut cells = Vec::new();
-        let mut unique_straps: Vec<strapped::Strap> = Vec::new();
-        for (r, bets) in &my_bets {
-            let chip_total: u64 = bets
-                .iter()
-                .filter_map(|(b, amt, _)| match b {
-                    strapped::Bet::Chip => Some(*amt),
-                    _ => None,
-                })
-                .sum();
-            // Aggregate strap bets per unique strap without requiring Hash
-            let mut straps: Vec<(strapped::Strap, u64)> = Vec::new();
-            for (b, amt, _) in bets {
-                if let strapped::Bet::Strap(s) = b {
-                    if let Some((_es, total)) = straps.iter_mut().find(|(es, _)| es == s)
-                    {
-                        *total += *amt;
-                    } else {
-                        straps.push((s.clone(), *amt));
-                    }
-                    if !unique_straps.iter().any(|es| *es == *s) {
-                        unique_straps.push(s.clone());
-                    }
-                }
-            }
-            let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
-            // rewards for this roll (count available rewards, not wallet balance)
-            let mut rewards: Vec<RewardInfo> = Vec::new();
-            for (_rr, s, cost) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
-                if let Some(existing) = rewards
-                    .iter_mut()
-                    .find(|info| info.strap == *s && info.cost == *cost)
-                {
-                    existing.count += 1;
-                } else {
-                    rewards.push(RewardInfo {
-                        strap: s.clone(),
-                        cost: *cost,
-                        count: 1,
-                    });
-                }
-                if !unique_straps.iter().any(|es| *es == *s) {
-                    unique_straps.push(s.clone());
-                }
-            }
-            cells.push(RollCell {
-                roll: r.clone(),
-                chip_total,
-                strap_total,
-                straps,
-                rewards,
-            });
-        }
-
-        // Sum owned straps for known strap variants (from current bets/rewards + all known rewards by game)
-        let mut unique_straps = unique_straps;
-        for (_gid, list) in &self.strap_rewards_by_game {
-            for (_r, s, _) in list {
-                if !unique_straps.iter().any(|es| *es == *s) {
-                    unique_straps.push(s.clone());
-                }
-            }
-        }
-
-        let mut strap_balance: u64 = 0;
-        let mut owned_straps: Vec<(strapped::Strap, u64)> = Vec::new();
-        for s in unique_straps {
-            let sub = strapped_contract::strap_to_sub_id(&s);
-            let aid = self.clients.contract_id.asset_id(&sub);
-            let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            strap_balance = strap_balance
-                .saturating_add(bal.try_into().expect("naively convert 128 to u64"));
-            if bal > 0 {
-                owned_straps
-                    .push((s, bal.try_into().expect("naively convert u128 to u64")));
-            }
-        }
-
-        // Build previous games by merging shared games with current user's stored bets
-        let mut summaries: Vec<PreviousGameSummary> = Vec::new();
-        for sg in &self.shared_prev_games {
-            let bets = match self.wallet {
-                WalletKind::Owner => self
-                    .owner_bets_hist
-                    .get(&sg.game_id)
-                    .cloned()
-                    .unwrap_or_default(),
-                WalletKind::Alice => self
-                    .alice_bets_hist
-                    .get(&sg.game_id)
-                    .cloned()
-                    .unwrap_or_default(),
-            };
-            // Build cells from bets
-            let mut cells = Vec::new();
-            for r in &all_rolls {
-                let bets_for = bets
-                    .iter()
-                    .find(|(rr, _)| rr == r)
-                    .map(|(_, b)| b)
-                    .cloned()
-                    .unwrap_or_default();
-                let chip_total: u64 = bets_for
-                    .iter()
-                    .filter_map(|(b, amt, _)| match b {
-                        strapped::Bet::Chip => Some(*amt),
-                        _ => None,
-                    })
-                    .sum();
-                let strap_total: u64 = bets_for
-                    .iter()
-                    .filter_map(|(b, amt, _)| match b {
-                        strapped::Bet::Strap(_) => Some(*amt),
-                        _ => None,
-                    })
-                    .sum();
-                cells.push(RollCell {
-                    roll: r.clone(),
-                    chip_total,
-                    strap_total,
-                    straps: Vec::new(),
-                    rewards: Vec::new(),
-                });
-            }
-            let claimed = match self.wallet {
-                WalletKind::Owner => self.owner_claimed.contains(&sg.game_id),
-                WalletKind::Alice => self.alice_claimed.contains(&sg.game_id),
-            };
-            summaries.push(PreviousGameSummary {
-                game_id: sg.game_id,
-                cells,
-                modifiers: sg.modifiers.clone(),
-                rolls: sg.rolls.clone(),
-                bets_by_roll: bets,
-                claimed,
-            });
-        }
-        let previous_games = summaries;
-
-        let snapshot = AppSnapshot {
-            wallet: self.wallet,
-            current_game_id,
-            roll_history,
-            modifier_triggers,
-            active_modifiers,
-            owned_straps,
-            pot_balance,
-            chip_balance: chip_balance
-                .try_into()
-                .expect("naively assuming this will fit into u64"),
-            selected_roll: self.selected_roll.clone(),
-            vrf_number: self.vrf_number,
-            vrf_mode: self.clients.vrf_mode,
+        let data = SnapshotSourceData {
             current_block_height,
             next_roll_height,
-            status: self.status.clone(),
-            cells,
-            previous_games,
-            errors: self.errors.iter().rev().take(5).cloned().collect(),
+            current_game_id,
+            roll_history,
+            strap_rewards,
+            modifier_triggers,
+            active_modifiers,
+            my_bets,
+            owner_bets,
+            alice_bets,
         };
 
+        let snapshot = self.finalize_snapshot(data).await?;
         self.last_snapshot = Some(snapshot.clone());
         self.last_snapshot_time = Some(Instant::now());
-
         Ok(snapshot)
     }
 
@@ -2225,6 +2420,19 @@ struct SharedGame {
     game_id: u32,
     rolls: Vec<strapped::Roll>,
     modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
+}
+
+struct SnapshotSourceData {
+    current_block_height: u32,
+    next_roll_height: Option<u32>,
+    current_game_id: u32,
+    roll_history: Vec<strapped::Roll>,
+    strap_rewards: Vec<(strapped::Roll, strapped::Strap, u64)>,
+    modifier_triggers: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
+    active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
+    my_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
+    owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
+    alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
 }
 
 fn format_deployment_summary(

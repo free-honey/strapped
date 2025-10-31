@@ -5,6 +5,7 @@ use color_eyre::eyre::{
 
 mod client;
 mod deployment;
+mod indexer_client;
 mod ui;
 mod wallets;
 
@@ -12,6 +13,7 @@ fn print_usage_and_exit() -> ! {
     println!(
         "Usage: strapped-contract [--fake-vrf] [--devnet | --testnet | --local] [--rpc-url <url>]\n\
          [--wallet <name> | --wallet-owner <name> [--wallet-player <name>]] [--wallet-dir <path>] [--deploy]\n\
+         [--indexer-url <url>]\n\
          \n\
          Flags:\n\
            --fake-vrf          Use the fake VRF contract instead of pseudo VRF\n\
@@ -23,7 +25,8 @@ fn print_usage_and_exit() -> ! {
            --wallet-owner <name>  Specify owner wallet name (for remote networks)\n\
            --wallet-player <name> Specify player wallet name (defaults to owner wallet)\n\
            --wallet-dir <path> Override forc-wallet directory (defaults to ~/.fuel/wallets)\n\
-           --deploy            Deploy a fresh contract if no compatible deployment exists",
+           --deploy            Deploy a fresh contract if no compatible deployment exists\n\
+           --indexer-url <url> Point the client at a running indexer HTTP endpoint",
         client::DEFAULT_DEVNET_RPC_URL,
         client::DEFAULT_TESTNET_RPC_URL,
         client::DEFAULT_LOCAL_RPC_URL,
@@ -48,6 +51,7 @@ fn parse_cli_args() -> Result<client::AppConfig> {
     let mut wallet_player: Option<String> = None;
     let mut wallet_shared: Option<String> = None;
     let mut deploy_if_missing = false;
+    let mut indexer_url: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -129,6 +133,15 @@ fn parse_cli_args() -> Result<client::AppConfig> {
             "--deploy" => {
                 deploy_if_missing = true;
             }
+            "--indexer-url" => {
+                let url = args
+                    .next()
+                    .ok_or_else(|| eyre!("--indexer-url requires a URL argument"))?;
+                if indexer_url.is_some() {
+                    return Err(eyre!("--indexer-url may only be specified once"));
+                }
+                indexer_url = Some(url);
+            }
             "--help" | "-h" => print_usage_and_exit(),
             other => return Err(eyre!("Unknown argument: {other}")),
         }
@@ -188,6 +201,7 @@ fn parse_cli_args() -> Result<client::AppConfig> {
         network,
         wallets,
         deploy_if_missing,
+        indexer_url,
     })
 }
 

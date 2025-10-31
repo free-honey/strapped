@@ -142,7 +142,10 @@ async fn run__initialize_event__creates_first_snapshot() {
     app.run(pending()).await.unwrap();
 
     // then
-    let expected = OverviewSnapshot::new();
+    let mut expected = OverviewSnapshot::new();
+    expected.current_block_height = init_height;
+    let arb_roll_frequency = 10; // based on `arb_init_event`
+    expected.next_roll_height = Some(init_height + arb_roll_frequency);
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     assert_eq!(expected, actual);
 }
@@ -172,6 +175,7 @@ async fn run__roll_event__updates_snapshot() {
         metadata_storage,
         zero_contract_id(),
     );
+    app.roll_frequency = Some(10);
 
     let roll_event = Event::roll_event(game_id, roll_index, rolled_value.clone());
     let roll_height = 110;
@@ -187,6 +191,7 @@ async fn run__roll_event__updates_snapshot() {
     let expected = {
         let mut snap = existing_snapshot;
         snap.rolls.push(rolled_value);
+        snap.current_block_height = roll_height;
         snap
     };
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
@@ -259,6 +264,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
         false,
     )];
     expected.pot_size = existing_snapshot.pot_size;
+    expected.current_block_height = new_game_height;
     assert_eq!(expected, actual);
 
     let historical = historical_copy.lock().unwrap();
@@ -268,6 +274,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
     assert_eq!(stored.game_id, existing_snapshot.game_id);
     assert_eq!(stored.rolls, existing_snapshot.rolls);
     assert!(stored.modifiers.is_empty());
+    assert_eq!(stored.strap_rewards, existing_snapshot.rewards);
 }
 
 #[tokio::test]
@@ -332,12 +339,14 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
         .expect("missing first historical snapshot");
     assert_eq!(stored_first.rolls, first_snapshot.rolls);
     assert!(stored_first.modifiers.is_empty());
+    assert_eq!(stored_first.strap_rewards, first_snapshot.rewards);
 
     let stored_second = historical
         .get(&2)
         .expect("missing second historical snapshot");
     assert_eq!(stored_second.rolls, mid_snapshot.rolls);
     assert!(stored_second.modifiers.is_empty());
+    assert_eq!(stored_second.strap_rewards, mid_snapshot.rewards);
 }
 
 #[tokio::test]
@@ -363,6 +372,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         metadata_storage,
         zero_contract_id(),
     );
+    app.roll_frequency = Some(10);
 
     let expected_index = 321;
     let modifier_event = ContractEvent::ModifierTriggered(ModifierTriggeredEvent {
@@ -396,6 +406,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         .get(&existing_snapshot.game_id)
         .expect("expected historical snapshot");
     assert_eq!(stored.rolls, existing_snapshot.rolls);
+    assert_eq!(stored.strap_rewards, existing_snapshot.rewards);
     let active_modifier = ActiveModifier::new(expected_index, Modifier::Holy, Roll::Four);
     assert_eq!(stored.modifiers, vec![active_modifier]);
 
@@ -427,6 +438,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
         metadata_storage,
         zero_contract_id(),
     );
+    app.roll_frequency = Some(10);
 
     let modifier_event = ContractEvent::ModifierTriggered(ModifierTriggeredEvent {
         game_id: existing_snapshot.game_id,
@@ -449,6 +461,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
     let mut expected = existing_snapshot;
     expected.modifiers_active[2] = Some(Modifier::Holy);
     expected.modifier_shop[0].3 = true;
+    expected.current_block_height = event_height;
     assert_eq!(expected, actual);
 }
 
@@ -492,6 +505,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let mut expected = existing_snapshot;
     expected.pot_size = 350;
     expected.total_bets[4].0 = 200;
+    expected.current_block_height = 305;
     assert_eq!(expected, actual);
 }
 
@@ -541,6 +555,16 @@ async fn run__place_chip_bet_event__updates_account_snapshot() {
     assert!(account_snapshot.strap_bets.is_empty());
     assert_eq!(account_snapshot.total_chip_won, 0);
     assert_eq!(account_snapshot.claimed_rewards, None);
+    let roll_entry = account_snapshot
+        .per_roll_bets
+        .iter()
+        .find(|entry| entry.roll == Roll::Six)
+        .expect("missing roll entry for Six");
+    assert_eq!(roll_entry.bets.len(), 1);
+    let bet = &roll_entry.bets[0];
+    assert_eq!(bet.amount, 150);
+    assert_eq!(bet.bet_roll_index, 0);
+    assert!(matches!(bet.kind, crate::snapshot::AccountBetKind::Chip));
 }
 
 #[tokio::test]
@@ -584,6 +608,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.total_bets[3].1.push((strap, 2));
+    expected.current_block_height = 415;
     assert_eq!(expected, actual);
 }
 
@@ -635,6 +660,19 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
     assert_eq!(account_snapshot.total_chip_won, 0);
     assert_eq!(account_snapshot.claimed_rewards, None);
     assert_eq!(account_snapshot.strap_bets, vec![(expected_strap, 2)]);
+    let strap_entry = account_snapshot
+        .per_roll_bets
+        .iter()
+        .find(|entry| entry.roll == Roll::Five)
+        .expect("missing roll entry for strap bet");
+    assert_eq!(strap_entry.bets.len(), 1);
+    let bet = &strap_entry.bets[0];
+    assert_eq!(bet.amount, 2);
+    assert_eq!(bet.bet_roll_index, 3);
+    match &bet.kind {
+        crate::snapshot::AccountBetKind::Strap(s) => assert_eq!(s, &strap),
+        other => panic!("unexpected bet kind: {:?}", other),
+    }
 }
 
 #[tokio::test]
@@ -675,6 +713,7 @@ async fn run__claim_rewards_event__reduces_pot() {
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.pot_size = 380;
+    expected.current_block_height = 515;
     assert_eq!(expected, actual);
 }
 
@@ -831,6 +870,7 @@ async fn run__fund_pot_event__increases_pot() {
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.pot_size = 400;
+    expected.current_block_height = 615;
     assert_eq!(expected, actual);
 }
 
@@ -875,6 +915,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
     let mut expected = existing_snapshot;
     expected.modifiers_active[2] = Some(Modifier::Holy);
     expected.modifier_shop[0].3 = true;
+    expected.current_block_height = 715;
     assert_eq!(expected, actual);
 }
 
@@ -883,6 +924,8 @@ fn arb_snapshot() -> OverviewSnapshot {
         game_id: 1234,
         rolls: vec![Roll::Two, Roll::Three, Roll::Four, Roll::Five, Roll::Six],
         pot_size: 999999999,
+        current_block_height: 123,
+        next_roll_height: Some(333),
         rewards: vec![(
             Roll::Ten,
             Strap {
@@ -903,8 +946,9 @@ fn arb_snapshot() -> OverviewSnapshot {
             (800, vec![]),
             (900, vec![]),
             (1000, vec![]),
+            (1100, vec![]),
         ],
-        modifiers_active: [None; 10],
+        modifiers_active: [None; 11],
         modifier_shop: vec![],
     }
 }
@@ -1022,12 +1066,13 @@ async fn run__historical_account_snapshot_query__returns_historical_account_snap
     // given
     let identity = Identity::Address(Address::from([5u8; 32]));
     let game_id = 21u32;
-    let expected_snapshot = crate::snapshot::AccountSnapshot {
-        total_chip_bet: 99,
-        strap_bets: vec![(Strap::new(1, StrapKind::Hat, Modifier::Lucky), 88)],
-        total_chip_won: 77,
-        claimed_rewards: Some((55, vec![])),
-    };
+    let mut expected_snapshot = crate::snapshot::AccountSnapshot::default();
+    expected_snapshot.total_chip_bet = 99;
+    expected_snapshot
+        .strap_bets
+        .push((Strap::new(1, StrapKind::Hat, Modifier::Lucky), 88));
+    expected_snapshot.total_chip_won = 77;
+    expected_snapshot.claimed_rewards = Some((55, vec![]));
     let expected_height = 4242;
 
     let mut snapshot_storage = InMemorySnapshotStorage::new();
