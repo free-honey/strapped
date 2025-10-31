@@ -45,7 +45,6 @@ use fuels::{
     tx::ContractIdExt,
     types::ContractId,
 };
-use std::cmp;
 
 #[cfg(test)]
 mod tests;
@@ -96,10 +95,6 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
     } else {
         bets.push((strap.clone(), amount));
     }
-}
-
-fn roll_from_index(index: usize) -> Option<Roll> {
-    ALL_ROLLS.get(index).copied()
 }
 
 impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
@@ -379,7 +374,6 @@ impl<
             modifier_roll: event.modifier_roll,
         };
         self.historical_modifiers.push(active_modifier);
-        let frequency = self.frequency()?;
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)
     }
@@ -477,15 +471,13 @@ impl<
             player,
             amount,
             bet_roll_index,
+            roll,
             strap,
             ..
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        if !snapshot.total_bets.is_empty() {
-            let idx = cmp::min(
-                bet_roll_index as usize,
-                snapshot.total_bets.len().saturating_sub(1),
-            );
+        let idx = roll_to_index(&roll);
+        if idx < snapshot.total_bets.len() {
             accumulate_strap(&mut snapshot.total_bets[idx].1, &strap, amount);
         }
         self.refresh_height(&mut snapshot, height);
@@ -497,14 +489,12 @@ impl<
             .map(|(snap, _)| snap)
             .unwrap_or_default();
         accumulate_strap(&mut account_snapshot.strap_bets, &strap, amount);
-        if let Some(roll) = roll_from_index(bet_roll_index as usize) {
-            let placement = AccountBetPlacement {
-                bet_roll_index,
-                amount,
-                kind: AccountBetKind::Strap(strap.clone()),
-            };
-            Self::append_bet_to_account(&mut account_snapshot, roll, placement);
-        }
+        let placement = AccountBetPlacement {
+            bet_roll_index,
+            amount,
+            kind: AccountBetKind::Strap(strap.clone()),
+        };
+        Self::append_bet_to_account(&mut account_snapshot, roll, placement);
         self.remember_strap(&strap);
         self.snapshots.update_account_snapshot(
             &player,

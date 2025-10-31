@@ -98,7 +98,7 @@ where
         match unstable_event {
             UnstableEvent::Events((height, events)) => Ok((events, *height)),
             UnstableEvent::Checkpoint(_) => {
-                // TODO: WE should accomodate this happening and handle gracefully
+                // TODO: WE should accommodate this happening and handle gracefully
                 Ok((vec![], 0))
             }
             UnstableEvent::Rollback(_) => {
@@ -271,6 +271,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
                 game_id: u32::try_from(event.game_id).ok()?,
                 bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,
                 player: map_identity(event.player),
+                roll: map_roll(event.roll),
                 strap: map_strap(event.strap),
                 amount: event.amount,
             };

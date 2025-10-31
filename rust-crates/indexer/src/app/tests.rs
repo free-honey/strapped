@@ -595,6 +595,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 3,
         player,
+        roll: Roll::Five,
         strap: strap.clone(),
         amount: 2,
     });
@@ -637,6 +638,7 @@ async fn run__place_strap_bet_event__updates_account_snapshot() {
         game_id: 0,
         bet_roll_index: 3,
         player: player.clone(),
+        roll: Roll::Five,
         strap: strap.clone(),
         amount: 2,
     });

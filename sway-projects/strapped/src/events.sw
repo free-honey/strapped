@@ -93,15 +93,17 @@ pub struct PlaceStrapBetEvent {
     // latest roll index when the bet was placed
     bet_roll_index: u32,
     player: Identity,
+    roll: Roll,
     strap: Strap,
     amount: u64,
 }
 
-pub fn log_place_strap_bet_event(game_id: u32, roll_index: u32, player: Identity, strap: Strap, amount: u64) {
+pub fn log_place_strap_bet_event(game_id: u32, roll_index: u32, player: Identity, roll: Roll, strap: Strap, amount: u64) {
     let event = PlaceStrapBetEvent {
         game_id,
         bet_roll_index: roll_index,
         player,
+        roll,
         strap,
         amount,
     };

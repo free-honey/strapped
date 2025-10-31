@@ -299,7 +299,7 @@ impl Strapped for Contract {
                 log_place_chip_bet_event(current_game_id, roll_index, caller, roll, amount);
             },
             Bet::Strap(strap) => {
-                log_place_strap_bet_event(current_game_id, roll_index, caller, strap, amount);
+                log_place_strap_bet_event(current_game_id, roll_index, caller, roll, strap, amount);
             }
         }
     }
