@@ -5,6 +5,8 @@ use crate::{
         QueryAPI,
     },
     snapshot::{
+        ALL_ROLLS,
+        AccountRollBets,
         AccountSnapshot,
         HistoricalSnapshot,
         OverviewSnapshot,
@@ -34,6 +36,7 @@ use serde::{
     Serialize,
 };
 use std::{
+    mem,
     net::TcpListener,
     str::FromStr,
     thread::JoinHandle,
@@ -58,6 +61,26 @@ struct LatestAccountSnapshotDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct HistoricalSnapshotDto {
     snapshot: HistoricalSnapshot,
+}
+
+fn normalize_account_snapshot(snapshot: &mut AccountSnapshot) {
+    if snapshot.per_roll_bets.len() == ALL_ROLLS.len() {
+        return;
+    }
+
+    let mut existing = mem::take(&mut snapshot.per_roll_bets);
+    let mut rebuilt = Vec::with_capacity(ALL_ROLLS.len());
+    for roll in ALL_ROLLS {
+        if let Some(pos) = existing.iter().position(|entry| entry.roll == roll) {
+            rebuilt.push(existing.swap_remove(pos));
+        } else {
+            rebuilt.push(AccountRollBets {
+                roll,
+                bets: Vec::new(),
+            });
+        }
+    }
+    snapshot.per_roll_bets = rebuilt;
 }
 
 pub struct ActixQueryApi {
@@ -153,9 +176,11 @@ async fn handle_latest_snapshot(
         ErrorInternalServerError("unable to forward latest snapshot query")
     })?;
 
-    let (snapshot, block_height) = response_receiver
+    let (mut snapshot, block_height) = response_receiver
         .await
         .map_err(|_| ErrorInternalServerError("latest snapshot responder dropped"))?;
+
+    snapshot.current_block_height = block_height;
 
     Ok(web::Json(LatestSnapshotDto {
         snapshot,
@@ -178,10 +203,11 @@ async fn handle_account_snapshot(
         ErrorInternalServerError("unable to forward latest snapshot query")
     })?;
 
-    if let Some((snapshot, block_height)) = response_receiver
+    if let Some((mut snapshot, block_height)) = response_receiver
         .await
         .map_err(|_| ErrorInternalServerError("latest snapshot responder dropped"))?
     {
+        normalize_account_snapshot(&mut snapshot);
         Ok(web::Json(Some(LatestAccountSnapshotDto {
             snapshot,
             block_height,
@@ -207,9 +233,10 @@ async fn handle_historical_account_snapshot(
         ErrorInternalServerError("unable to forward historical account snapshot query")
     })?;
 
-    if let Some((snapshot, block_height)) = response_receiver.await.map_err(|_| {
+    if let Some((mut snapshot, block_height)) = response_receiver.await.map_err(|_| {
         ErrorInternalServerError("historical account snapshot responder dropped")
     })? {
+        normalize_account_snapshot(&mut snapshot);
         Ok(web::Json(Some(LatestAccountSnapshotDto {
             snapshot,
             block_height,
@@ -264,8 +291,9 @@ mod tests {
         let mut api = ActixQueryApi::new(None).await.unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}/snapshot/latest", api.base_url());
-        let expected_snapshot = OverviewSnapshot::new();
         let expected_height = 42;
+        let mut expected_snapshot = OverviewSnapshot::new();
+        expected_snapshot.current_block_height = expected_height;
         let expected_response = LatestSnapshotDto {
             snapshot: expected_snapshot.clone(),
             block_height: expected_height,
@@ -280,7 +308,7 @@ mod tests {
         let query = api.query().await.unwrap();
         if let Query::LatestSnapshot(sender) = query {
             sender
-                .send((expected_snapshot.clone(), expected_height))
+                .send((OverviewSnapshot::new(), expected_height))
                 .unwrap();
         } else {
             panic!("expected latest snapshot query got {:?}", query);

@@ -29,6 +29,7 @@ hex = "0.4"
 eth-keystore = "0.5"
 futures = "0.3"
 generated_abi = { path = "../generated_abi" }
+reqwest = { version = "0.12.7", features = ["json"] }
 
 [dev-dependencies]
 proptest = { version = "1.4", default-features = false, features = ["std"] }

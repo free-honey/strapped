@@ -461,11 +461,12 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),  // wallet + overview
-            Constraint::Length(4),  // roll history
-            Constraint::Length(17), // horizontal grid (even taller cells)
+            Constraint::Length(8), // wallet + overview
+            Constraint::Length(4), // roll history
+            // Constraint::Length(17), // horizontal grid (even taller cells)
+            Constraint::Length(12), // horizontal grid (even taller cells)
             Constraint::Length(14), // shop + previous games (about 4x taller)
-            Constraint::Length(7),  // status/errors + help
+            Constraint::Length(12), // status/errors + help
         ])
         .split(f.area());
 

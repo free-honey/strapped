@@ -64,6 +64,10 @@ async fn main() -> anyhow::Result<()> {
     let contract_id = ContractId::from_str(&contract_id_str).unwrap();
 
     let tmp_dir_path = temp_dir().as_path().to_path_buf();
+    tracing::info!(
+        "Using temporary directory for indexer data: {}",
+        tmp_dir_path.display()
+    );
     let database_config = DatabaseConfig {
         cache_capacity: None,
         max_fds: 512,

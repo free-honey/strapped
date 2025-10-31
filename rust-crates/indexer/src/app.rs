@@ -30,6 +30,11 @@ use crate::{
         Strap,
     },
     snapshot::{
+        ALL_ROLLS,
+        AccountBetKind,
+        AccountBetPlacement,
+        AccountRollBets,
+        AccountSnapshot,
         ActiveModifier,
         HistoricalSnapshot,
         OverviewSnapshot,
@@ -40,7 +45,6 @@ use fuels::{
     tx::ContractIdExt,
     types::ContractId,
 };
-use std::cmp;
 
 #[cfg(test)]
 mod tests;
@@ -64,22 +68,24 @@ pub struct App<Events, API, Snapshots, Metadata> {
     metadata: Metadata,
     contract_id: ContractId,
     historical_modifiers: Vec<ActiveModifier>,
+    roll_frequency: Option<u32>,
+    first_roll_height: Option<u32>,
 }
 
-fn roll_to_index(roll: &Roll) -> Option<usize> {
+fn roll_to_index(roll: &Roll) -> usize {
     use Roll::*;
     match roll {
-        Two => Some(0),
-        Three => Some(1),
-        Four => Some(2),
-        Five => Some(3),
-        Six => Some(4),
-        Seven => Some(5),
-        Eight => Some(6),
-        Nine => Some(7),
-        Ten => Some(8),
-        Eleven => Some(9),
-        Twelve => Some(10),
+        Two => 0,
+        Three => 1,
+        Four => 2,
+        Five => 3,
+        Six => 4,
+        Seven => 5,
+        Eight => 6,
+        Nine => 7,
+        Ten => 8,
+        Eleven => 9,
+        Twelve => 10,
     }
 }
 
@@ -106,6 +112,47 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
             metadata,
             contract_id,
             historical_modifiers: Vec::new(),
+            roll_frequency: None,
+            first_roll_height: None,
+        }
+    }
+
+    fn refresh_height(&self, snapshot: &mut OverviewSnapshot, height: u32) {
+        snapshot.current_block_height = height;
+    }
+
+    fn ensure_account_roll_template(snapshot: &mut AccountSnapshot) {
+        if snapshot.per_roll_bets.len() == ALL_ROLLS.len() {
+            return;
+        }
+
+        let mut existing = std::mem::take(&mut snapshot.per_roll_bets);
+        let mut rebuilt = Vec::with_capacity(ALL_ROLLS.len());
+        for roll in ALL_ROLLS {
+            if let Some(pos) = existing.iter().position(|entry| entry.roll == roll) {
+                rebuilt.push(existing.swap_remove(pos));
+            } else {
+                rebuilt.push(AccountRollBets {
+                    roll,
+                    bets: Vec::new(),
+                });
+            }
+        }
+        snapshot.per_roll_bets = rebuilt;
+    }
+
+    fn append_bet_to_account(
+        snapshot: &mut AccountSnapshot,
+        roll: Roll,
+        placement: AccountBetPlacement,
+    ) {
+        Self::ensure_account_roll_template(snapshot);
+        if let Some(entry) = snapshot
+            .per_roll_bets
+            .iter_mut()
+            .find(|entry| entry.roll == roll)
+        {
+            entry.bets.push(placement);
         }
     }
 }
@@ -178,8 +225,7 @@ impl<
                     self.handle_initialized_event(event, height)
                 }
                 ContractEvent::Roll(roll_event) => {
-                    let RollEvent { rolled_value, .. } = roll_event;
-                    self.handle_roll_event(rolled_value, height)
+                    self.handle_roll_event(roll_event, height)
                 }
                 ContractEvent::ModifierTriggered(event) => {
                     self.handle_modifier_triggered_event(event, height)
@@ -270,20 +316,37 @@ impl<
         }
     }
 
+    fn frequency(&self) -> Result<u32> {
+        self.roll_frequency.ok_or(anyhow!(
+            "Roll frequency not set... why hasn't the app be initialized?"
+        ))
+    }
+
     fn handle_initialized_event(
         &mut self,
-        _event: InitializedEvent,
+        event: InitializedEvent,
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling InitializedEvent at height {}", height);
-        let snapshot = OverviewSnapshot::new();
-        self.snapshots.update_snapshot(&snapshot, height)
+        self.roll_frequency = Some(event.roll_frequency);
+        self.first_roll_height = Some(event.first_height);
+
+        let mut snapshot = OverviewSnapshot::new();
+        let frequency = event.roll_frequency;
+        snapshot.next_roll_height = Some(event.first_height + frequency);
+        snapshot.current_block_height = height;
+        self.snapshots.update_snapshot(&snapshot, height)?;
+        Ok(())
     }
 
-    fn handle_roll_event(&mut self, roll: Roll, height: u32) -> Result<()> {
+    fn handle_roll_event(&mut self, event: RollEvent, height: u32) -> Result<()> {
         tracing::info!("Handling RollEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        snapshot.rolls.push(roll);
+        snapshot.rolls.push(event.rolled_value);
+        let frequency = self.frequency()?;
+        self.refresh_height(&mut snapshot, height);
+        snapshot.next_roll_height =
+            snapshot.next_roll_height.map(|inner| inner + frequency);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 
@@ -294,9 +357,9 @@ impl<
     ) -> Result<()> {
         tracing::info!("Handling ModifierTriggeredEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        if let Some(idx) = roll_to_index(&event.modifier_roll) {
-            snapshot.modifiers_active[idx] = Some(event.modifier);
-        }
+        let idx = roll_to_index(&event.modifier_roll);
+        snapshot.modifiers_active[idx] = Some(event.modifier);
+
         for entry in &mut snapshot.modifier_shop {
             let (_trigger_roll, modifier_roll, modifier, is_active) = entry;
             if *modifier_roll == event.modifier_roll && *modifier == event.modifier {
@@ -311,6 +374,7 @@ impl<
             modifier_roll: event.modifier_roll,
         };
         self.historical_modifiers.push(active_modifier);
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 
@@ -323,11 +387,12 @@ impl<
         } = event;
 
         let (previous_snapshot, _) = self.snapshots.latest_snapshot()?;
-        let historical = HistoricalSnapshot::new(
+        let mut historical = HistoricalSnapshot::new(
             previous_snapshot.game_id,
             previous_snapshot.rolls.clone(),
             self.historical_modifiers.clone(),
         );
+        historical.strap_rewards = previous_snapshot.rewards.clone();
         self.historical_modifiers.clear();
         let _ = self
             .snapshots
@@ -343,7 +408,7 @@ impl<
                 (trigger_roll, modifier_roll, modifier, false)
             })
             .collect();
-
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
         for (_, strap, _) in new_straps {
             self.remember_strap(&strap);
@@ -362,14 +427,16 @@ impl<
             player,
             amount,
             roll,
+            bet_roll_index,
             ..
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_add(amount);
-        if let Some(idx) = roll_to_index(&roll) {
-            let entry = &mut snapshot.total_bets[idx];
-            entry.0 = entry.0.saturating_add(amount);
-        }
+        let idx = roll_to_index(&roll);
+        let entry = &mut snapshot.total_bets[idx];
+        entry.0 = entry.0.saturating_add(amount);
+
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
 
         let mut account_snapshot = self
@@ -379,6 +446,12 @@ impl<
             .unwrap_or_default();
         account_snapshot.total_chip_bet =
             account_snapshot.total_chip_bet.saturating_add(amount);
+        let placement = AccountBetPlacement {
+            bet_roll_index,
+            amount,
+            kind: AccountBetKind::Chip,
+        };
+        Self::append_bet_to_account(&mut account_snapshot, roll, placement);
         self.snapshots.update_account_snapshot(
             &player,
             game_id,
@@ -398,17 +471,16 @@ impl<
             player,
             amount,
             bet_roll_index,
+            roll,
             strap,
             ..
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
-        if !snapshot.total_bets.is_empty() {
-            let idx = cmp::min(
-                bet_roll_index as usize,
-                snapshot.total_bets.len().saturating_sub(1),
-            );
+        let idx = roll_to_index(&roll);
+        if idx < snapshot.total_bets.len() {
             accumulate_strap(&mut snapshot.total_bets[idx].1, &strap, amount);
         }
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
 
         let mut account_snapshot = self
@@ -417,6 +489,12 @@ impl<
             .map(|(snap, _)| snap)
             .unwrap_or_default();
         accumulate_strap(&mut account_snapshot.strap_bets, &strap, amount);
+        let placement = AccountBetPlacement {
+            bet_roll_index,
+            amount,
+            kind: AccountBetKind::Strap(strap.clone()),
+        };
+        Self::append_bet_to_account(&mut account_snapshot, roll, placement);
         self.remember_strap(&strap);
         self.snapshots.update_account_snapshot(
             &player,
@@ -441,6 +519,7 @@ impl<
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_sub(total_chips_winnings);
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
 
         let mut account_snapshot = self
@@ -448,6 +527,7 @@ impl<
             .latest_account_snapshot(&player)?
             .map(|(snap, _)| snap)
             .unwrap_or_default();
+        Self::ensure_account_roll_template(&mut account_snapshot);
         account_snapshot.total_chip_won = account_snapshot
             .total_chip_won
             .saturating_add(total_chips_winnings);
@@ -468,6 +548,7 @@ impl<
         tracing::info!("Handling FundPotEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_add(event.chips_amount);
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 
@@ -479,9 +560,9 @@ impl<
         tracing::info!("Handling PurchaseModifierEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         let modifier = event.expected_modifier;
-        if let Some(idx) = roll_to_index(&event.expected_roll) {
-            snapshot.modifiers_active[idx] = Some(modifier);
-        }
+        let idx = roll_to_index(&event.expected_roll);
+        snapshot.modifiers_active[idx] = Some(modifier);
+
         for entry in &mut snapshot.modifier_shop {
             let (_trigger_roll, modifier_roll, modifier, purchased) = entry;
             if *modifier_roll == event.expected_roll
@@ -490,6 +571,7 @@ impl<
                 *purchased = true;
             }
         }
+        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 }

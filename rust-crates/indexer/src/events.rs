@@ -195,6 +195,7 @@ pub struct PlaceStrapBetEvent {
     // latest roll index when the bet was placed
     pub bet_roll_index: u32,
     pub player: Identity,
+    pub roll: Roll,
     pub strap: Strap,
     pub amount: u64,
 }
