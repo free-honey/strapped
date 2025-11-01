@@ -146,6 +146,8 @@ async fn run__initialize_event__creates_first_snapshot() {
     expected.current_block_height = init_height;
     let arb_roll_frequency = 10; // based on `arb_init_event`
     expected.next_roll_height = Some(init_height + arb_roll_frequency);
+    expected.roll_frequency = Some(arb_roll_frequency);
+    expected.first_roll_height = Some(init_height);
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     assert_eq!(expected, actual);
 }
@@ -928,6 +930,8 @@ fn arb_snapshot() -> OverviewSnapshot {
         pot_size: 999999999,
         current_block_height: 123,
         next_roll_height: Some(333),
+        roll_frequency: Some(10),
+        first_roll_height: Some(123),
         rewards: vec![(
             Roll::Ten,
             Strap {

@@ -16,6 +16,10 @@ pub struct OverviewSnapshot {
     pub(crate) pot_size: u64,
     pub(crate) current_block_height: u32,
     pub(crate) next_roll_height: Option<u32>,
+    #[serde(default)]
+    pub(crate) roll_frequency: Option<u32>,
+    #[serde(default)]
+    pub(crate) first_roll_height: Option<u32>,
     pub(crate) rewards: Vec<(Roll, Strap, u64)>,
     pub(crate) total_bets: [(u64, Vec<(Strap, u64)>); 11],
     pub(crate) modifiers_active: [Option<Modifier>; 11],
@@ -56,6 +60,8 @@ impl Default for OverviewSnapshot {
             pot_size: 0,
             current_block_height: 0,
             next_roll_height: None,
+            roll_frequency: None,
+            first_roll_height: None,
             rewards: Vec::new(),
             total_bets,
             modifiers_active: [None; 11],
