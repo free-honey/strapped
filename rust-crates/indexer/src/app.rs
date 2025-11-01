@@ -218,6 +218,7 @@ impl<
     }
 
     fn handle_event(&mut self, event: Event, height: u32) -> Result<()> {
+        tracing::info!("Processing event at height {}: {:?}", height, event);
         match event {
             Event::BlockchainEvent => {
                 todo!()
@@ -435,11 +436,21 @@ impl<
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_add(amount);
         let idx = roll_to_index(&roll);
+        snapshot.current_block_height = height;
+        let pot_size = snapshot.pot_size;
+
         let entry = &mut snapshot.total_bets[idx];
         entry.0 = entry.0.saturating_add(amount);
+        let chips = entry.0;
 
-        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
+        tracing::info!(
+            "Updated overview totals for roll {:?}: chips={}, pot_size={}, block_height={}",
+            roll,
+            chips,
+            pot_size,
+            height
+        );
 
         let mut account_snapshot = self
             .snapshots
@@ -459,7 +470,19 @@ impl<
             game_id,
             &account_snapshot,
             height,
-        )
+        )?;
+        tracing::info!(
+            "Updated account snapshot for {:?}: total_chip_bet={}, entries_on_roll={}",
+            player,
+            account_snapshot.total_chip_bet,
+            account_snapshot
+                .per_roll_bets
+                .iter()
+                .find(|entry| entry.roll == roll)
+                .map(|entry| entry.bets.len())
+                .unwrap_or(0)
+        );
+        Ok(())
     }
 
     fn handle_place_strap_bet_event(

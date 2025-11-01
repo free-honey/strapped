@@ -90,20 +90,29 @@ where
     Fn: FnOnce(DecoderConfig, &Receipt) -> Option<Event> + Copy + Send + Sync + 'static,
 {
     async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
-        let unstable_event = self
-            .stream
-            .next()
-            .await
-            .ok_or(anyhow::anyhow!("no event"))?
-            .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
-        match unstable_event {
-            UnstableEvent::Events((height, events)) => Ok((events, *height)),
-            UnstableEvent::Checkpoint(_) => {
-                // TODO: WE should accommodate this happening and handle gracefully
-                Ok((vec![], 0))
-            }
-            UnstableEvent::Rollback(_) => {
-                todo!()
+        loop {
+            let unstable_event = self
+                .stream
+                .next()
+                .await
+                .ok_or(anyhow::anyhow!("no event"))?
+                .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
+            tracing::debug!("next unstable event: {:?}", unstable_event);
+            match unstable_event {
+                UnstableEvent::Events((height, events)) => {
+                    return Ok((events, *height));
+                }
+                UnstableEvent::Checkpoint(checkpoint) => {
+                    tracing::trace!(
+                        "skipping checkpoint at height {} ({} events)",
+                        checkpoint.block_height,
+                        checkpoint.events_count
+                    );
+                    continue;
+                }
+                UnstableEvent::Rollback(_) => {
+                    todo!()
+                }
             }
         }
     }
@@ -218,6 +227,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             Some(inner)
         },
         AbiRollEvent => |event| {
+            tracing::info!("roll event: {:?}", event);
             let game_id = u32::try_from(event.game_id).ok()?;
             let roll_index = u32::try_from(event.roll_index).ok()?;
             let rolled_value = map_roll(event.rolled_value);
@@ -259,6 +269,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             Some(Event::ContractEvent(ContractEvent::ModifierTriggered(inner)))
         },
         AbiPlaceChipBetEvent => |event| {
+            tracing::info!("bet event: {:?}", event);
             let inner = PlaceChipBetEvent {
                 game_id: u32::try_from(event.game_id).ok()?,
                 bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,
