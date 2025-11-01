@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "deployed_at": "2025-10-31T22:10:12.751871+00:00",
+    "contract_id": "4a52ab31cab4f2ee229e0bc030f36a5616afcecd98a7c7eb4b9a2a092faaefc4",
+    "bytecode_hash": "eca6ae495baa4d62540da507f74f7b1afba817f40b09a74e1eb02424b4acfdf7",
+    "network_url": "http://localhost:4000",
+    "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+    "contract_salt": "0x310faf4ec1317d096980e720c7ee8f811ec70fc2d74c985dc8120b0aa34092b2",
+    "vrf_salt": "0x2b7f013b3bac2404893a1ebefbb3ae4d5f3e4e86a1f2465b702a87db8d9af7cb",
+    "vrf_contract_id": "5ca801b8af0785568be1e21fc0dee9c7877ff571c31a173234c82bb52e02b8ae",
+    "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c"
+  }
+]
