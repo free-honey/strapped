@@ -181,11 +181,6 @@ async fn handle_latest_snapshot(
         .map_err(|_| ErrorInternalServerError("latest snapshot responder dropped"))?;
 
     snapshot.current_block_height = block_height;
-    tracing::info!(
-        "responding with latest snapshot at height {} (game_id={})",
-        block_height,
-        snapshot.game_id
-    );
 
     Ok(web::Json(LatestSnapshotDto {
         snapshot,

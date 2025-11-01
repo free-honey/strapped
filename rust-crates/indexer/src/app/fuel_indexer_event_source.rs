@@ -90,29 +90,17 @@ where
     Fn: FnOnce(DecoderConfig, &Receipt) -> Option<Event> + Copy + Send + Sync + 'static,
 {
     async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
-        loop {
-            let unstable_event = self
-                .stream
-                .next()
-                .await
-                .ok_or(anyhow::anyhow!("no event"))?
-                .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
-            tracing::debug!("next unstable event: {:?}", unstable_event);
-            match unstable_event {
-                UnstableEvent::Events((height, events)) => {
-                    return Ok((events, *height));
-                }
-                UnstableEvent::Checkpoint(checkpoint) => {
-                    tracing::trace!(
-                        "skipping checkpoint at height {} ({} events)",
-                        checkpoint.block_height,
-                        checkpoint.events_count
-                    );
-                    continue;
-                }
-                UnstableEvent::Rollback(_) => {
-                    todo!()
-                }
+        let unstable_event = self
+            .stream
+            .next()
+            .await
+            .ok_or(anyhow::anyhow!("no event"))?
+            .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
+        match unstable_event {
+            UnstableEvent::Events((height, events)) => Ok((events, *height)),
+            UnstableEvent::Checkpoint(_checkpoint) => Ok((vec![], 0)),
+            UnstableEvent::Rollback(_) => {
+                todo!()
             }
         }
     }
