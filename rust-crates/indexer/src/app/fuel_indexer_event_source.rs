@@ -21,6 +21,7 @@ use anyhow::anyhow;
 use fuel_core::{
     service::ServiceTrait,
     state::rocks_db::DatabaseConfig,
+    types::fuel_types::BlockHeight,
 };
 use fuel_core_services::{
     ServiceRunner,
@@ -117,6 +118,7 @@ where
         temp_dir: std::path::PathBuf,
         database_config: DatabaseConfig,
         indexer_config: fuel_indexer::indexer::IndexerConfig,
+        starting_height: BlockHeight,
     ) -> Result<Self> {
         let service = fuel_indexer::indexer::new_logs_indexer(
             handler,
@@ -125,7 +127,7 @@ where
             indexer_config,
         )?;
         service.start_and_await().await?;
-        let stream = service.shared.events_starting_from(0u32.into()).await?;
+        let stream = service.shared.events_starting_from(starting_height).await?;
         let new = Self {
             _service: service,
             stream,

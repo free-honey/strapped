@@ -21,7 +21,7 @@ use indexer::app::{
     sled_storage::SledSnapshotStorage,
 };
 use std::{
-    env::current_exe,
+    env::current_dir,
     fs,
     path::PathBuf,
     str::FromStr,
@@ -96,12 +96,10 @@ async fn main() -> anyhow::Result<()> {
     } else {
         "test"
     };
-    let binary_dir = current_exe()
-        .context("determine indexer binary path")?
-        .parent()
-        .context("indexer binary has no parent directory")?
-        .to_path_buf();
-    let data_root = binary_dir.join("strapped_indexer_data").join(network_label);
+    let execution_dir = current_dir().context("determine process working directory")?;
+    let data_root = execution_dir
+        .join("strapped_indexer_data")
+        .join(network_label);
     fs::create_dir_all(&data_root)?;
     let event_data_path = data_root.join("events");
     fs::create_dir_all(&event_data_path)?;
@@ -127,10 +125,10 @@ async fn main() -> anyhow::Result<()> {
         event_data_path.clone(),
         database_config,
         indexer_config,
+        args.starting_block_height.into(),
     )
-    .await
-    .unwrap();
-    let api = ActixQueryApi::new(args.port).await.unwrap();
+    .await?;
+    let api = ActixQueryApi::new(args.port).await?;
     let (snapshots, metadata) = SledSnapshotStorage::open(&storage_path)?;
     let mut app = App::new(events, api, snapshots, metadata, contract_id);
 
