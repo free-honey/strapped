@@ -3,9 +3,12 @@ use clap::{
     ArgGroup,
     Parser,
 };
-use fuel_core::state::rocks_db::{
-    ColumnsPolicy,
-    DatabaseConfig,
+use fuel_core::{
+    state::rocks_db::{
+        ColumnsPolicy,
+        DatabaseConfig,
+    },
+    types::fuel_types::BlockHeight,
 };
 use fuel_indexer::indexer::IndexerConfig;
 use fuels::types::ContractId;
@@ -19,9 +22,10 @@ use indexer::app::{
     },
     init_tracing,
     sled_storage::SledSnapshotStorage,
+    snapshot_storage::SnapshotStorage,
 };
 use std::{
-    env::current_exe,
+    env::current_dir,
     fs,
     path::PathBuf,
     str::FromStr,
@@ -96,12 +100,10 @@ async fn main() -> anyhow::Result<()> {
     } else {
         "test"
     };
-    let binary_dir = current_exe()
-        .context("determine indexer binary path")?
-        .parent()
-        .context("indexer binary has no parent directory")?
-        .to_path_buf();
-    let data_root = binary_dir.join("strapped_indexer_data").join(network_label);
+    let execution_dir = current_dir().context("determine process working directory")?;
+    let data_root = execution_dir
+        .join("strapped_indexer_data")
+        .join(network_label);
     fs::create_dir_all(&data_root)?;
     let event_data_path = data_root.join("events");
     fs::create_dir_all(&event_data_path)?;
@@ -115,23 +117,47 @@ async fn main() -> anyhow::Result<()> {
     };
     fs::create_dir_all(&storage_path)?;
     tracing::info!("Using sled storage directory: {}", storage_path.display());
+
+    let (mut snapshots, metadata) = SledSnapshotStorage::open(&storage_path)?;
+    let last_indexed_height = snapshots.latest_snapshot().map(|(_, height)| height).ok();
+    let mut start_height = args.starting_block_height;
+    if let Some(existing_height) = last_indexed_height {
+        if existing_height > start_height {
+            tracing::info!(
+                "Found indexed state up to block height {}; overriding requested start {}",
+                existing_height,
+                start_height
+            );
+        }
+        start_height = start_height.max(existing_height);
+    }
+    snapshots.prune_from(start_height)?;
+    if start_height != args.starting_block_height {
+        tracing::info!(
+            "Indexer will resume from block height {} (requested {})",
+            start_height,
+            args.starting_block_height
+        );
+    } else {
+        tracing::info!("Indexer will start from block height {}", start_height);
+    }
+    let start_block_height: BlockHeight = start_height.into();
+
     let database_config = DatabaseConfig {
         cache_capacity: None,
         max_fds: 512,
         columns_policy: ColumnsPolicy::Lazy,
     };
-    let indexer_config =
-        IndexerConfig::new(args.starting_block_height.into(), args.graphql_url);
+    let indexer_config = IndexerConfig::new(start_block_height, args.graphql_url);
     let events = FuelIndexerEventSource::new(
         parse_event_logs,
         event_data_path.clone(),
         database_config,
         indexer_config,
+        start_block_height,
     )
-    .await
-    .unwrap();
-    let api = ActixQueryApi::new(args.port).await.unwrap();
-    let (snapshots, metadata) = SledSnapshotStorage::open(&storage_path)?;
+    .await?;
+    let api = ActixQueryApi::new(args.port).await?;
     let mut app = App::new(events, api, snapshots, metadata, contract_id);
 
     tracing::info!("Starting indexer service");

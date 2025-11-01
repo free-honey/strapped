@@ -21,6 +21,7 @@ use anyhow::anyhow;
 use fuel_core::{
     service::ServiceTrait,
     state::rocks_db::DatabaseConfig,
+    types::fuel_types::BlockHeight,
 };
 use fuel_core_services::{
     ServiceRunner,
@@ -97,10 +98,7 @@ where
             .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
         match unstable_event {
             UnstableEvent::Events((height, events)) => Ok((events, *height)),
-            UnstableEvent::Checkpoint(_) => {
-                // TODO: WE should accommodate this happening and handle gracefully
-                Ok((vec![], 0))
-            }
+            UnstableEvent::Checkpoint(_checkpoint) => Ok((vec![], 0)),
             UnstableEvent::Rollback(_) => {
                 todo!()
             }
@@ -117,6 +115,7 @@ where
         temp_dir: std::path::PathBuf,
         database_config: DatabaseConfig,
         indexer_config: fuel_indexer::indexer::IndexerConfig,
+        starting_height: BlockHeight,
     ) -> Result<Self> {
         let service = fuel_indexer::indexer::new_logs_indexer(
             handler,
@@ -125,7 +124,7 @@ where
             indexer_config,
         )?;
         service.start_and_await().await?;
-        let stream = service.shared.events_starting_from(0u32.into()).await?;
+        let stream = service.shared.events_starting_from(starting_height).await?;
         let new = Self {
             _service: service,
             stream,
@@ -216,6 +215,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             Some(inner)
         },
         AbiRollEvent => |event| {
+            tracing::info!("roll event: {:?}", event);
             let game_id = u32::try_from(event.game_id).ok()?;
             let roll_index = u32::try_from(event.roll_index).ok()?;
             let rolled_value = map_roll(event.rolled_value);
@@ -257,6 +257,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             Some(Event::ContractEvent(ContractEvent::ModifierTriggered(inner)))
         },
         AbiPlaceChipBetEvent => |event| {
+            tracing::info!("bet event: {:?}", event);
             let inner = PlaceChipBetEvent {
                 game_id: u32::try_from(event.game_id).ok()?,
                 bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,

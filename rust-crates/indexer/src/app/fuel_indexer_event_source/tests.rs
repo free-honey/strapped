@@ -68,6 +68,7 @@ async fn next_event_batch__can_get_init_event() {
         temp_dir,
         database_config,
         indexer_config,
+        BlockHeight::from(0u32),
     )
     .await
     .unwrap();
@@ -151,6 +152,7 @@ async fn next_event_batch__can_get_roll_event() {
         temp_dir,
         database_config,
         indexer_config,
+        BlockHeight::from(0u32),
     )
     .await
     .unwrap();
@@ -275,6 +277,7 @@ async fn next_event_batch__can_get_new_game_event() {
         temp_dir,
         database_config,
         indexer_config,
+        BlockHeight::from(0u32),
     )
     .await
     .unwrap();

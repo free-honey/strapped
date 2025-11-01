@@ -99,7 +99,10 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
     }
 }
 
-impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
+impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata>
+where
+    Snapshots: SnapshotStorage,
+{
     pub fn new(
         events: Events,
         api: API,
@@ -107,6 +110,11 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
         metadata: Metadata,
         contract_id: ContractId,
     ) -> Self {
+        let (roll_frequency, first_roll_height) = snapshots
+            .latest_snapshot()
+            .ok()
+            .map(|(snapshot, _)| (snapshot.roll_frequency, snapshot.first_roll_height))
+            .unwrap_or((None, None));
         Self {
             events,
             api,
@@ -114,8 +122,8 @@ impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata> {
             metadata,
             contract_id,
             historical_modifiers: Vec::new(),
-            roll_frequency: None,
-            first_roll_height: None,
+            roll_frequency,
+            first_roll_height,
         }
     }
 
@@ -336,6 +344,8 @@ impl<
         let mut snapshot = OverviewSnapshot::new();
         let frequency = event.roll_frequency;
         snapshot.next_roll_height = Some(event.first_height + frequency);
+        snapshot.roll_frequency = Some(frequency);
+        snapshot.first_roll_height = Some(event.first_height);
         snapshot.current_block_height = height;
         self.snapshots.update_snapshot(&snapshot, height)?;
         Ok(())
@@ -403,6 +413,8 @@ impl<
         let mut snapshot = OverviewSnapshot::default();
         snapshot.pot_size = previous_snapshot.pot_size;
         snapshot.game_id = game_id;
+        snapshot.roll_frequency = self.roll_frequency;
+        snapshot.first_roll_height = self.first_roll_height;
         snapshot.rewards = new_straps.clone();
         snapshot.modifier_shop = new_modifiers
             .into_iter()
@@ -435,10 +447,11 @@ impl<
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_add(amount);
         let idx = roll_to_index(&roll);
+        snapshot.current_block_height = height;
+
         let entry = &mut snapshot.total_bets[idx];
         entry.0 = entry.0.saturating_add(amount);
 
-        self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
 
         let mut account_snapshot = self
@@ -459,7 +472,8 @@ impl<
             game_id,
             &account_snapshot,
             height,
-        )
+        )?;
+        Ok(())
     }
 
     fn handle_place_strap_bet_event(

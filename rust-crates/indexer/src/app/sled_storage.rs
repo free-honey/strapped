@@ -84,6 +84,37 @@ impl SledSnapshotStorage {
         Ok((snapshots, metadata))
     }
 
+    /// Remove all snapshots (overview and account) with a block height greater than
+    /// or equal to `from_height`.
+    pub fn prune_from(&mut self, from_height: u32) -> crate::Result<()> {
+        if from_height == 0 {
+            self.overview_tree
+                .clear()
+                .context("clear overview snapshots during prune_from(0)")?;
+            self.overview_tree
+                .flush()
+                .context("flush overview snapshots during prune_from(0)")?;
+
+            self.account_tree
+                .clear()
+                .context("clear account snapshots during prune_from(0)")?;
+            self.account_tree
+                .flush()
+                .context("flush account snapshots during prune_from(0)")?;
+
+            self.clear_latest_height()?;
+
+            // Historical snapshots are game-scoped and immutable from the perspective of
+            // rollbacks, so we leave them untouched even when starting from genesis.
+            return Ok(());
+        }
+
+        let rollback_to = from_height
+            .checked_sub(1)
+            .expect("from_height > 0 so subtraction cannot underflow");
+        self.roll_back_snapshots(rollback_to)
+    }
+
     fn latest_height(&self) -> crate::Result<Option<u32>> {
         match self.overview_meta.get(LATEST_HEIGHT_KEY)? {
             Some(bytes) => {
@@ -471,6 +502,57 @@ mod tests {
         let (account_snapshot, account_height) = account_latest.unwrap();
         assert_eq!(account_height, 10);
         assert_eq!(account_snapshot.total_chip_won, 5);
+    }
+
+    #[test]
+    fn sut__when_pruning_from_height_then_entries_at_or_above_are_removed() {
+        // given
+        let temp_dir = TempDir::new("sled_snapshot_storage_prune").unwrap();
+        let db = sled_db(&temp_dir);
+
+        let mut storage = SledSnapshotStorage::new(&db).unwrap();
+        let mut snapshot_one = OverviewSnapshot::default();
+        snapshot_one.game_id = 1;
+        let mut snapshot_two = OverviewSnapshot::default();
+        snapshot_two.game_id = 2;
+
+        storage.update_snapshot(&snapshot_one, 10).unwrap();
+        storage.update_snapshot(&snapshot_two, 20).unwrap();
+
+        let account = Identity::Address(Address::from([2u8; 32]));
+        let mut account_snapshot = AccountSnapshot::default();
+        account_snapshot.total_chip_bet = 3;
+        storage
+            .update_account_snapshot(&account, 1, &account_snapshot, 10)
+            .unwrap();
+
+        let mut account_snapshot_two = AccountSnapshot::default();
+        account_snapshot_two.total_chip_bet = 6;
+        storage
+            .update_account_snapshot(&account, 2, &account_snapshot_two, 20)
+            .unwrap();
+
+        // when
+        storage.prune_from(20).unwrap();
+
+        // then
+        let (latest, height) = storage.latest_snapshot().unwrap();
+        assert_eq!(height, 10);
+        assert_eq!(latest.game_id, 1);
+
+        let latest_account = storage.latest_account_snapshot(&account).unwrap();
+        assert!(latest_account.is_some());
+        let (account_snapshot, account_height) = latest_account.unwrap();
+        assert_eq!(account_height, 10);
+        assert_eq!(account_snapshot.total_chip_bet, 3);
+
+        // when
+        storage.prune_from(0).unwrap();
+
+        // then
+        assert!(storage.latest_snapshot().is_err());
+        let latest_account = storage.latest_account_snapshot(&account).unwrap();
+        assert!(latest_account.is_none());
     }
 
     #[test]
