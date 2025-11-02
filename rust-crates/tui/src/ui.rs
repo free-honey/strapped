@@ -27,8 +27,6 @@ pub enum UserEvent {
     Quit,
     NextRoll,
     PrevRoll,
-    Owner,
-    Alice,
     PlaceBetAmount(u64),
     Purchase,
     Roll,
@@ -423,8 +421,6 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                 }
                 KeyCode::Right | KeyCode::Char('l') => UserEvent::NextRoll,
                 KeyCode::Left | KeyCode::Char('h') => UserEvent::PrevRoll,
-                KeyCode::Char('o') => UserEvent::Owner,
-                KeyCode::Char('a') => UserEvent::Alice,
                 KeyCode::Char('b') => {
                     state.mode = Mode::BetModal(BetState::default());
                     UserEvent::OpenBetModal
@@ -720,26 +716,19 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 
     // Help
     let help = Paragraph::new(
-        "←/→ select | a Alice | o Owner | b chip bet | t strap bet | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
+        "←/→ select | b chip bet | t strap bet | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
     )
     .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(help, chunks[1]);
 }
 
 fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
-    let wallet = match snap.wallet {
-        crate::client::WalletKind::Owner => "Owner",
-        _ => "Alice",
-    };
     let straps_line = format_owned_strap_summary(&snap.owned_straps);
 
     const DECIMAL_SPACES: u32 = 9;
     let chips_balance = snap.chip_balance;
     let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
-    let text = format!(
-        "Wallet: {} | Chips: {} | Straps: {}",
-        wallet, format_chips_balance, straps_line
-    );
+    let text = format!("Chips: {} | Straps: {}", format_chips_balance, straps_line);
     let widget = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title("Wallet"));
     f.render_widget(widget, area);

@@ -8,7 +8,7 @@ pub use generated_abi::{
     vrf_types,
 };
 
-pub mod deployment;
+pub use deployments as deployment;
 pub mod wallets;
 
 #[cfg(feature = "test-helpers")]

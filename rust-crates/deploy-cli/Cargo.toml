@@ -1,0 +1,19 @@
+[package]
+name = "deploy-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.20", features = ["derive"] }
+deployments = { path = "../deployments" }
+fuel-core-client = "0.47.1"
+fuels = { workspace = true }
+generated_abi = { path = "../generated_abi" }
+hex = "0.4"
+rand = "0.9.2"
+tokio = { version = "1.12", features = ["rt-multi-thread", "macros"] }
+eth-keystore = "0.5"
+rpassword = "7.3"
+shellexpand = "3.1"
+chrono = "0.4"

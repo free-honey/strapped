@@ -1,7 +1,14 @@
-use anyhow::Context;
+use anyhow::{
+    Context,
+    anyhow,
+};
 use clap::{
     ArgGroup,
     Parser,
+};
+use deployments::{
+    DeploymentEnv,
+    DeploymentStore,
 };
 use fuel_core::{
     state::rocks_db::{
@@ -25,6 +32,7 @@ use indexer::app::{
     snapshot_storage::SnapshotStorage,
 };
 use std::{
+    convert::TryFrom,
     env::current_dir,
     fs,
     path::PathBuf,
@@ -45,10 +53,10 @@ use url::Url;
 )]
 struct Args {
     #[arg(short, long)]
-    contract_id: String,
+    contract_id: Option<String>,
 
-    #[arg(short, long)]
-    starting_block_height: u32,
+    #[arg(long = "start-height")]
+    start_height: Option<u32>,
 
     #[arg(short, long)]
     graphql_url: Url,
@@ -84,22 +92,106 @@ async fn handle_interupt() {
     }
 }
 
+fn parse_contract_id_str(raw: &str) -> anyhow::Result<ContractId> {
+    let trimmed = raw.trim();
+    let cleaned = trimmed.trim_start_matches("fuel");
+    ContractId::from_str(cleaned)
+        .map_err(|e| anyhow!("Failed to parse contract id '{raw}': {e:?}"))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     if args.tracing {
         init_tracing();
     }
-    let contract_id_str = args.contract_id;
-    let contract_id = ContractId::from_str(&contract_id_str).unwrap();
-
-    let network_label = if args.local {
-        "local"
+    let (deployment_env, network_label) = if args.local {
+        (DeploymentEnv::Local, "local")
     } else if args.dev {
-        "dev"
+        (DeploymentEnv::Dev, "dev")
     } else {
-        "test"
+        (DeploymentEnv::Test, "test")
     };
+    let store =
+        DeploymentStore::new(deployment_env).context("opening deployments store")?;
+    let records = store.load().context("loading deployments")?;
+    let user_contract_id = args
+        .contract_id
+        .as_ref()
+        .map(|raw| parse_contract_id_str(raw).context("parsing --contract-id"))
+        .transpose()?;
+    let selected_record = if let Some(ref cid) = user_contract_id {
+        records.iter().find(|record| {
+            parse_contract_id_str(&record.contract_id)
+                .map(|parsed| parsed == *cid)
+                .unwrap_or(false)
+        })
+    } else {
+        records
+            .iter()
+            .max_by(|a, b| a.deployed_at.cmp(&b.deployed_at))
+    };
+    let (contract_id, record_used) = match selected_record.cloned() {
+        Some(record) => {
+            let contract_id =
+                parse_contract_id_str(&record.contract_id).with_context(|| {
+                    format!(
+                        "parsing contract id from deployment record {}",
+                        record.contract_id
+                    )
+                })?;
+            (contract_id, Some(record))
+        }
+        None => {
+            let cid = user_contract_id
+                .ok_or_else(|| anyhow!(
+                    "No deployment record found for {network_label}; provide --contract-id"
+                ))?;
+            (cid, None)
+        }
+    };
+    let override_start_height = args.start_height;
+    let mut start_height = if let Some(ref record) = record_used {
+        match record.deployment_block_height {
+            Some(height) => {
+                u32::try_from(height).context("deployment block height exceeds u32")?
+            }
+            None => {
+                tracing::warn!(
+                    "Deployment record {} missing deployment_block_height; defaulting to 0",
+                    record.contract_id
+                );
+                0
+            }
+        }
+    } else {
+        0
+    };
+    if record_used.is_none() && override_start_height.is_none() {
+        return Err(anyhow!(
+            "No deployment metadata available for contract {}; supply --start-height",
+            contract_id
+        ));
+    }
+    if let Some(custom_height) = override_start_height {
+        start_height = custom_height;
+    }
+    let requested_start_height = start_height;
+    if let Some(ref record) = record_used {
+        tracing::info!(
+            "Using deployment record {} (network {}) deployed at {} (block height {:?})",
+            record.contract_id,
+            record.network_url,
+            record.deployed_at,
+            record.deployment_block_height
+        );
+    } else {
+        tracing::info!(
+            "Using contract {} provided via CLI override with start height {}",
+            contract_id,
+            start_height
+        );
+    }
     let execution_dir = current_dir().context("determine process working directory")?;
     let data_root = execution_dir
         .join("strapped_indexer_data")
@@ -120,28 +212,42 @@ async fn main() -> anyhow::Result<()> {
 
     let (mut snapshots, metadata) = SledSnapshotStorage::open(&storage_path)?;
     let last_indexed_height = snapshots.latest_snapshot().map(|(_, height)| height).ok();
-    let mut start_height = args.starting_block_height;
     if let Some(existing_height) = last_indexed_height {
         if existing_height > start_height {
             tracing::info!(
                 "Found indexed state up to block height {}; overriding requested start {}",
                 existing_height,
-                start_height
+                requested_start_height
             );
         }
         start_height = start_height.max(existing_height);
     }
     snapshots.prune_from(start_height)?;
-    if start_height != args.starting_block_height {
+    if start_height != requested_start_height {
         tracing::info!(
             "Indexer will resume from block height {} (requested {})",
             start_height,
-            args.starting_block_height
+            requested_start_height
         );
     } else {
         tracing::info!("Indexer will start from block height {}", start_height);
     }
-    let start_block_height: BlockHeight = start_height.into();
+    let should_backfill_deployment_block = record_used.is_some()
+        && last_indexed_height.is_none()
+        && override_start_height.is_none();
+    let event_start_height = if should_backfill_deployment_block {
+        start_height.saturating_sub(1)
+    } else {
+        start_height
+    };
+    if should_backfill_deployment_block && event_start_height != start_height {
+        tracing::info!(
+            "Fuel receipts stream will backfill from block height {} to include the deployment block {}",
+            event_start_height,
+            start_height,
+        );
+    }
+    let start_block_height: BlockHeight = event_start_height.into();
 
     let database_config = DatabaseConfig {
         cache_capacity: None,
