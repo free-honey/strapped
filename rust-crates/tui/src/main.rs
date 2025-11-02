@@ -2,9 +2,9 @@ use color_eyre::eyre::{
     Result,
     eyre,
 };
+use strapped_contract::deployment;
 
 mod client;
-mod deployment;
 mod indexer_client;
 mod ui;
 mod wallets;
@@ -12,7 +12,7 @@ mod wallets;
 fn print_usage_and_exit() -> ! {
     println!(
         "Usage: strapped-contract [--fake-vrf] [--devnet | --testnet | --local] [--rpc-url <url>]\n\
-         [--wallet <name> | --wallet-owner <name> [--wallet-player <name>]] [--wallet-dir <path>] [--deploy]\n\
+         [--wallet <name>] [--wallet-dir <path>]\n\
          [--indexer-url <url>]\n\
          \n\
          Flags:\n\
@@ -21,11 +21,8 @@ fn print_usage_and_exit() -> ! {
            --testnet           Connect to Fuel testnet (default RPC {})\n\
            --local             Connect to a local Fuel node (default RPC {})\n\
            --rpc-url <url>     Override the RPC URL for the selected network\n\
-           --wallet <name>     Use the same forc-wallet for both owner and player roles\n\
-           --wallet-owner <name>  Specify owner wallet name (for remote networks)\n\
-           --wallet-player <name> Specify player wallet name (defaults to owner wallet)\n\
+           --wallet <name>     forc-wallet profile to use for playing\n\
            --wallet-dir <path> Override forc-wallet directory (defaults to ~/.fuel/wallets)\n\
-           --deploy            Deploy a fresh contract if no compatible deployment exists\n\
            --indexer-url <url> Point the client at a running indexer HTTP endpoint",
         client::DEFAULT_DEVNET_RPC_URL,
         client::DEFAULT_TESTNET_RPC_URL,
@@ -47,10 +44,7 @@ fn parse_cli_args() -> Result<client::AppConfig> {
     let mut network_flag: Option<NetworkFlag> = None;
     let mut custom_url: Option<String> = None;
     let mut wallet_dir: Option<String> = None;
-    let mut wallet_owner: Option<String> = None;
-    let mut wallet_player: Option<String> = None;
-    let mut wallet_shared: Option<String> = None;
-    let mut deploy_if_missing = false;
+    let mut wallet_name: Option<String> = None;
     let mut indexer_url: Option<String> = None;
 
     while let Some(arg) = args.next() {
@@ -107,31 +101,10 @@ fn parse_cli_args() -> Result<client::AppConfig> {
                 let name = args
                     .next()
                     .ok_or_else(|| eyre!("--wallet requires a wallet name"))?;
-                if wallet_shared.is_some() {
+                if wallet_name.is_some() {
                     return Err(eyre!("--wallet may only be specified once"));
                 }
-                wallet_shared = Some(name);
-            }
-            "--wallet-owner" => {
-                let name = args
-                    .next()
-                    .ok_or_else(|| eyre!("--wallet-owner requires a wallet name"))?;
-                if wallet_owner.is_some() {
-                    return Err(eyre!("--wallet-owner may only be specified once"));
-                }
-                wallet_owner = Some(name);
-            }
-            "--wallet-player" => {
-                let name = args
-                    .next()
-                    .ok_or_else(|| eyre!("--wallet-player requires a wallet name"))?;
-                if wallet_player.is_some() {
-                    return Err(eyre!("--wallet-player may only be specified once"));
-                }
-                wallet_player = Some(name);
-            }
-            "--deploy" => {
-                deploy_if_missing = true;
+                wallet_name = Some(name);
             }
             "--indexer-url" => {
                 let url = args
@@ -148,7 +121,11 @@ fn parse_cli_args() -> Result<client::AppConfig> {
     }
 
     let network = match network_flag {
-        None => client::NetworkTarget::InMemory,
+        None => {
+            return Err(eyre!(
+                "Select a network with --devnet, --testnet, or --local"
+            ));
+        }
         Some(NetworkFlag::Devnet) => client::NetworkTarget::Devnet {
             url: custom_url.unwrap_or_else(|| client::DEFAULT_DEVNET_RPC_URL.to_string()),
         },
@@ -161,46 +138,20 @@ fn parse_cli_args() -> Result<client::AppConfig> {
         },
     };
 
-    let wallet_flags_present = wallet_dir.is_some()
-        || wallet_owner.is_some()
-        || wallet_player.is_some()
-        || wallet_shared.is_some();
-
-    let wallets = match network_flag {
-        None => {
-            if wallet_flags_present {
-                return Err(eyre!(
-                    "Wallet selection flags require a network flag (--devnet/--testnet/--local)"
-                ));
-            }
-            client::WalletConfig::Generated
-        }
-        Some(_) => {
-            let dir = wallets::resolve_wallet_dir(wallet_dir.as_deref())?;
-            let owner_name = wallet_owner
-                .or_else(|| wallet_shared.clone())
-                .ok_or_else(|| {
-                    eyre!(
-                        "Specify --wallet-owner <name> or --wallet <name> when selecting a remote network"
-                    )
-                })?;
-            let player_name = wallet_player
-                .or_else(|| wallet_shared.clone())
-                .unwrap_or_else(|| owner_name.clone());
-
-            client::WalletConfig::ForcKeystore {
-                owner: owner_name,
-                player: player_name,
-                dir,
-            }
-        }
+    let wallet = wallet_name.ok_or_else(|| {
+        eyre!("Specify --wallet <name> to select a forc-wallet profile")
+    })?;
+    let dir = wallets::resolve_wallet_dir(wallet_dir.as_deref())?;
+    let wallets = client::WalletConfig::ForcKeystore {
+        owner: wallet.clone(),
+        player: wallet,
+        dir,
     };
 
     Ok(client::AppConfig {
         vrf_mode,
         network,
         wallets,
-        deploy_if_missing,
         indexer_url,
     })
 }
@@ -212,7 +163,7 @@ async fn main() -> Result<()> {
     //     .try_init();
     tracing::info!("starting strapped-contract client");
     color_eyre::install()?;
-    deployment::ensure_structure()?;
+    deployment::ensure_structure().map_err(|e| eyre!(e))?;
     let app_config = parse_cli_args()?;
     client::run_app(app_config).await
 }

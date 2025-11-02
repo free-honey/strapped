@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "rust-crates/generated_abi",
+    "rust-crates/deployments",
+    "rust-crates/deploy-cli",
     "rust-crates/indexer",
     "rust-crates/tui",
     "integration-tests",
