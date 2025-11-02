@@ -113,12 +113,24 @@ enum ClaimFocus {
 fn prune_selected(cs: &mut ClaimState, g: &PreviousGameSummary) {
     cs.selected
         .retain(|(rr, mm)| g.modifiers.iter().any(|(gr, gm, _)| gr == rr && gm == mm));
+    if cs.selected.is_empty() && !g.modifiers.is_empty() {
+        cs.selected = default_claim_selection(g);
+    }
     if g.modifiers.is_empty() {
         cs.focus = ClaimFocus::Games;
         cs.mod_idx = 0;
     } else {
         cs.mod_idx = cs.mod_idx.min(g.modifiers.len() - 1);
     }
+}
+
+fn default_claim_selection(
+    g: &PreviousGameSummary,
+) -> Vec<(strapped::Roll, strapped::Modifier)> {
+    g.modifiers
+        .iter()
+        .map(|(r, m, _)| (r.clone(), m.clone()))
+        .collect()
 }
 
 pub fn terminal_enter(state: &mut UiState) -> Result<()> {
@@ -442,7 +454,13 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                     UserEvent::OpenShop
                 }
                 KeyCode::Char('c') => {
-                    state.mode = Mode::ClaimModal(ClaimState::default());
+                    let mut cs = ClaimState::default();
+                    if let Some(g) = state.prev_games.get(cs.game_idx) {
+                        if !g.modifiers.is_empty() {
+                            cs.selected = default_claim_selection(g);
+                        }
+                    }
+                    state.mode = Mode::ClaimModal(cs);
                     UserEvent::OpenClaimModal
                 }
                 _ => continue,
