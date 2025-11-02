@@ -52,7 +52,7 @@ const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
 const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
 const DEFAULT_LOCAL_RPC_URL: &str = "http://localhost:4000/";
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
-const FUNDING_AMOUNT: u64 = 1_000_000;
+const FUNDING_AMOUNT: u64 = 100_000_000;
 const STRAPPED_BIN_CANDIDATES: [&str; 1] =
     ["./sway-projects/strapped/out/release/strapped.bin"];
 const VRF_BIN_CANDIDATES: [&str; 1] =
@@ -97,6 +97,10 @@ struct Args {
     /// Asset id to use for chips (defaults to the chain base asset)
     #[arg(long)]
     chip_asset_id: Option<String>,
+
+    /// Amount of chips to fund the strapped contract with
+    #[arg(long)]
+    funding_amount: Option<u64>,
 }
 
 #[tokio::main]
@@ -215,8 +219,9 @@ async fn main() -> Result<()> {
         .await
         .context("initializing strapped contract")?;
 
+    let funding_amount = args.funding_amount.unwrap_or(FUNDING_AMOUNT);
     let fund_call =
-        CallParameters::new(FUNDING_AMOUNT, chip_asset_id, safe_script_gas_limit);
+        CallParameters::new(funding_amount, chip_asset_id, safe_script_gas_limit);
     strap_instance
         .methods()
         .fund()

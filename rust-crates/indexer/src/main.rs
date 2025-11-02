@@ -232,7 +232,22 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("Indexer will start from block height {}", start_height);
     }
-    let start_block_height: BlockHeight = start_height.into();
+    let should_backfill_deployment_block = record_used.is_some()
+        && last_indexed_height.is_none()
+        && override_start_height.is_none();
+    let event_start_height = if should_backfill_deployment_block {
+        start_height.saturating_sub(1)
+    } else {
+        start_height
+    };
+    if should_backfill_deployment_block && event_start_height != start_height {
+        tracing::info!(
+            "Fuel receipts stream will backfill from block height {} to include the deployment block {}",
+            event_start_height,
+            start_height,
+        );
+    }
+    let start_block_height: BlockHeight = event_start_height.into();
 
     let database_config = DatabaseConfig {
         cache_capacity: None,
