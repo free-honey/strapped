@@ -743,10 +743,10 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let straps_line = format_owned_strap_summary(&snap.owned_straps);
 
-    const DECIMAL_SPACES: u32 = 9;
+    // const DECIMAL_SPACES: u32 = 9;
     let chips_balance = snap.chip_balance;
-    let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
-    let text = format!("Chips: {} | Straps: {}", format_chips_balance, straps_line);
+    // let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
+    let text = format!("Chips: {} | Straps: {}", chips_balance, straps_line);
     let widget = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title("Wallet"));
     f.render_widget(widget, area);
@@ -783,20 +783,20 @@ fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     f.render_widget(widget, area);
 }
 
-fn chips_balance_formated(chips_balance: u64, decimal_places: u32) -> String {
-    let one_unit = 10i64.saturating_pow(decimal_places) as u64;
-    let whole = chips_balance / one_unit;
-    let fractional = chips_balance % one_unit;
-    if fractional == 0 {
-        format!("{}", whole)
-    } else {
-        format!(
-            "{}.{}",
-            whole,
-            format!("{:09}", fractional).trim_end_matches('0')
-        )
-    }
-}
+// fn chips_balance_formated(chips_balance: u64, decimal_places: u32) -> String {
+//     let one_unit = 10i64.saturating_pow(decimal_places) as u64;
+//     let whole = chips_balance / one_unit;
+//     let fractional = chips_balance % one_unit;
+//     if fractional == 0 {
+//         format!("{}", whole)
+//     } else {
+//         format!(
+//             "{}.{}",
+//             whole,
+//             format!("{:09}", fractional).trim_end_matches('0')
+//         )
+//     }
+// }
 
 fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
     match &state.mode {
