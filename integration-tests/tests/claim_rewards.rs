@@ -559,15 +559,38 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
     ) {
         // given
         let base_contract_id = contract_id();
-        let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
-        let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
+        let straps = vec![
+            Strap::new(1, StrapKind::Shirt, Modifier::Nothing),
+            Strap::new(1, StrapKind::Pants, Modifier::Nothing),
+            Strap::new(1, StrapKind::Shoes, Modifier::Nothing),
+            Strap::new(1, StrapKind::Dress, Modifier::Nothing),
+            Strap::new(1, StrapKind::Hat, Modifier::Nothing),
+            Strap::new(1, StrapKind::Glasses, Modifier::Nothing),
+            Strap::new(1, StrapKind::Watch, Modifier::Nothing),
+            Strap::new(1, StrapKind::Ring, Modifier::Nothing),
+            Strap::new(1, StrapKind::Necklace, Modifier::Nothing),
+            Strap::new(1, StrapKind::Earring, Modifier::Nothing),
+            Strap::new(1, StrapKind::Bracelet, Modifier::Nothing),
+            Strap::new(1, StrapKind::Tattoo, Modifier::Nothing),
+            Strap::new(1, StrapKind::Skirt, Modifier::Nothing),
+            Strap::new(1, StrapKind::Piercing, Modifier::Nothing),
+            Strap::new(1, StrapKind::Coat, Modifier::Nothing),
+            Strap::new(1, StrapKind::Scarf, Modifier::Nothing),
+            Strap::new(1, StrapKind::Gloves, Modifier::Nothing),
+            Strap::new(1, StrapKind::Gown, Modifier::Nothing),
+            Strap::new(1, StrapKind::Belt, Modifier::Nothing),
+        ];
 
-        let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-            id: base_strap_asset,
-            num_coins: 20,
-            coin_amount: 1,
-        }])
-        .await;
+        let extra_assets = straps
+            .iter()
+            .map(|strap| AssetConfig {
+                id: base_contract_id.asset_id(&strap_to_sub_id(strap)),
+                num_coins: 20,
+                coin_amount: 1,
+            })
+            .collect::<Vec<_>>();
+
+        let ctx = TestContext::new_with_extra_assets(extra_assets).await;
 
         ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
         let available_triggers = modifier_triggers_for_roll(some_seven_vrf_number);
@@ -583,7 +606,11 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             .await
             .unwrap()
             .value;
-        for (trigger_roll, modifier_roll, modifier) in available_triggers.clone().iter() {
+        let mut strap_expectations: Vec<(Strap, Modifier)> = Vec::new();
+
+        for (idx, (trigger_roll, modifier_roll, modifier)) in
+            available_triggers.clone().iter().enumerate()
+        {
             let vrf_number = roll_to_vrf_number(&trigger_roll);
             ctx.advance_and_roll(vrf_number).await; // trigger modifier
 
@@ -595,7 +622,11 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
                 .call()
                 .await
                 .expect(&deets);
-            place_strap_bet(&ctx, &base_strap, modifier_roll.clone(), 1).await;
+            let strap_a = straps
+                .get(idx)
+                .expect("not enough base straps configured for test cases");
+            place_strap_bet(&ctx, strap_a, modifier_roll.clone(), 1).await;
+            strap_expectations.push((strap_a.clone(), modifier.clone()));
             let vrf_number = roll_to_vrf_number(&modifier_roll);
             ctx.advance_and_roll(vrf_number).await;
             if *modifier_roll == Roll::Seven {
@@ -623,8 +654,8 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             ));
 
         // then
-        for (_, modifier_roll, modifier) in available_triggers {
-            let leveled_strap = Strap::new(2, StrapKind::Shirt, modifier);
+        for (strap, modifier) in strap_expectations {
+            let leveled_strap = Strap::new(2, strap.kind.clone(), modifier);
             let leveled_asset_id = strap_asset_id(&ctx, &leveled_strap);
             let balance = ctx
                 .alice()
@@ -636,9 +667,6 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
                 "Failed check for strap {:?} with deets: {:?}",
                 leveled_strap, deets
             );
-            if modifier_roll == Roll::Seven {
-                break;
-            }
         }
     }
 }

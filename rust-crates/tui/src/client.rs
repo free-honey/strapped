@@ -2179,6 +2179,39 @@ pub async fn run_app(config: AppConfig) -> Result<()> {
     res
 }
 
+fn sync_status(
+    controller: &mut AppController,
+    snapshot: &mut AppSnapshot,
+    status: impl Into<String>,
+) {
+    let status = status.into();
+    controller.set_status(status);
+    if let Some(cache) = controller.last_snapshot.as_mut() {
+        cache.status = controller.status.clone();
+        cache.errors = controller.errors.clone();
+    }
+    snapshot.status = controller.status.clone();
+    snapshot.errors = controller.errors.clone();
+}
+
+fn show_processing_status(
+    controller: &mut AppController,
+    snapshot: &mut AppSnapshot,
+    ui_state: &mut ui::UiState,
+    message: impl Into<String>,
+    context: &'static str,
+) -> Result<()> {
+    sync_status(controller, snapshot, message);
+    ui::draw(ui_state, snapshot).wrap_err(context)
+}
+
+enum PostAction {
+    Roll {
+        prev_len: usize,
+        prev_last: Option<strapped::Roll>,
+    },
+}
+
 async fn run_loop(
     controller: &mut AppController,
     ui_state: &mut ui::UiState,
@@ -2202,6 +2235,7 @@ async fn run_loop(
             }
             ev = ui::next_event(ui_state) => {
                 let mut force_refresh = false;
+                let mut post_action: Option<PostAction> = None;
                 match ev.wrap_err("UI event polling failed")? {
                     ui::UserEvent::Quit => break,
                     ui::UserEvent::NextRoll => {
@@ -2225,6 +2259,19 @@ async fn run_loop(
                         continue;
                     }
                     ui::UserEvent::PlaceBetAmount(amount) => {
+                        let roll = controller.selected_roll.clone();
+                        let chip_label = if amount == 1 { "chip" } else { "chips" };
+                        let status_msg = format!(
+                            "Placing bet of {} {} on {:?}...",
+                            amount, chip_label, roll
+                        );
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting chip bet failed",
+                        )?;
                         controller
                             .place_chip_bet(amount)
                             .await
@@ -2234,6 +2281,17 @@ async fn run_loop(
                         force_refresh = true;
                     }
                     ui::UserEvent::Purchase => {
+                        let status_msg = format!(
+                            "Purchasing triggered modifier for {:?}...",
+                            controller.selected_roll
+                        );
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting triggered modifier purchase failed",
+                        )?;
                         controller
                             .purchase_triggered_modifier(1)
                             .await
@@ -2241,38 +2299,86 @@ async fn run_loop(
                         force_refresh = true;
                     }
                     ui::UserEvent::ConfirmStrapBet { strap, amount } => {
+                        let strap_label = super_compact_strap(&strap);
+                        let status_msg = format!(
+                            "Placing {} of {} on {:?}...",
+                            amount, strap_label, controller.selected_roll
+                        );
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting strap bet failed",
+                        )?;
                         controller
-                            .place_strap_bet(strap.clone(), amount)
+                            .place_strap_bet(strap, amount)
                             .await
                             .wrap_err_with(|| {
                                 format!(
-                                    "placing strap bet of {} on {:?} failed",
-                                    amount, strap
+                                    "placing strap bet of {} on {} failed",
+                                    amount, strap_label
                                 )
                             })?;
                         force_refresh = true;
                     }
                     ui::UserEvent::Roll => {
+                        let prev_len = last_snapshot.roll_history.len();
+                        let prev_last = last_snapshot.roll_history.last().cloned();
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            "Rolling...",
+                            "draw while submitting roll failed",
+                        )?;
                         controller.roll().await.wrap_err("roll failed")?;
                         force_refresh = true;
+                        post_action = Some(PostAction::Roll { prev_len, prev_last });
                     }
                     ui::UserEvent::VRFInc => {
                         controller.inc_vrf();
+                        let target = controller.vrf_number;
+                        let status_msg = format!("Setting VRF to {}...", target);
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting VRF increment failed",
+                        )?;
                         controller
-                            .set_vrf_number(controller.vrf_number)
+                            .set_vrf_number(target)
                             .await
                             .wrap_err("setting VRF number (inc) failed")?;
                         force_refresh = true;
                     }
                     ui::UserEvent::VRFDec => {
                         controller.dec_vrf();
+                        let target = controller.vrf_number;
+                        let status_msg = format!("Setting VRF to {}...", target);
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting VRF decrement failed",
+                        )?;
                         controller
-                            .set_vrf_number(controller.vrf_number)
+                            .set_vrf_number(target)
                             .await
                             .wrap_err("setting VRF number (dec) failed")?;
                         force_refresh = true;
                     }
                     ui::UserEvent::SetVrf(n) => {
+                        let status_msg = format!("Setting VRF to {}...", n);
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting explicit VRF set failed",
+                        )?;
                         controller
                             .set_vrf_number(n)
                             .await
@@ -2280,8 +2386,26 @@ async fn run_loop(
                         force_refresh = true;
                     }
                     ui::UserEvent::ConfirmClaim { game_id, enabled } => {
+                        let selection_count = enabled.len();
+                        let status_msg = if selection_count == 0 {
+                            format!("Claiming rewards for game {}...", game_id)
+                        } else {
+                            format!(
+                                "Claiming rewards for game {} ({} modifier{})...",
+                                game_id,
+                                selection_count,
+                                if selection_count == 1 { "" } else { "s" }
+                            )
+                        };
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting claim failed",
+                        )?;
                         controller
-                            .claim_game(game_id, enabled.clone())
+                            .claim_game(game_id, enabled)
                             .await
                             .wrap_err_with(|| {
                                 format!("claiming game {} with modifiers failed", game_id)
@@ -2290,6 +2414,14 @@ async fn run_loop(
                     }
                     ui::UserEvent::OpenShop => { ui::draw(ui_state, &last_snapshot).wrap_err("draw after OpenShop failed")?; continue; }
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
+                        let status_msg = format!("Purchasing {:?} for {:?}...", modifier, roll);
+                        show_processing_status(
+                            controller,
+                            &mut last_snapshot,
+                            ui_state,
+                            status_msg,
+                            "draw while submitting shop purchase failed",
+                        )?;
                         controller
                             .purchase_modifier_for(roll, modifier, 1)
                             .await
@@ -2315,6 +2447,30 @@ async fn run_loop(
                         .snapshot(false)
                         .await
                         .wrap_err("snapshot refresh failed")?;
+                }
+                if let Some(action) = post_action {
+                    match action {
+                        PostAction::Roll { prev_len, prev_last } => {
+                            let new_len = last_snapshot.roll_history.len();
+                            let new_last = last_snapshot.roll_history.last().cloned();
+                            let maybe_new_roll = if new_len > prev_len {
+                                new_last
+                            } else if new_last != prev_last {
+                                new_last
+                            } else {
+                                None
+                            };
+                            if let Some(roll) = maybe_new_roll {
+                                let article = match roll {
+                                    strapped::Roll::Eight | strapped::Roll::Eleven => "an",
+                                    _ => "a",
+                                };
+                                let roll_name = format!("{:?}", roll);
+                                let message = format!("Rolled {} {}", article, roll_name);
+                                sync_status(controller, &mut last_snapshot, message);
+                            }
+                        }
+                    }
                 }
                 ui::draw(ui_state, &last_snapshot)
                     .wrap_err("draw after snapshot refresh failed")?;

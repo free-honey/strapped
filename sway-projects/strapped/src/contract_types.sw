@@ -71,26 +71,47 @@ impl Strap {
     }
 }
 
-
 pub enum Bet {
     Chip: (),
-    Strap: Strap
+    Strap: Strap,
 }
 
 impl Hash for Roll {
     fn hash(self, ref mut state: Hasher) {
         match self {
-            Roll::Two => { 2_u8.hash(state); }
-            Roll::Three => { 3_u8.hash(state); }
-            Roll::Four => { 4_u8.hash(state); }
-            Roll::Five => { 5_u8.hash(state); }
-            Roll::Six => { 6_u8.hash(state); }
-            Roll::Seven => { 7_u8.hash(state); }
-            Roll::Eight => { 8_u8.hash(state); }
-            Roll::Nine => { 9_u8.hash(state); }
-            Roll::Ten => { 10_u8.hash(state); }
-            Roll::Eleven => { 11_u8.hash(state); }
-            Roll::Twelve => { 12_u8.hash(state); }
+            Roll::Two => {
+                2_u8.hash(state);
+            }
+            Roll::Three => {
+                3_u8.hash(state);
+            }
+            Roll::Four => {
+                4_u8.hash(state);
+            }
+            Roll::Five => {
+                5_u8.hash(state);
+            }
+            Roll::Six => {
+                6_u8.hash(state);
+            }
+            Roll::Seven => {
+                7_u8.hash(state);
+            }
+            Roll::Eight => {
+                8_u8.hash(state);
+            }
+            Roll::Nine => {
+                9_u8.hash(state);
+            }
+            Roll::Ten => {
+                10_u8.hash(state);
+            }
+            Roll::Eleven => {
+                11_u8.hash(state);
+            }
+            Roll::Twelve => {
+                12_u8.hash(state);
+            }
         }
     }
 }
@@ -117,25 +138,63 @@ impl PartialEq for Roll {
 impl Hash for StrapKind {
     fn hash(self, ref mut state: Hasher) {
         match self {
-            StrapKind::Shirt => { 0_u8.hash(state); }
-            StrapKind::Pants => { 1_u8.hash(state); }
-            StrapKind::Shoes => { 2_u8.hash(state); }
-            StrapKind::Dress => { 3_u8.hash(state); }
-            StrapKind::Hat => { 4_u8.hash(state); }
-            StrapKind::Glasses => { 5_u8.hash(state); }
-            StrapKind::Watch => { 6_u8.hash(state); }
-            StrapKind::Ring => { 7_u8.hash(state); }
-            StrapKind::Necklace => { 8_u8.hash(state); }
-            StrapKind::Earring => { 9_u8.hash(state); }
-            StrapKind::Bracelet => { 10_u8.hash(state); }
-            StrapKind::Tattoo => { 11_u8.hash(state); }
-            StrapKind::Skirt => { 12_u8.hash(state); }
-            StrapKind::Piercing => { 13_u8.hash(state); }
-            StrapKind::Coat => { 14_u8.hash(state); }
-            StrapKind::Scarf => { 15_u8.hash(state); }
-            StrapKind::Gloves => { 16_u8.hash(state); }
-            StrapKind::Gown => { 17_u8.hash(state); }
-            StrapKind::Belt => { 18_u8.hash(state); }
+            StrapKind::Shirt => {
+                0_u8.hash(state);
+            }
+            StrapKind::Pants => {
+                1_u8.hash(state);
+            }
+            StrapKind::Shoes => {
+                2_u8.hash(state);
+            }
+            StrapKind::Dress => {
+                3_u8.hash(state);
+            }
+            StrapKind::Hat => {
+                4_u8.hash(state);
+            }
+            StrapKind::Glasses => {
+                5_u8.hash(state);
+            }
+            StrapKind::Watch => {
+                6_u8.hash(state);
+            }
+            StrapKind::Ring => {
+                7_u8.hash(state);
+            }
+            StrapKind::Necklace => {
+                8_u8.hash(state);
+            }
+            StrapKind::Earring => {
+                9_u8.hash(state);
+            }
+            StrapKind::Bracelet => {
+                10_u8.hash(state);
+            }
+            StrapKind::Tattoo => {
+                11_u8.hash(state);
+            }
+            StrapKind::Skirt => {
+                12_u8.hash(state);
+            }
+            StrapKind::Piercing => {
+                13_u8.hash(state);
+            }
+            StrapKind::Coat => {
+                14_u8.hash(state);
+            }
+            StrapKind::Scarf => {
+                15_u8.hash(state);
+            }
+            StrapKind::Gloves => {
+                16_u8.hash(state);
+            }
+            StrapKind::Gown => {
+                17_u8.hash(state);
+            }
+            StrapKind::Belt => {
+                18_u8.hash(state);
+            }
         }
     }
 }
@@ -143,18 +202,42 @@ impl Hash for StrapKind {
 impl Hash for Modifier {
     fn hash(self, ref mut state: Hasher) {
         match self {
-            Modifier::Nothing => { 0_u8.hash(state); }
-            Modifier::Burnt => { 1_u8.hash(state); }
-            Modifier::Lucky => { 2_u8.hash(state); }
-            Modifier::Holy => { 3_u8.hash(state); }
-            Modifier::Holey => { 4_u8.hash(state); }
-            Modifier::Scotch => { 5_u8.hash(state); }
-            Modifier::Soaked => { 6_u8.hash(state); }
-            Modifier::Moldy => { 7_u8.hash(state); }
-            Modifier::Starched => { 8_u8.hash(state); }
-            Modifier::Evil => { 9_u8.hash(state); }
-            Modifier::Groovy => { 10_u8.hash(state); }
-            Modifier::Delicate => { 11_u8.hash(state); }
+            Modifier::Nothing => {
+                0_u8.hash(state);
+            }
+            Modifier::Burnt => {
+                1_u8.hash(state);
+            }
+            Modifier::Lucky => {
+                2_u8.hash(state);
+            }
+            Modifier::Holy => {
+                3_u8.hash(state);
+            }
+            Modifier::Holey => {
+                4_u8.hash(state);
+            }
+            Modifier::Scotch => {
+                5_u8.hash(state);
+            }
+            Modifier::Soaked => {
+                6_u8.hash(state);
+            }
+            Modifier::Moldy => {
+                7_u8.hash(state);
+            }
+            Modifier::Starched => {
+                8_u8.hash(state);
+            }
+            Modifier::Evil => {
+                9_u8.hash(state);
+            }
+            Modifier::Groovy => {
+                10_u8.hash(state);
+            }
+            Modifier::Delicate => {
+                11_u8.hash(state);
+            }
         }
     }
 }

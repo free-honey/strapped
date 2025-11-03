@@ -289,7 +289,13 @@ impl Strapped for Contract {
             }
         }
         require(msg_amount() == amount, "Must send the correct amount of chips");
-        let caller = msg_sender().unwrap();
+        let caller = match msg_sender() {
+            Some(id) => id,
+            None => {
+                require(false, "bet placement must originate from a known sender");
+                return;
+            }
+        };
         let current_game_id = storage.current_game_id.read();
         let roll_index = storage.roll_index.read();
         let key = (current_game_id, caller, roll);
@@ -306,14 +312,26 @@ impl Strapped for Contract {
 
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, Amount, RollIndex)> {
-        let caller = msg_sender().unwrap();
+        let caller = match msg_sender() {
+            Some(id) => id,
+            None => {
+                require(false, "querying current bets requires a known sender");
+                return Vec::new();
+            }
+        };
         let key = (storage.current_game_id.read(), caller, roll);
         storage.bets.get(key).load_vec()
     }
 
     #[storage(read)]
     fn get_my_bets_for_game(game_id: GameId) -> Vec<(Roll, Vec<(Bet, Amount, RollIndex)>)> {
-        let caller = msg_sender().unwrap();
+        let caller = match msg_sender() {
+            Some(id) => id,
+            None => {
+                require(false, "querying historical bets requires a known sender");
+                return Vec::new();
+            }
+        };
         let mut result: Vec<(Roll, Vec<(Bet, Amount, RollIndex)>)> = Vec::new();
         result.push((
             Roll::Two,
@@ -404,7 +422,13 @@ impl Strapped for Contract {
     fn claim_rewards(game_id: GameId, enabled_modifiers: Vec<(Roll, Modifier)>) {
         let current_game_id = storage.current_game_id.read();
         require(game_id < current_game_id, "Can only claim rewards for past games");
-        let identity = msg_sender().unwrap();
+        let identity = match msg_sender() {
+            Some(id) => id,
+            None => {
+                require(false, "claiming rewards requires a known sender");
+                return;
+            }
+        };
         let rolls = storage.roll_history.get(game_id).load_vec();
         let mut total_chips_winnings = 0_u64;
         let mut index = 0;
@@ -412,6 +436,7 @@ impl Strapped for Contract {
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
             let mut bet_index = 0;
+            let mut strap_indices_to_remove: Vec<u64> = Vec::new();
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
@@ -423,10 +448,15 @@ impl Strapped for Contract {
                                 let mut i = 0;
                                 let mut found = false;
                                 while i < rewards.len() {
-                                    let (existing_id, existing_amount) = rewards.get(i).unwrap();
-                                    if existing_id == sub_id {
-                                        rewards.set(i, (existing_id, existing_amount + amount));
-                                        found = true;
+                                    if let Some((existing_id, existing_amount)) = rewards.get(i)
+                                    {
+                                        if existing_id == sub_id {
+                                            rewards.set(i, (existing_id, existing_amount + amount));
+                                            found = true;
+                                        }
+                                    } else {
+                                        require(false, "reward aggregation encountered an invalid index");
+                                        break;
                                     }
                                     i += 1;
                                 }
@@ -446,23 +476,33 @@ impl Strapped for Contract {
                             let contract_id = ContractId::this();
                             let mut i = 0;
                             let mut found = false; 
-                            while i < rewards.len() {
-                                let (existing_id, existing_amount) = rewards.get(i).unwrap();
-                                if existing_id == new_strap {
-                                    rewards.set(i, (existing_id, existing_amount + amount));
-                                    found = true;
+                                while i < rewards.len() {
+                                    if let Some((existing_id, existing_amount)) = rewards.get(i)
+                                    {
+                                        if existing_id == new_strap {
+                                            rewards.set(i, (existing_id, existing_amount + amount));
+                                            found = true;
+                                        }
+                                    } else {
+                                        require(false, "strap aggregation encountered an invalid index");
+                                        break;
+                                    }
+                                    i += 1;
                                 }
-                                i += 1;
-                            }
                             if !found {
                                 rewards.push((new_strap, amount));
                             }
-                            //remove bet
-                            storage.bets.get((game_id, identity, roll)).remove(bet_index);
+                            strap_indices_to_remove.push(bet_index);
                         }
                     }
                 }
                 bet_index += 1;
+            }
+            while let Some(idx) = strap_indices_to_remove.pop() {
+                storage
+                    .bets
+                    .get((game_id, identity, roll))
+                    .remove(idx);
             }
             // storage.bets.get((game_id, identity, roll)).clear();
             index += 1;
@@ -503,7 +543,14 @@ impl Strapped for Contract {
         let amount = msg_amount();
         require(amount > 0, "Must send some amount to fund the house pot");
         storage.house_pot.write(storage.house_pot.read() + amount);
-        log_fund_pot_event(amount, msg_sender().unwrap());
+        let funder = match msg_sender() {
+            Some(id) => id,
+            None => {
+                require(false, "fund calls require a known sender");
+                return;
+            }
+        };
+        log_fund_pot_event(amount, funder);
     }
 
     #[storage(read)]
@@ -550,7 +597,14 @@ impl Strapped for Contract {
         let roll_index = storage.roll_index.read();
         let game_id = storage.current_game_id.read();
         storage.active_modifiers.get(game_id).push((expected_roll, expected_modifier, roll_index));
-        log_purchase_modifier_event(expected_roll, expected_modifier, msg_sender().unwrap());
+        let purchaser = match msg_sender() {
+            Some(id) => id,
+            None => {
+                require(false, "modifier purchases require a known sender");
+                return;
+            }
+        };
+        log_purchase_modifier_event(expected_roll, expected_modifier, purchaser);
     }
 
     #[storage(read)]

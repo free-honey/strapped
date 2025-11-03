@@ -7,9 +7,14 @@ pub struct InitializedEvent {
     chip_asset_id: AssetId,
     roll_frequency: u32,
     first_height: u32,
-    }
+}
 
-pub fn log_initialized_event(vrf_contract_id: b256, chip_asset_id: AssetId, roll_frequency: u32, first_height: u32) {
+pub fn log_initialized_event(
+    vrf_contract_id: b256,
+    chip_asset_id: AssetId,
+    roll_frequency: u32,
+    first_height: u32,
+) {
     let event = InitializedEvent {
         vrf_contract_id,
         chip_asset_id,
@@ -40,7 +45,11 @@ pub struct NewGameEvent {
     new_modifiers: Vec<(Roll, Roll, Modifier)>,
 }
 
-pub fn log_new_game_event(game_id: u32, new_straps: Vec<(Roll, Strap, u64)>, new_modifiers: Vec<(Roll, Roll, Modifier)>) {
+pub fn log_new_game_event(
+    game_id: u32,
+    new_straps: Vec<(Roll, Strap, u64)>,
+    new_modifiers: Vec<(Roll, Roll, Modifier)>,
+) {
     let event = NewGameEvent {
         game_id,
         new_straps,
@@ -57,7 +66,13 @@ pub struct ModifierTriggeredEvent {
     modifier: Modifier,
 }
 
-pub fn log_modifier_triggered(game_id: u32, roll_index: u32, trigger_roll: Roll, modifier_roll: Roll, modifier: Modifier) {
+pub fn log_modifier_triggered(
+    game_id: u32,
+    roll_index: u32,
+    trigger_roll: Roll,
+    modifier_roll: Roll,
+    modifier: Modifier,
+) {
     let event = ModifierTriggeredEvent {
         game_id,
         roll_index,
@@ -77,7 +92,13 @@ pub struct PlaceChipBetEvent {
     amount: u64,
 }
 
-pub fn log_place_chip_bet_event(game_id: u32, bet_roll_index: u32, player: Identity, roll: Roll, amount: u64) {
+pub fn log_place_chip_bet_event(
+    game_id: u32,
+    bet_roll_index: u32,
+    player: Identity,
+    roll: Roll,
+    amount: u64,
+) {
     let event = PlaceChipBetEvent {
         game_id,
         bet_roll_index,
@@ -98,7 +119,14 @@ pub struct PlaceStrapBetEvent {
     amount: u64,
 }
 
-pub fn log_place_strap_bet_event(game_id: u32, roll_index: u32, player: Identity, roll: Roll, strap: Strap, amount: u64) {
+pub fn log_place_strap_bet_event(
+    game_id: u32,
+    roll_index: u32,
+    player: Identity,
+    roll: Roll,
+    strap: Strap,
+    amount: u64,
+) {
     let event = PlaceStrapBetEvent {
         game_id,
         bet_roll_index: roll_index,
@@ -118,7 +146,13 @@ pub struct ClaimRewardsEvent {
     total_strap_winnings: Vec<(Strap, u64)>,
 }
 
-pub fn log_claim_rewards_event(game_id: u32, player: Identity, enabled_modifiers: Vec<(Roll, Modifier)>, total_chips_winnings: u64, total_strap_winnings: Vec<(Strap, u64)>) {
+pub fn log_claim_rewards_event(
+    game_id: u32,
+    player: Identity,
+    enabled_modifiers: Vec<(Roll, Modifier)>,
+    total_chips_winnings: u64,
+    total_strap_winnings: Vec<(Strap, u64)>,
+) {
     let event = ClaimRewardsEvent {
         game_id,
         player,
@@ -148,7 +182,11 @@ pub struct PurchaseModifierEvent {
     purchaser: Identity,
 }
 
-pub fn log_purchase_modifier_event(expected_roll: Roll, expected_modifier: Modifier, purchaser: Identity) {
+pub fn log_purchase_modifier_event(
+    expected_roll: Roll,
+    expected_modifier: Modifier,
+    purchaser: Identity,
+) {
     let event = PurchaseModifierEvent {
         expected_roll,
         expected_modifier,
