@@ -1,14 +1,14 @@
 [
   {
-    "deployed_at": "2025-11-03T04:51:17.846337+00:00",
-    "contract_id": "7580105ca0df1b845def4c1cf401427b9cf44f50ac9221419a7082d6c8c7d57d",
-    "bytecode_hash": "cc23405c7880b7ab52184a27e4940cd2b51c2a6568ccae5a9eef0682c85a934e",
+    "deployed_at": "2025-11-03T05:32:24.915315+00:00",
+    "contract_id": "91cb8f85bd32db1b6570d2238b240cd3b76424a9e252e0d1d1b4b09fa734cc2c",
+    "bytecode_hash": "90dff890d88b82a5b5bb98458436a7d5e0b725f4d316765824283b7c3e312d0d",
     "network_url": "https://devnet.fuel.network",
     "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-    "contract_salt": "0x8cda92cd8dbd2a22f251ef9458ee2e2f24d64ddc1908b7392adf8a96d7d59467",
-    "vrf_salt": "0x5ef7b126a9eefe09286853bf1d2cd6cce757278cfab99566d57ba788fbc273a0",
-    "vrf_contract_id": "0f8dda6f3b190c41b4985cbf3c29b4feeb4046e54e8d2928ad59ab6589a30564",
+    "contract_salt": "0x5a5b32ef4a2104cd0e026704d5761704b3352fa43e8e57bf05d4f0bf0443b775",
+    "vrf_salt": "0xdc21933cdacfccd6c9db48f5ad6d6b61353ba517fdcf5066a4f6274a46479708",
+    "vrf_contract_id": "d466bc90e21745f7dca2e6c5953b2b2648c366b4fbe798d1ed3b5bc6b31382b5",
     "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
-    "deployment_block_height": 46505463
+    "deployment_block_height": 46507929
   }
 ]

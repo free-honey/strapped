@@ -435,7 +435,8 @@ impl Strapped for Contract {
         let mut rewards: Vec<(Strap, u64)> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
-            let mut strap_indices_to_remove: Vec<u64> = Vec::new();
+            let mut bet_index = 0;
+            let mut remove = false;
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
                     match bet {
@@ -491,9 +492,18 @@ impl Strapped for Contract {
                             if !found {
                                 rewards.push((new_strap, amount));
                             }
+                            remove = true;
                         }
                     }
                 }
+                if remove {
+                    // don't increment if we removed the bet (to account for shifting indices)
+                    storage.bets.get((game_id, identity, roll)).remove(bet_index);
+                } else {
+                    // only increment if we didn't remove
+                    bet_index += 1;
+                }
+                remove = false;
             }
             index += 1;
         }
