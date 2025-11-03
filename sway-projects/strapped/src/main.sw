@@ -290,8 +290,8 @@ impl Strapped for Contract {
         }
         require(msg_amount() == amount, "Must send the correct amount of chips");
         let caller = match msg_sender() {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(_) => {
                 require(false, "bet placement must originate from a known sender");
                 return;
             }
@@ -313,8 +313,8 @@ impl Strapped for Contract {
     #[storage(read)]
     fn get_my_bets(roll: Roll) -> Vec<(Bet, Amount, RollIndex)> {
         let caller = match msg_sender() {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(_) => {
                 require(false, "querying current bets requires a known sender");
                 return Vec::new();
             }
@@ -326,8 +326,8 @@ impl Strapped for Contract {
     #[storage(read)]
     fn get_my_bets_for_game(game_id: GameId) -> Vec<(Roll, Vec<(Bet, Amount, RollIndex)>)> {
         let caller = match msg_sender() {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(_) => {
                 require(false, "querying historical bets requires a known sender");
                 return Vec::new();
             }
@@ -423,8 +423,8 @@ impl Strapped for Contract {
         let current_game_id = storage.current_game_id.read();
         require(game_id < current_game_id, "Can only claim rewards for past games");
         let identity = match msg_sender() {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(_) => {
                 require(false, "claiming rewards requires a known sender");
                 return;
             }
@@ -435,7 +435,6 @@ impl Strapped for Contract {
         let mut rewards: Vec<(Strap, u64)> = Vec::new();
         for roll in rolls.iter() {
             let bets = storage.bets.get((game_id, identity, roll)).load_vec();
-            let mut bet_index = 0;
             let mut strap_indices_to_remove: Vec<u64> = Vec::new();
             for (bet, amount, roll_index) in bets.iter() {
                 if roll_index <= index {
@@ -492,19 +491,10 @@ impl Strapped for Contract {
                             if !found {
                                 rewards.push((new_strap, amount));
                             }
-                            strap_indices_to_remove.push(bet_index);
                         }
                     }
                 }
-                bet_index += 1;
             }
-            while let Some(idx) = strap_indices_to_remove.pop() {
-                storage
-                    .bets
-                    .get((game_id, identity, roll))
-                    .remove(idx);
-            }
-            // storage.bets.get((game_id, identity, roll)).clear();
             index += 1;
         }
         // clear all bets for this game
@@ -544,8 +534,8 @@ impl Strapped for Contract {
         require(amount > 0, "Must send some amount to fund the house pot");
         storage.house_pot.write(storage.house_pot.read() + amount);
         let funder = match msg_sender() {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(_) => {
                 require(false, "fund calls require a known sender");
                 return;
             }
@@ -598,8 +588,8 @@ impl Strapped for Contract {
         let game_id = storage.current_game_id.read();
         storage.active_modifiers.get(game_id).push((expected_roll, expected_modifier, roll_index));
         let purchaser = match msg_sender() {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(_) => {
                 require(false, "modifier purchases require a known sender");
                 return;
             }
