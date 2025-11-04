@@ -30,6 +30,7 @@ use sled::{
 use std::{
     convert::TryInto,
     path::Path,
+    str::FromStr,
 };
 
 const LATEST_HEIGHT_KEY: &[u8] = b"latest_height";
@@ -389,6 +390,34 @@ impl MetadataStorage for SledMetadataStorage {
         self.tree.flush().context("flush metadata tree")?;
         Ok(())
     }
+
+    fn all_known_strap_asset_ids(&self) -> crate::Result<Vec<AssetId>> {
+        let mut asset_ids = Vec::new();
+        for entry in self.tree.iter() {
+            let (key, _) = entry.context("iterate strap metadata entries")?;
+            let key_str = std::str::from_utf8(key.as_ref())
+                .context("metadata key is not valid UTF-8")?;
+            let asset_id = AssetId::from_str(key_str)
+                .map_err(|_| anyhow!("invalid asset id metadata key: {key_str}"))?;
+            asset_ids.push(asset_id);
+        }
+        Ok(asset_ids)
+    }
+
+    fn all_known_straps(&self) -> crate::Result<Vec<(AssetId, Strap)>> {
+        let mut straps = Vec::new();
+        for entry in self.tree.iter() {
+            let (key, value) = entry.context("iterate strap metadata entries")?;
+            let key_str = std::str::from_utf8(key.as_ref())
+                .context("metadata key is not valid UTF-8")?;
+            let asset_id = AssetId::from_str(key_str)
+                .map_err(|_| anyhow!("invalid asset id metadata key: {key_str}"))?;
+            let strap = deserialize::<Strap>(value.as_ref())
+                .context("deserialize strap metadata")?;
+            straps.push((asset_id, strap));
+        }
+        Ok(straps)
+    }
 }
 
 fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> crate::Result<T> {
@@ -576,5 +605,47 @@ mod tests {
             .unwrap()
             .expect("metadata stored");
         assert_eq!(loaded, strap);
+    }
+
+    #[test]
+    fn all_known_strap_asset_ids__returns_all_recorded_ids() {
+        // given
+        let temp_dir = TempDir::new("sled_metadata_known_ids").unwrap();
+        let db = sled_db(&temp_dir);
+        let mut metadata = SledMetadataStorage::new(&db).unwrap();
+        let strap_a = Strap::new(1, StrapKind::Hat, Modifier::Lucky);
+        let strap_b = Strap::new(3, StrapKind::Scarf, Modifier::Holy);
+        let asset_id_a = AssetId::from([3u8; 32]);
+        let asset_id_b = AssetId::from([4u8; 32]);
+        metadata.record_new_asset_id(&asset_id_a, &strap_a).unwrap();
+        metadata.record_new_asset_id(&asset_id_b, &strap_b).unwrap();
+
+        // when
+        let mut known = metadata.all_known_strap_asset_ids().unwrap();
+        known.sort();
+
+        // then
+        assert_eq!(known, vec![asset_id_a, asset_id_b]);
+    }
+
+    #[test]
+    fn all_known_straps__returns_pairs_with_metadata() {
+        // given
+        let temp_dir = TempDir::new("sled_metadata_with_straps").unwrap();
+        let db = sled_db(&temp_dir);
+        let mut metadata = SledMetadataStorage::new(&db).unwrap();
+        let strap_a = Strap::new(1, StrapKind::Hat, Modifier::Lucky);
+        let strap_b = Strap::new(3, StrapKind::Scarf, Modifier::Holy);
+        let asset_id_a = AssetId::from([7u8; 32]);
+        let asset_id_b = AssetId::from([8u8; 32]);
+        metadata.record_new_asset_id(&asset_id_a, &strap_a).unwrap();
+        metadata.record_new_asset_id(&asset_id_b, &strap_b).unwrap();
+
+        // when
+        let mut known = metadata.all_known_straps().unwrap();
+        known.sort_by_key(|(asset_id, _)| *asset_id);
+
+        // then
+        assert_eq!(known, vec![(asset_id_a, strap_a), (asset_id_b, strap_b)]);
     }
 }

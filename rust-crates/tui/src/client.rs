@@ -45,6 +45,7 @@ use std::{
         HashMap,
         HashSet,
     },
+    convert::TryFrom,
     path::{
         Path,
         PathBuf,
@@ -61,7 +62,10 @@ use strapped_contract::{
     vrf_types as fake_vrf,
 };
 use tokio::time;
-use tracing::error;
+use tracing::{
+    error,
+    warn,
+};
 
 pub const DEFAULT_TESTNET_RPC_URL: &str = "https://testnet.fuel.network";
 pub const DEFAULT_DEVNET_RPC_URL: &str = "https://devnet.fuel.network";
@@ -232,6 +236,7 @@ impl AppController {
             modifier_triggers,
             active_modifiers,
             my_bets,
+            known_straps,
         } = data;
 
         let all_rolls = all_rolls();
@@ -297,7 +302,10 @@ impl AppController {
         self.shared_last_roll_history = roll_history.clone();
 
         let mut cells = Vec::new();
-        let mut unique_straps: Vec<strapped::Strap> = Vec::new();
+        let mut strap_info_by_asset: HashMap<AssetId, strapped::Strap> = HashMap::new();
+        for (asset_id, strap) in &known_straps {
+            strap_info_by_asset.insert(*asset_id, strap.clone());
+        }
         for (r, bets) in &my_bets {
             let chip_total: u64 = bets
                 .iter()
@@ -315,9 +323,11 @@ impl AppController {
                     } else {
                         straps.push((s.clone(), *amt));
                     }
-                    if !unique_straps.iter().any(|es| *es == *s) {
-                        unique_straps.push(s.clone());
-                    }
+                    Self::track_strap_metadata(
+                        &mut strap_info_by_asset,
+                        &self.clients.contract_id,
+                        s,
+                    );
                 }
             }
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
@@ -335,9 +345,11 @@ impl AppController {
                         count: 1,
                     });
                 }
-                if !unique_straps.iter().any(|es| *es == *s) {
-                    unique_straps.push(s.clone());
-                }
+                Self::track_strap_metadata(
+                    &mut strap_info_by_asset,
+                    &self.clients.contract_id,
+                    s,
+                );
             }
             cells.push(RollCell {
                 roll: r.clone(),
@@ -350,20 +362,46 @@ impl AppController {
 
         for (_gid, list) in &self.strap_rewards_by_game {
             for (_r, s, _) in list {
-                if !unique_straps.iter().any(|es| *es == *s) {
-                    unique_straps.push(s.clone());
-                }
+                Self::track_strap_metadata(
+                    &mut strap_info_by_asset,
+                    &self.clients.contract_id,
+                    s,
+                );
             }
         }
 
-        let mut owned_straps: Vec<(strapped::Strap, u64)> = Vec::new();
-        for s in unique_straps {
-            let sub = strapped_contract::strap_to_sub_id(&s);
-            let aid = self.clients.contract_id.asset_id(&sub);
-            let bal = me.account().get_asset_balance(&aid).await.unwrap_or(0);
-            if bal > 0 {
-                owned_straps
-                    .push((s, bal.try_into().expect("naively convert u128 to u64")));
+        let mut ordered_asset_ids: Vec<AssetId> = Vec::new();
+        let mut seen_asset_ids = HashSet::new();
+        for (asset_id, _) in &known_straps {
+            if seen_asset_ids.insert(*asset_id) {
+                ordered_asset_ids.push(*asset_id);
+            }
+        }
+        for asset_id in strap_info_by_asset.keys().copied() {
+            if seen_asset_ids.insert(asset_id) {
+                ordered_asset_ids.push(asset_id);
+            }
+        }
+
+        let mut asset_balances: HashMap<AssetId, u128> = HashMap::new();
+        for asset_id in &ordered_asset_ids {
+            let balance = me.account().get_asset_balance(asset_id).await.unwrap_or(0);
+            asset_balances.insert(*asset_id, balance);
+        }
+
+        let owned_straps = Self::build_owned_straps(
+            &ordered_asset_ids,
+            &strap_info_by_asset,
+            &asset_balances,
+        );
+
+        for asset_id in &ordered_asset_ids {
+            let balance = asset_balances.get(asset_id).copied().unwrap_or(0);
+            if balance > 0 && !strap_info_by_asset.contains_key(asset_id) {
+                warn!(
+                    ?asset_id,
+                    balance, "strap asset balance present without known metadata"
+                );
             }
         }
 
@@ -439,6 +477,43 @@ impl AppController {
         Ok(snapshot)
     }
 
+    fn track_strap_metadata(
+        strap_info: &mut HashMap<AssetId, strapped::Strap>,
+        contract_id: &ContractId,
+        strap: &strapped::Strap,
+    ) {
+        let sub = strapped_contract::strap_to_sub_id(strap);
+        let asset_id = contract_id.asset_id(&sub);
+        strap_info.entry(asset_id).or_insert_with(|| strap.clone());
+    }
+
+    fn build_owned_straps(
+        ordered_asset_ids: &[AssetId],
+        strap_info_by_asset: &HashMap<AssetId, strapped::Strap>,
+        asset_balances: &HashMap<AssetId, u128>,
+    ) -> Vec<(strapped::Strap, u64)> {
+        let mut owned = Vec::new();
+        for asset_id in ordered_asset_ids {
+            let Some(balance) = asset_balances.get(asset_id) else {
+                continue;
+            };
+            if *balance == 0 {
+                continue;
+            }
+            if let Some(strap) = strap_info_by_asset.get(asset_id) {
+                match u64::try_from(*balance) {
+                    Ok(amount) => owned.push((strap.clone(), amount)),
+                    Err(_) => warn!(
+                        ?asset_id,
+                        balance,
+                        "strap balance exceeds u64 range; omitting from snapshot"
+                    ),
+                }
+            }
+        }
+        owned
+    }
+
     async fn snapshot_with_indexer(
         &mut self,
         client: IndexerClient,
@@ -452,6 +527,8 @@ impl AppController {
             .latest_account_snapshot(&self.alice_identity)
             .await?
             .unwrap_or_else(AccountData::empty);
+
+        let known_straps = client.all_known_straps().await?;
 
         let safe_limit = self.clients.safe_script_gas_limit;
         let me_for_active = self.clients.alice.clone();
@@ -477,6 +554,7 @@ impl AppController {
             modifier_triggers: overview.modifier_shop.clone(),
             active_modifiers,
             my_bets: alice_account.per_roll_bets,
+            known_straps,
         };
 
         self.finalize_snapshot(data).await
@@ -1212,6 +1290,7 @@ impl AppController {
             modifier_triggers,
             active_modifiers,
             my_bets,
+            known_straps: Vec::new(),
         };
 
         let snapshot = self.finalize_snapshot(data).await?;
@@ -1945,6 +2024,64 @@ struct SnapshotSourceData {
     modifier_triggers: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
     active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
     my_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
+    known_straps: Vec<(AssetId, strapped::Strap)>,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(non_snake_case)]
+    use super::*;
+    use std::collections::HashMap;
+    use strapped_contract::strapped_types as strapped;
+
+    #[test]
+    fn build_owned_straps__returns_owned_assets_with_positive_balances() {
+        // given
+        let strap = strapped::Strap {
+            level: 1,
+            kind: strapped::StrapKind::Hat,
+            modifier: strapped::Modifier::Lucky,
+        };
+        let asset_id = AssetId::from([1u8; 32]);
+        let mut strap_info = HashMap::new();
+        strap_info.insert(asset_id, strap.clone());
+        let mut balances = HashMap::new();
+        balances.insert(asset_id, 3u128);
+        let ordered_ids = vec![asset_id];
+
+        // when
+        let owned =
+            AppController::build_owned_straps(&ordered_ids, &strap_info, &balances);
+
+        // then
+        assert_eq!(owned, vec![(strap, 3)]);
+    }
+
+    #[test]
+    fn build_owned_straps__skips_unknown_or_zero_balance_assets() {
+        // given
+        let known_strap = strapped::Strap {
+            level: 2,
+            kind: strapped::StrapKind::Scarf,
+            modifier: strapped::Modifier::Holy,
+        };
+        let known_asset = AssetId::from([2u8; 32]);
+        let unknown_asset = AssetId::from([3u8; 32]);
+        let mut strap_info = HashMap::new();
+        strap_info.insert(known_asset, known_strap.clone());
+        let mut balances = HashMap::new();
+        balances.insert(known_asset, 5u128);
+        balances.insert(unknown_asset, 7u128);
+        balances.insert(AssetId::from([4u8; 32]), 0u128);
+        let ordered_ids = vec![known_asset, unknown_asset, AssetId::from([4u8; 32])];
+
+        // when
+        let owned =
+            AppController::build_owned_straps(&ordered_ids, &strap_info, &balances);
+
+        // then
+        assert_eq!(owned, vec![(known_strap, 5)]);
+    }
 }
 
 fn format_deployment_summary(
@@ -2343,6 +2480,7 @@ async fn run_loop(
                         force_refresh = true;
                     }
                     ui::UserEvent::OpenShop => { ui::draw(ui_state, &last_snapshot).wrap_err("draw after OpenShop failed")?; continue; }
+                    ui::UserEvent::OpenStrapInventory => { ui::draw(ui_state, &last_snapshot).wrap_err("draw after OpenStrapInventory failed")?; continue; }
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
                         let status_msg = format!("Purchasing {:?} for {:?}...", modifier, roll);
                         show_processing_status(

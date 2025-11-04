@@ -64,4 +64,19 @@ pub trait MetadataStorage {
         strap_id: &AssetId,
         strap: &Strap,
     ) -> crate::Result<()>;
+
+    /// Retrieve all known strap asset IDs so a user can know which assets in their wallet are
+    /// straps
+    fn all_known_strap_asset_ids(&self) -> crate::Result<Vec<AssetId>>;
+
+    /// Retrieve all known strap asset IDs along with their metadata.
+    fn all_known_straps(&self) -> crate::Result<Vec<(AssetId, Strap)>> {
+        let mut entries = Vec::new();
+        for asset_id in self.all_known_strap_asset_ids()? {
+            if let Some(strap) = self.strap_asset_id(&asset_id)? {
+                entries.push((asset_id, strap));
+            }
+        }
+        Ok(entries)
+    }
 }

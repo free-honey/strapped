@@ -5,7 +5,10 @@ use color_eyre::eyre::{
     WrapErr,
     eyre,
 };
-use fuels::types::Identity;
+use fuels::types::{
+    AssetId,
+    Identity,
+};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json;
@@ -125,6 +128,34 @@ impl IndexerClient {
         self.fetch_account_data(url).await
     }
 
+    pub async fn all_known_straps(&self) -> Result<Vec<(AssetId, strapped::Strap)>> {
+        let url = format!("{}/straps", self.base_url);
+        let res = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .wrap_err("indexer request failed")?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unavailable body>".to_string());
+            return Err(eyre!(
+                "indexer responded with {status} when fetching strap metadata: {body}"
+            ));
+        }
+        let dtos: Vec<StrapMetadataDto> = res
+            .json()
+            .await
+            .wrap_err("invalid indexer strap metadata payload")?;
+        Ok(dtos
+            .into_iter()
+            .map(|dto| (dto.asset_id, dto.strap.into()))
+            .collect())
+    }
+
     async fn fetch_account_data(&self, url: String) -> Result<Option<AccountData>> {
         let res = self
             .http
@@ -174,6 +205,12 @@ struct OverviewSnapshotDto {
 struct LatestAccountSnapshotDto {
     snapshot: AccountSnapshotDto,
     block_height: u32,
+}
+
+#[derive(Deserialize)]
+struct StrapMetadataDto {
+    asset_id: AssetId,
+    strap: StrapDto,
 }
 
 #[derive(Deserialize)]
