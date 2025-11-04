@@ -1401,7 +1401,6 @@ impl AppController {
                 return Ok(());
             }
         }
-        self.set_status("Rolled dice");
         self.invalidate_cache();
         Ok(())
     }
@@ -2056,6 +2055,64 @@ fn sync_status(
     snapshot.errors = controller.errors.clone();
 }
 
+fn process_post_action(
+    controller: &mut AppController,
+    snapshot: &mut AppSnapshot,
+    pending: &mut Option<PostAction>,
+) {
+    let Some(PostAction::Roll {
+        prev_len,
+        prev_last,
+        prev_game_id,
+    }) = pending.as_ref()
+    else {
+        return;
+    };
+
+    let prev_len = *prev_len;
+    let prev_game_id = *prev_game_id;
+    let prev_last = prev_last.clone();
+
+    let new_len = snapshot.roll_history.len();
+    let new_last = snapshot.roll_history.last().cloned();
+    let new_game_id = snapshot.current_game_id;
+
+    let new_game_started = new_game_id > prev_game_id;
+
+    if new_game_started {
+        let message = format!(
+            "Rolled a Seven! Board was cleared! Starting Game {}!",
+            new_game_id
+        );
+        sync_status(controller, snapshot, message);
+        pending.take();
+        return;
+    }
+
+    if new_len > prev_len || (new_len == prev_len && new_last != prev_last) {
+        if let Some(roll) = new_last {
+            let article = match roll {
+                strapped::Roll::Eight | strapped::Roll::Eleven => "an",
+                _ => "a",
+            };
+            let roll_name = format!("{:?}", roll);
+            let message = format!("Rolled {} {}", article, roll_name);
+            sync_status(controller, snapshot, message);
+            pending.take();
+            return;
+        }
+    }
+
+    if controller.status == "Rolling..." {
+        sync_status(
+            controller,
+            snapshot,
+            "Roll submitted; waiting for confirmation...",
+        );
+    }
+    controller.invalidate_cache();
+}
+
 fn show_processing_status(
     controller: &mut AppController,
     snapshot: &mut AppSnapshot,
@@ -2071,6 +2128,7 @@ enum PostAction {
     Roll {
         prev_len: usize,
         prev_last: Option<strapped::Roll>,
+        prev_game_id: u32,
     },
 }
 
@@ -2085,6 +2143,7 @@ async fn run_loop(
         .await
         .wrap_err("initial snapshot failed")?;
     ui::draw(ui_state, &last_snapshot).wrap_err("initial draw failed")?;
+    let mut pending_post_action: Option<PostAction> = None;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { break; }
@@ -2093,11 +2152,15 @@ async fn run_loop(
                     .snapshot(false)
                     .await
                     .wrap_err("periodic snapshot failed")?;
+                process_post_action(
+                    controller,
+                    &mut last_snapshot,
+                    &mut pending_post_action,
+                );
                 ui::draw(ui_state, &last_snapshot).wrap_err("periodic draw failed")?;
             }
             ev = ui::next_event(ui_state) => {
                 let mut force_refresh = false;
-                let mut post_action: Option<PostAction> = None;
                 match ev.wrap_err("UI event polling failed")? {
                     ui::UserEvent::Quit => break,
                     ui::UserEvent::NextRoll => {
@@ -2187,6 +2250,7 @@ async fn run_loop(
                     ui::UserEvent::Roll => {
                         let prev_len = last_snapshot.roll_history.len();
                         let prev_last = last_snapshot.roll_history.last().cloned();
+                        let prev_game_id = last_snapshot.current_game_id;
                         show_processing_status(
                             controller,
                             &mut last_snapshot,
@@ -2196,7 +2260,11 @@ async fn run_loop(
                         )?;
                         controller.roll().await.wrap_err("roll failed")?;
                         force_refresh = true;
-                        post_action = Some(PostAction::Roll { prev_len, prev_last });
+                        pending_post_action = Some(PostAction::Roll {
+                            prev_len,
+                            prev_last,
+                            prev_game_id,
+                        });
                     }
                     ui::UserEvent::VRFInc => {
                         controller.inc_vrf();
@@ -2310,30 +2378,11 @@ async fn run_loop(
                         .await
                         .wrap_err("snapshot refresh failed")?;
                 }
-                if let Some(action) = post_action {
-                    match action {
-                        PostAction::Roll { prev_len, prev_last } => {
-                            let new_len = last_snapshot.roll_history.len();
-                            let new_last = last_snapshot.roll_history.last().cloned();
-                            let maybe_new_roll = if new_len > prev_len {
-                                new_last
-                            } else if new_last != prev_last {
-                                new_last
-                            } else {
-                                None
-                            };
-                            if let Some(roll) = maybe_new_roll {
-                                let article = match roll {
-                                    strapped::Roll::Eight | strapped::Roll::Eleven => "an",
-                                    _ => "a",
-                                };
-                                let roll_name = format!("{:?}", roll);
-                                let message = format!("Rolled {} {}", article, roll_name);
-                                sync_status(controller, &mut last_snapshot, message);
-                            }
-                        }
-                    }
-                }
+                process_post_action(
+                    controller,
+                    &mut last_snapshot,
+                    &mut pending_post_action,
+                );
                 ui::draw(ui_state, &last_snapshot)
                     .wrap_err("draw after snapshot refresh failed")?;
             }

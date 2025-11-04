@@ -1,6 +1,10 @@
 use std::fmt;
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{
+    Result,
+    WrapErr,
+    eyre,
+};
 use fuels::types::Identity;
 use reqwest::StatusCode;
 use serde::Deserialize;
