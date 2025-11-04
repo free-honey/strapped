@@ -86,12 +86,6 @@ pub enum VrfClient {
     Pseudo(pseudo_vrf::PseudoVRFContract<Wallet>),
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub enum WalletKind {
-    Owner,
-    Alice,
-}
-
 #[derive(Clone, Debug)]
 pub struct AppSnapshot {
     pub current_game_id: u32,
@@ -118,22 +112,12 @@ pub struct AppSnapshot {
 }
 
 pub struct Clients {
-    pub owner: strapped::MyContract<Wallet>,
     pub alice: strapped::MyContract<Wallet>,
     pub vrf: Option<VrfClient>,
     pub vrf_mode: VrfMode,
     pub contract_id: ContractId,
     pub chip_asset_id: AssetId,
     pub safe_script_gas_limit: u64,
-}
-
-impl Clients {
-    fn instance(&self, who: WalletKind) -> &strapped::MyContract<Wallet> {
-        match who {
-            WalletKind::Owner => &self.owner,
-            WalletKind::Alice => &self.alice,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -171,22 +155,16 @@ async fn get_contract_asset_balance(
 
 pub struct AppController {
     pub clients: Clients,
-    pub wallet: WalletKind,
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub status: String,
     indexer: Option<IndexerClient>,
-    owner_identity: Identity,
     alice_identity: Identity,
-    last_seen_game_id_owner: Option<u32>,
     last_seen_game_id_alice: Option<u32>,
     shared_last_roll_history: Vec<strapped::Roll>,
     shared_prev_games: Vec<SharedGame>,
-    owner_bets_hist: HashMap<u32, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>>,
     alice_bets_hist: HashMap<u32, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>>,
-    owner_claimed: HashSet<u32>,
     alice_claimed: HashSet<u32>,
-    prev_owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
     prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
     strap_rewards_by_game: HashMap<u32, Vec<(strapped::Roll, strapped::Strap, u64)>>,
     active_modifiers_by_game:
@@ -204,27 +182,20 @@ impl AppController {
         history_store: HistoryStore,
         indexer: Option<IndexerClient>,
     ) -> Self {
-        let owner_identity = Identity::Address(clients.owner.account().address().clone());
         let alice_identity = Identity::Address(clients.alice.account().address().clone());
 
         Self {
             clients,
-            wallet: WalletKind::Owner,
             selected_roll: strapped::Roll::Six,
             vrf_number: initial_vrf,
             status: String::from("Ready"),
             indexer,
-            owner_identity,
             alice_identity,
-            last_seen_game_id_owner: None,
             last_seen_game_id_alice: None,
             shared_last_roll_history: Vec::new(),
             shared_prev_games: Vec::new(),
-            owner_bets_hist: HashMap::new(),
             alice_bets_hist: HashMap::new(),
-            owner_claimed: HashSet::new(),
             alice_claimed: HashSet::new(),
-            prev_owner_bets: Vec::new(),
             prev_alice_bets: Vec::new(),
             strap_rewards_by_game: HashMap::new(),
             active_modifiers_by_game: HashMap::new(),
@@ -261,8 +232,6 @@ impl AppController {
             modifier_triggers,
             active_modifiers,
             my_bets,
-            owner_bets,
-            alice_bets,
         } = data;
 
         let all_rolls = all_rolls();
@@ -273,13 +242,9 @@ impl AppController {
             .entry(current_game_id)
             .or_insert_with(|| strap_rewards.clone());
 
-        let last_seen_opt = match self.wallet {
-            WalletKind::Owner => self.last_seen_game_id_owner,
-            WalletKind::Alice => self.last_seen_game_id_alice,
-        };
+        let last_seen_opt = self.last_seen_game_id_alice;
         if let Some(prev) = last_seen_opt {
             if current_game_id > prev {
-                let owner_bets_prev = self.prev_owner_bets.clone();
                 let alice_bets_prev = self.prev_alice_bets.clone();
                 let mut completed_rolls = self.shared_last_roll_history.clone();
                 if !completed_rolls
@@ -295,11 +260,7 @@ impl AppController {
                     .cloned()
                     .unwrap_or_default();
                 self.upsert_shared_game(prev, completed_rolls, modifiers_for_prev);
-                self.owner_bets_hist.insert(prev, owner_bets_prev.clone());
                 self.alice_bets_hist.insert(prev, alice_bets_prev.clone());
-                if owner_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
-                    self.owner_claimed.insert(prev);
-                }
                 if alice_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
                     self.alice_claimed.insert(prev);
                 }
@@ -309,20 +270,14 @@ impl AppController {
                 if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
                     self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
                 }
-                self.last_seen_game_id_owner = Some(current_game_id);
                 self.last_seen_game_id_alice = Some(current_game_id);
             }
         }
-        match self.wallet {
-            WalletKind::Owner => self.last_seen_game_id_owner = Some(current_game_id),
-            WalletKind::Alice => self.last_seen_game_id_alice = Some(current_game_id),
-        };
+        self.last_seen_game_id_alice = Some(current_game_id);
 
-        self.prev_owner_bets = owner_bets.clone();
-        self.prev_alice_bets = alice_bets.clone();
+        self.prev_alice_bets = my_bets.clone();
 
-        let who = self.wallet;
-        let me = self.clients.instance(who).clone();
+        let me = self.clients.alice.clone();
         let provider = me.account().provider().clone();
 
         let pot_balance = get_contract_asset_balance(
@@ -414,18 +369,11 @@ impl AppController {
 
         let mut summaries: Vec<PreviousGameSummary> = Vec::new();
         for sg in &self.shared_prev_games {
-            let bets = match self.wallet {
-                WalletKind::Owner => self
-                    .owner_bets_hist
-                    .get(&sg.game_id)
-                    .cloned()
-                    .unwrap_or_default(),
-                WalletKind::Alice => self
-                    .alice_bets_hist
-                    .get(&sg.game_id)
-                    .cloned()
-                    .unwrap_or_default(),
-            };
+            let bets = self
+                .alice_bets_hist
+                .get(&sg.game_id)
+                .cloned()
+                .unwrap_or_default();
             let mut summary_cells = Vec::new();
             for r in &all_rolls {
                 let bets_for = bets
@@ -456,10 +404,7 @@ impl AppController {
                     rewards: Vec::new(),
                 });
             }
-            let claimed = match self.wallet {
-                WalletKind::Owner => self.owner_claimed.contains(&sg.game_id),
-                WalletKind::Alice => self.alice_claimed.contains(&sg.game_id),
-            };
+            let claimed = self.alice_claimed.contains(&sg.game_id);
             summaries.push(PreviousGameSummary {
                 game_id: sg.game_id,
                 cells: summary_cells,
@@ -503,22 +448,13 @@ impl AppController {
             .await?
             .ok_or_else(|| eyre!("indexer returned no overview snapshot"))?;
 
-        let owner_account = client
-            .latest_account_snapshot(&self.owner_identity)
-            .await?
-            .unwrap_or_else(AccountData::empty);
         let alice_account = client
             .latest_account_snapshot(&self.alice_identity)
             .await?
             .unwrap_or_else(AccountData::empty);
 
-        let my_bets = match self.wallet {
-            WalletKind::Owner => owner_account.per_roll_bets.clone(),
-            WalletKind::Alice => alice_account.per_roll_bets.clone(),
-        };
-
         let safe_limit = self.clients.safe_script_gas_limit;
-        let me_for_active = self.clients.instance(self.wallet).clone();
+        let me_for_active = self.clients.alice.clone();
         let active_modifiers = me_for_active
             .methods()
             .active_modifiers()
@@ -540,9 +476,7 @@ impl AppController {
             strap_rewards: overview.rewards.clone(),
             modifier_triggers: overview.modifier_shop.clone(),
             active_modifiers,
-            my_bets,
-            owner_bets: owner_account.per_roll_bets,
-            alice_bets: alice_account.per_roll_bets,
+            my_bets: alice_account.per_roll_bets,
         };
 
         self.finalize_snapshot(data).await
@@ -583,18 +517,6 @@ impl AppController {
                 }
             }
 
-            if !self.owner_bets_hist.contains_key(&game_id) {
-                if let Some(account) = client
-                    .historical_account_snapshot(&self.owner_identity, game_id)
-                    .await?
-                {
-                    self.owner_bets_hist
-                        .insert(game_id, account.per_roll_bets.clone());
-                    if account.claimed_rewards.is_some() {
-                        self.owner_claimed.insert(game_id);
-                    }
-                }
-            }
             if !self.alice_bets_hist.contains_key(&game_id) {
                 if let Some(account) = client
                     .historical_account_snapshot(&self.alice_identity, game_id)
@@ -629,9 +551,7 @@ impl AppController {
         }
 
         self.shared_prev_games.clear();
-        self.owner_bets_hist.clear();
         self.alice_bets_hist.clear();
-        self.owner_claimed.clear();
         self.alice_claimed.clear();
 
         for record in records {
@@ -674,18 +594,13 @@ impl AppController {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
-        let owner_bets = stored_bets_to_runtime(&record.owner_bets)?;
         let alice_bets = stored_bets_to_runtime(&record.alice_bets)?;
 
         self.strap_rewards_by_game
             .insert(record.game_id, strap_rewards);
         self.active_modifiers_by_game
             .insert(record.game_id, modifiers.clone());
-        self.owner_bets_hist.insert(record.game_id, owner_bets);
         self.alice_bets_hist.insert(record.game_id, alice_bets);
-        if record.owner_claimed {
-            self.owner_claimed.insert(record.game_id);
-        }
         if record.alice_claimed {
             self.alice_claimed.insert(record.game_id);
         }
@@ -722,26 +637,19 @@ impl AppController {
                     cost: *cost,
                 })
                 .collect::<Vec<_>>();
-            let owner_bets_vec = self
-                .owner_bets_hist
-                .get(&shared.game_id)
-                .cloned()
-                .unwrap_or_else(empty_bets_template);
+
             let alice_bets_vec = self
                 .alice_bets_hist
                 .get(&shared.game_id)
                 .cloned()
                 .unwrap_or_else(empty_bets_template);
-            let owner_bets = runtime_bets_to_store(owner_bets_vec);
             let alice_bets = runtime_bets_to_store(alice_bets_vec);
             records.push(StoredGameHistory {
                 game_id: shared.game_id,
                 rolls,
                 modifiers,
-                owner_bets,
                 alice_bets,
                 strap_rewards,
-                owner_claimed: self.owner_claimed.contains(&shared.game_id),
                 alice_claimed: self.alice_claimed.contains(&shared.game_id),
             });
         }
@@ -815,11 +723,10 @@ impl AppController {
         }
     }
 
-    async fn fetch_bets_for(
+    async fn fetch_bets(
         &self,
-        who: WalletKind,
     ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
-        let contract = self.clients.instance(who).clone();
+        let contract = self.clients.alice.clone();
         let safe_limit = self.clients.safe_script_gas_limit;
         let futures = all_rolls()
             .into_iter()
@@ -845,10 +752,9 @@ impl AppController {
 
     async fn fetch_bets_for_game(
         &self,
-        who: WalletKind,
         game_id: u32,
     ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
-        let contract = self.clients.instance(who).clone();
+        let contract = self.clients.alice.clone();
         let safe_limit = self.clients.safe_script_gas_limit;
         let bets = contract
             .methods()
@@ -861,9 +767,10 @@ impl AppController {
     }
 
     async fn backfill_recent_games(&mut self) -> Result<bool> {
-        let owner_contract = self.clients.owner.clone();
         let safe_limit = self.clients.safe_script_gas_limit;
-        let current_game_id_u32 = owner_contract
+        let current_game_id_u32 = self
+            .clients
+            .alice
             .methods()
             .current_game_id()
             .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
@@ -879,7 +786,9 @@ impl AppController {
         for game_id in start..current_game_id_u32 {
             let mut game_updated = false;
             if !self.shared_prev_games.iter().any(|g| g.game_id == game_id) {
-                let rolls = owner_contract
+                let rolls = self
+                    .clients
+                    .alice
                     .methods()
                     .roll_history_for_game(game_id)
                     .with_tx_policies(
@@ -891,7 +800,9 @@ impl AppController {
                 if rolls.is_empty() {
                     continue;
                 }
-                let modifiers = owner_contract
+                let modifiers = self
+                    .clients
+                    .alice
                     .methods()
                     .active_modifiers_for_game(game_id)
                     .with_tx_policies(
@@ -905,7 +816,9 @@ impl AppController {
                 self.upsert_shared_game(game_id, rolls, modifiers);
                 game_updated = true;
             } else if !self.active_modifiers_by_game.contains_key(&game_id) {
-                let modifiers = owner_contract
+                let modifiers = self
+                    .clients
+                    .alice
                     .methods()
                     .active_modifiers_for_game(game_id)
                     .with_tx_policies(
@@ -919,7 +832,9 @@ impl AppController {
             }
 
             if !self.strap_rewards_by_game.contains_key(&game_id) {
-                let strap_rewards = owner_contract
+                let strap_rewards = self
+                    .clients
+                    .alice
                     .methods()
                     .strap_rewards_for_game(game_id)
                     .with_tx_policies(
@@ -934,19 +849,8 @@ impl AppController {
                 }
             }
 
-            if !self.owner_bets_hist.contains_key(&game_id) {
-                let owner_bets =
-                    self.fetch_bets_for_game(WalletKind::Owner, game_id).await?;
-                let owner_claimed = owner_bets.iter().all(|(_, bets)| bets.is_empty());
-                self.owner_bets_hist.insert(game_id, owner_bets);
-                if owner_claimed {
-                    self.owner_claimed.insert(game_id);
-                }
-                game_updated = true;
-            }
             if !self.alice_bets_hist.contains_key(&game_id) {
-                let alice_bets =
-                    self.fetch_bets_for_game(WalletKind::Alice, game_id).await?;
+                let alice_bets = self.fetch_bets_for_game(game_id).await?;
                 let alice_claimed = alice_bets.iter().all(|(_, bets)| bets.is_empty());
                 self.alice_bets_hist.insert(game_id, alice_bets);
                 if alice_claimed {
@@ -1080,22 +984,12 @@ impl AppController {
                 eyre!("Deployment record contains an invalid chip asset id: {e}")
             })?
         } else {
-            // owner_instance
-            //     .methods()
-            //     .current_chip_asset_id()
-            //     .with_tx_policies(
-            //         TxPolicies::default().with_script_gas_limit(safe_script_limit),
-            //     )
-            //     .simulate(Execution::realistic())
-            //     .await?
-            //     .value
             panic!("Deployment record is missing chip asset id");
         };
 
         let (vrf_client, _vrf_contract_id) = if let Some(vrf_id) =
             selected.vrf_contract_id.as_ref()
         {
-            tracing::info!("ka");
             let vrf_bech32 = ContractId::from_str(vrf_id).map_err(|e| {
                 eyre!("Deployment record contains an invalid VRF contract id: {e:?}")
             })?;
@@ -1107,7 +1001,6 @@ impl AppController {
                 ContractId::from(vrf_bech32),
             )
         } else {
-            tracing::info!("kb");
             let vrf_bits = owner_instance
                 .methods()
                 .current_vrf_contract_id()
@@ -1128,9 +1021,7 @@ impl AppController {
             };
             (vrf_client, id)
         };
-        tracing::info!("l");
         let clients = Clients {
-            owner: owner_instance,
             alice: alice_instance,
             vrf: vrf_client,
             vrf_mode,
@@ -1172,17 +1063,16 @@ impl AppController {
             }
         }
 
-        let who = self.wallet;
-        let me = self.clients.instance(who).clone();
+        let me = self.clients.alice.clone();
         let provider = me.account().provider().clone();
         let safe_limit = self.clients.safe_script_gas_limit;
 
         let provider_for_height = provider.clone();
-        let owner_for_next = self.clients.owner.clone();
         let me_for_game = me.clone();
         let me_for_history = me.clone();
         let me_for_rewards = me.clone();
         let me_for_modifiers = me.clone();
+        let me_for_height = me.clone();
         let me_for_active = me.clone();
 
         let (
@@ -1201,7 +1091,7 @@ impl AppController {
                     .map_err(color_eyre::eyre::Report::from)
             },
             async move {
-                let res = owner_for_next
+                let res = me_for_height
                     .methods()
                     .next_roll_height()
                     .with_tx_policies(
@@ -1309,22 +1199,9 @@ impl AppController {
         )?;
 
         let my_bets = self
-            .fetch_bets_for(self.wallet)
+            .fetch_bets()
             .await
             .wrap_err("fetching bets for active wallet failed")?;
-
-        let (owner_bets, alice_bets) = tokio::try_join!(
-            async {
-                self.fetch_bets_for(WalletKind::Owner)
-                    .await
-                    .wrap_err("fetching owner bets failed")
-            },
-            async {
-                self.fetch_bets_for(WalletKind::Alice)
-                    .await
-                    .wrap_err("fetching alice bets failed")
-            }
-        )?;
 
         let data = SnapshotSourceData {
             current_block_height,
@@ -1335,8 +1212,6 @@ impl AppController {
             modifier_triggers,
             active_modifiers,
             my_bets,
-            owner_bets,
-            alice_bets,
         };
 
         let snapshot = self.finalize_snapshot(data).await?;
@@ -1359,7 +1234,7 @@ impl AppController {
     }
 
     pub async fn place_chip_bet(&mut self, amount: u64) -> Result<()> {
-        let me = self.clients.instance(self.wallet);
+        let me = self.clients.alice.clone();
         let call = CallParameters::new(
             amount,
             self.clients.chip_asset_id,
@@ -1385,7 +1260,7 @@ impl AppController {
         strap: strapped::Strap,
         amount: u64,
     ) -> Result<()> {
-        let me = self.clients.instance(self.wallet);
+        let me = self.clients.alice.clone();
         let sub = strapped_contract::strap_to_sub_id(&strap);
         let asset_id = self.clients.contract_id.asset_id(&sub);
         let call =
@@ -1413,7 +1288,7 @@ impl AppController {
 
     pub async fn purchase_triggered_modifier(&mut self, cost: u64) -> Result<()> {
         // Find a triggered modifier that targets the selected roll
-        let me = self.clients.instance(self.wallet);
+        let me = self.clients.alice.clone();
         let triggers = me
             .methods()
             .modifier_triggers()
@@ -1466,7 +1341,7 @@ impl AppController {
         // advance chain to next roll height
         let next_roll_height = self
             .clients
-            .owner
+            .alice
             .methods()
             .next_roll_height()
             .with_tx_policies(self.script_policies())
@@ -1478,7 +1353,7 @@ impl AppController {
             ))?
             .value
             .ok_or_else(|| eyre!("Next roll height not scheduled"))?;
-        let provider = self.clients.owner.account().provider().clone();
+        let provider = self.clients.alice.account().provider().clone();
         let current_height = provider
             .latest_block_height()
             .await
@@ -1499,7 +1374,7 @@ impl AppController {
                     self.clients.safe_script_gas_limit
                 );
                 self.clients
-                    .owner
+                    .alice
                     .methods()
                     .roll_dice()
                     .with_contracts(&[vrf])
@@ -1513,7 +1388,7 @@ impl AppController {
                     self.clients.safe_script_gas_limit
                 );
                 self.clients
-                    .owner
+                    .alice
                     .methods()
                     .roll_dice()
                     .with_contracts(&[vrf])
@@ -1536,7 +1411,7 @@ impl AppController {
         game_id: u32,
         enabled: Vec<(strapped::Roll, strapped::Modifier)>,
     ) -> Result<()> {
-        let me = self.clients.instance(self.wallet);
+        let me = self.clients.alice.clone();
         let mut errs: Vec<String> = Vec::new();
         // pre-claim balances
         let pre_chip = me
@@ -1612,14 +1487,7 @@ impl AppController {
             }
         }
         // mark as claimed in local cache for the current user
-        match self.wallet {
-            WalletKind::Owner => {
-                self.owner_claimed.insert(game_id);
-            }
-            WalletKind::Alice => {
-                self.alice_claimed.insert(game_id);
-            }
-        }
+        self.alice_claimed.insert(game_id);
         // post-claim deltas
         let post_chip = me
             .account()
@@ -1657,11 +1525,7 @@ impl AppController {
         game_id: u32,
         enabled: &[(strapped::Roll, strapped::Modifier)],
     ) -> Vec<(strapped::Roll, strapped::Strap)> {
-        let bets_hist = match self.wallet {
-            WalletKind::Owner => self.owner_bets_hist.get(&game_id),
-            WalletKind::Alice => self.alice_bets_hist.get(&game_id),
-        };
-        let bets_hist = match bets_hist {
+        let bets_hist = match self.alice_bets_hist.get(&game_id) {
             Some(bets) => bets.clone(),
             None => return Vec::new(),
         };
@@ -1735,7 +1599,7 @@ impl AppController {
         modifier: strapped::Modifier,
         cost: u64,
     ) -> Result<()> {
-        let me = self.clients.instance(self.wallet);
+        let me = self.clients.alice.clone();
         let call = CallParameters::new(
             cost,
             self.clients.chip_asset_id,
@@ -2082,8 +1946,6 @@ struct SnapshotSourceData {
     modifier_triggers: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
     active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
     my_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
-    owner_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
-    alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
 }
 
 fn format_deployment_summary(
