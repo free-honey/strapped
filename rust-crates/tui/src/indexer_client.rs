@@ -1,13 +1,10 @@
 use std::fmt;
 
-use color_eyre::eyre::{
-    Result,
-    WrapErr,
-    eyre,
-};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use fuels::types::Identity;
 use reqwest::StatusCode;
 use serde::Deserialize;
+use serde_json;
 use strapped_contract::strapped_types as strapped;
 
 #[derive(Clone)]
@@ -65,12 +62,21 @@ impl IndexerClient {
             .send()
             .await
             .wrap_err("indexer request failed")?;
-        if res.status() == StatusCode::NOT_FOUND {
+        let status = res.status();
+        let bytes = res
+            .bytes()
+            .await
+            .wrap_err("failed to read indexer response body")?;
+        if status == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let dto: LatestSnapshotDto = res
-            .json()
-            .await
+        if !status.is_success() {
+            let body = String::from_utf8_lossy(&bytes);
+            return Err(eyre!(
+                "indexer responded with {status} when fetching latest snapshot: {body}"
+            ));
+        }
+        let dto: LatestSnapshotDto = serde_json::from_slice(&bytes)
             .wrap_err("invalid indexer overview payload")?;
         Ok(Some(dto.into()))
     }
