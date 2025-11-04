@@ -5,9 +5,13 @@ use color_eyre::eyre::{
     WrapErr,
     eyre,
 };
-use fuels::types::Identity;
+use fuels::types::{
+    AssetId,
+    Identity,
+};
 use reqwest::StatusCode;
 use serde::Deserialize;
+use serde_json;
 use strapped_contract::strapped_types as strapped;
 
 #[derive(Clone)]
@@ -65,12 +69,21 @@ impl IndexerClient {
             .send()
             .await
             .wrap_err("indexer request failed")?;
-        if res.status() == StatusCode::NOT_FOUND {
+        let status = res.status();
+        let bytes = res
+            .bytes()
+            .await
+            .wrap_err("failed to read indexer response body")?;
+        if status == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let dto: LatestSnapshotDto = res
-            .json()
-            .await
+        if !status.is_success() {
+            let body = String::from_utf8_lossy(&bytes);
+            return Err(eyre!(
+                "indexer responded with {status} when fetching latest snapshot: {body}"
+            ));
+        }
+        let dto: LatestSnapshotDto = serde_json::from_slice(&bytes)
             .wrap_err("invalid indexer overview payload")?;
         Ok(Some(dto.into()))
     }
@@ -113,6 +126,34 @@ impl IndexerClient {
         let identity_path = Self::identity_path(identity)?;
         let url = format!("{}/account/{}/{}", self.base_url, identity_path, game_id);
         self.fetch_account_data(url).await
+    }
+
+    pub async fn all_known_straps(&self) -> Result<Vec<(AssetId, strapped::Strap)>> {
+        let url = format!("{}/straps", self.base_url);
+        let res = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .wrap_err("indexer request failed")?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unavailable body>".to_string());
+            return Err(eyre!(
+                "indexer responded with {status} when fetching strap metadata: {body}"
+            ));
+        }
+        let dtos: Vec<StrapMetadataDto> = res
+            .json()
+            .await
+            .wrap_err("invalid indexer strap metadata payload")?;
+        Ok(dtos
+            .into_iter()
+            .map(|dto| (dto.asset_id, dto.strap.into()))
+            .collect())
     }
 
     async fn fetch_account_data(&self, url: String) -> Result<Option<AccountData>> {
@@ -164,6 +205,12 @@ struct OverviewSnapshotDto {
 struct LatestAccountSnapshotDto {
     snapshot: AccountSnapshotDto,
     block_height: u32,
+}
+
+#[derive(Deserialize)]
+struct StrapMetadataDto {
+    asset_id: AssetId,
+    strap: StrapDto,
 }
 
 #[derive(Deserialize)]

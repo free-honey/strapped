@@ -4,6 +4,7 @@ use crate::{
         Query,
         QueryAPI,
     },
+    events::Strap,
     snapshot::{
         ALL_ROLLS,
         AccountRollBets,
@@ -29,6 +30,7 @@ use anyhow::{
 };
 use fuels::types::{
     Address,
+    AssetId,
     Identity,
 };
 use serde::{
@@ -61,6 +63,12 @@ struct LatestAccountSnapshotDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct HistoricalSnapshotDto {
     snapshot: HistoricalSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct StrapMetadataDto {
+    asset_id: AssetId,
+    strap: Strap,
 }
 
 fn normalize_account_snapshot(snapshot: &mut AccountSnapshot) {
@@ -123,6 +131,7 @@ impl ActixQueryApi {
                     "/historical/{game_id}",
                     web::get().to(handle_historical_snapshot),
                 )
+                .route("/straps", web::get().to(handle_all_known_straps))
         })
         .listen(listener)
         .context("failed to start Actix server")?
@@ -268,6 +277,29 @@ async fn handle_historical_snapshot(
     }
 }
 
+async fn handle_all_known_straps(
+    sender: web::Data<mpsc::Sender<Query>>,
+) -> actix_web::Result<web::Json<Vec<StrapMetadataDto>>> {
+    tracing::info!("received all known strap metadata request");
+    let (response_sender, response_receiver) = oneshot::channel();
+    let query = Query::all_known_straps(response_sender);
+
+    sender.get_ref().clone().send(query).await.map_err(|_| {
+        ErrorInternalServerError("unable to forward all strap metadata query")
+    })?;
+
+    let response = response_receiver
+        .await
+        .map_err(|_| ErrorInternalServerError("all strap metadata responder dropped"))?;
+
+    let body: Vec<StrapMetadataDto> = response
+        .into_iter()
+        .map(|(asset_id, strap)| StrapMetadataDto { asset_id, strap })
+        .collect();
+
+    Ok(web::Json(body))
+}
+
 #[allow(non_snake_case)]
 #[cfg(test)]
 mod tests {
@@ -281,6 +313,8 @@ mod tests {
         events::{
             Modifier,
             Roll,
+            Strap,
+            StrapKind,
         },
         snapshot::ActiveModifier,
     };
@@ -455,5 +489,45 @@ mod tests {
         // then
         let response = client_task.await.unwrap();
         assert_eq!(response, expected_response);
+    }
+
+    #[tokio::test]
+    async fn query__can_get_all_known_straps() {
+        // given
+        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let client = reqwest::Client::new();
+        let url = format!("{}/straps", api.base_url());
+        let expected = vec![
+            (
+                AssetId::from([1u8; 32]),
+                Strap::new(1, StrapKind::Hat, Modifier::Lucky),
+            ),
+            (
+                AssetId::from([2u8; 32]),
+                Strap::new(2, StrapKind::Scarf, Modifier::Holy),
+            ),
+        ];
+        let client_task = tokio::spawn(async move {
+            let response = client.get(url).send().await.unwrap();
+            response.json::<Vec<StrapMetadataDto>>().await.unwrap()
+        });
+
+        // when
+        let query = api.query().await.unwrap();
+        if let Query::AllKnownStraps(sender) = query {
+            sender.send(expected.clone()).unwrap();
+        } else {
+            panic!("expected all known strap metadata query got {:?}", query);
+        }
+
+        // then
+        let mut response = client_task.await.unwrap();
+        response.sort_by_key(|entry| entry.asset_id);
+        let mut expected_sorted: Vec<StrapMetadataDto> = expected
+            .into_iter()
+            .map(|(asset_id, strap)| StrapMetadataDto { asset_id, strap })
+            .collect();
+        expected_sorted.sort_by_key(|entry| entry.asset_id);
+        assert_eq!(response, expected_sorted);
     }
 }

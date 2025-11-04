@@ -268,10 +268,8 @@ pub struct StoredGameHistory {
     pub game_id: u32,
     pub rolls: Vec<String>,
     pub modifiers: Vec<StoredModifier>,
-    pub owner_bets: Vec<StoredRollBets>,
     pub alice_bets: Vec<StoredRollBets>,
     pub strap_rewards: Vec<StoredStrapReward>,
-    pub owner_claimed: bool,
     pub alice_claimed: bool,
 }
 

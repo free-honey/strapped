@@ -837,6 +837,47 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
 }
 
 #[tokio::test]
+async fn handle_claim_rewards_event__records_strap_asset_ids() {
+    // given
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
+    let snapshot_storage =
+        InMemorySnapshotStorage::new_with_snapshot(OverviewSnapshot::default(), 0);
+    let metadata_storage = InMemoryMetadataStorage::new();
+    let metadata_copy = metadata_storage.clone();
+    let query_api = PendingQueryApi;
+    let contract_id = zero_contract_id();
+    let strap = Strap::new(3, StrapKind::Bracelet, Modifier::Scotch);
+    let expected_asset_id = contract_id.asset_id(&strap.sub_id());
+    let mut app = App::new(
+        event_source,
+        query_api,
+        snapshot_storage,
+        metadata_storage,
+        contract_id,
+    );
+    let player = Identity::Address(Address::from([4u8; 32]));
+    let claim_event = ContractEvent::ClaimRewards(ClaimRewardsEvent {
+        game_id: 5,
+        player,
+        enabled_modifiers: vec![],
+        total_chips_winnings: 0,
+        total_strap_winnings: vec![(strap, 2)],
+    });
+
+    // when
+    event_sender
+        .send((vec![Event::ContractEvent(claim_event)], 120))
+        .await
+        .unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let mut recorded = metadata_copy.all_known_strap_asset_ids().unwrap();
+    recorded.sort();
+    assert_eq!(recorded, vec![expected_asset_id]);
+}
+
+#[tokio::test]
 async fn run__fund_pot_event__increases_pot() {
     // given
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
@@ -1030,6 +1071,45 @@ async fn run__latest_account_snapshot_query__returns_latest_account_snapshot() {
     // then
     let response = one_recv.await.unwrap();
     assert_eq!(response, Some((expected_snapshot, expected_height)));
+}
+
+#[tokio::test]
+async fn run__all_known_straps_query__returns_known_pairs() {
+    // given
+    let strap_a = Strap::new(1, StrapKind::Hat, Modifier::Lucky);
+    let strap_b = Strap::new(2, StrapKind::Ring, Modifier::Delicate);
+    let contract_id = zero_contract_id();
+    let mut metadata_storage = InMemoryMetadataStorage::new();
+    let asset_id_a = contract_id.asset_id(&strap_a.sub_id());
+    let asset_id_b = contract_id.asset_id(&strap_b.sub_id());
+    metadata_storage
+        .record_new_asset_id(&asset_id_a, &strap_a)
+        .unwrap();
+    metadata_storage
+        .record_new_asset_id(&asset_id_b, &strap_b)
+        .unwrap();
+
+    let (query_api, sender) = FakeQueryApi::new_with_sender();
+    let snapshot_storage = InMemorySnapshotStorage::new();
+    let mut app = App::new(
+        PendingEventSource,
+        query_api,
+        snapshot_storage,
+        metadata_storage,
+        contract_id,
+    );
+
+    let (one_send, one_recv) = oneshot::channel();
+    let query = Query::all_known_straps(one_send);
+
+    // when
+    sender.send(query).await.unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let mut straps = one_recv.await.unwrap();
+    straps.sort_by_key(|(asset_id, _)| *asset_id);
+    assert_eq!(straps, vec![(asset_id_a, strap_a), (asset_id_b, strap_b)]);
 }
 
 #[tokio::test]

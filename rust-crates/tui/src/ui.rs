@@ -43,6 +43,7 @@ pub enum UserEvent {
         modifier: strapped::Modifier,
     },
     OpenStrapBet,
+    OpenStrapInventory,
     ConfirmStrapBet {
         strap: strapped::Strap,
         amount: u64,
@@ -88,6 +89,7 @@ enum Mode {
     ShopModal(ShopState),
     QuitModal,
     StrapBet(StrapBetState),
+    StrapInventory(StrapInventoryState),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -414,6 +416,24 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                     }
                     _ => {}
                 },
+                Mode::StrapInventory(si) => match k.code {
+                    KeyCode::Esc => {
+                        state.mode = Mode::Normal;
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if si.idx > 0 {
+                            si.idx -= 1;
+                        }
+                        return Ok(UserEvent::Redraw);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let max = strap_kind_catalog().len().saturating_sub(1);
+                        si.idx = (si.idx + 1).min(max);
+                        return Ok(UserEvent::Redraw);
+                    }
+                    _ => {}
+                },
                 Mode::QuitModal => match k.code {
                     KeyCode::Char('y') | KeyCode::Char('Y') => {
                         return Ok(UserEvent::Quit);
@@ -452,6 +472,10 @@ pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
                 KeyCode::Char('s') => {
                     state.mode = Mode::ShopModal(ShopState::default());
                     UserEvent::OpenShop
+                }
+                KeyCode::Char('i') => {
+                    state.mode = Mode::StrapInventory(StrapInventoryState::default());
+                    UserEvent::OpenStrapInventory
                 }
                 KeyCode::Char('c') => {
                     let mut cs = ClaimState::default();
@@ -734,19 +758,22 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 
     // Help
     let help = Paragraph::new(
-        "←/→ select | b chip bet | t strap bet | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
+        "←/→ select | b chip bet | t strap bet | i straps | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
     )
     .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(help, chunks[1]);
 }
 
 fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
-    let straps_line = format_owned_strap_summary(&snap.owned_straps);
+    let (straps_line, has_more) = format_owned_strap_summary(&snap.owned_straps);
 
     // const DECIMAL_SPACES: u32 = 9;
     let chips_balance = snap.chip_balance;
     // let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
-    let text = format!("Chips: {} | Straps: {}", chips_balance, straps_line);
+    let mut text = format!("Chips: {} | Straps: {}", chips_balance, straps_line);
+    if has_more {
+        text.push_str("... see more (press i)");
+    }
     let widget = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title("Wallet"));
     f.render_widget(widget, area);
@@ -951,6 +978,57 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             f.render_widget(block.clone(), area);
             f.render_widget(Paragraph::new(lines), block.inner(area));
         }
+        Mode::StrapInventory(si) => {
+            let area = centered_rect(70, 70, f.area());
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Strap Inventory");
+            let rows = aggregate_owned_straps_by_kind(&snap.owned_straps);
+            let max_idx = rows.len().saturating_sub(1);
+            let selected_idx = si.idx.min(max_idx);
+            let mut lines = Vec::new();
+            if rows.is_empty() {
+                lines.push(Line::from("No strap types available"));
+            } else {
+                for (i, row) in rows.iter().enumerate() {
+                    let prefix = if i == selected_idx { ">" } else { " " };
+                    let kind_label = format!("{:?}", row.kind);
+                    let detail = if row.entries.is_empty() {
+                        String::from("-")
+                    } else {
+                        row.entries
+                            .iter()
+                            .map(|(strap, amount)| {
+                                format!("{}x{}", render_reward_compact(strap), amount)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    let text = format!(
+                        "{} {:<10} total: {:<3} {}",
+                        prefix, kind_label, row.total, detail
+                    );
+                    let line = if i == selected_idx {
+                        Line::styled(
+                            text,
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Line::from(text)
+                    };
+                    lines.push(line);
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(
+                    "Esc=close ↑/↓ move (rows include strap kinds you do not own yet)",
+                ));
+            }
+            f.render_widget(Clear, area);
+            f.render_widget(block.clone(), area);
+            f.render_widget(Paragraph::new(lines), block.inner(area));
+        }
         Mode::QuitModal => {
             let area = centered_rect(40, 20, f.area());
             let block = Block::default().borders(Borders::ALL).title("Confirm Quit");
@@ -972,6 +1050,7 @@ struct VrfState {
 struct ShopState {
     idx: usize,
 }
+
 #[derive(Clone, Debug)]
 struct StrapBetState {
     idx: usize,
@@ -981,6 +1060,11 @@ impl Default for StrapBetState {
     fn default() -> Self {
         StrapBetState { idx: 0, amount: 1 }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct StrapInventoryState {
+    idx: usize,
 }
 
 fn centered_rect(w_percent: u16, h_percent: u16, r: Rect) -> Rect {
@@ -1130,7 +1214,7 @@ fn render_strap_compact(s: &strapped::Strap) -> String {
 
 fn render_strap_line(s: &strapped::Strap, amount: u64) -> Line<'static> {
     let text = render_strap_compact(s);
-    Line::styled(format!("{} x{}", text, amount), level_style(s.level))
+    Line::styled(format!("{}x{}", text, amount), level_style(s.level))
 }
 
 // Very tight reward format to reduce truncation: [modifier][kind][level]
@@ -1145,9 +1229,70 @@ fn render_reward_compact(s: &strapped::Strap) -> String {
     }
 }
 
-fn format_owned_strap_summary(owned: &[(strapped::Strap, u64)]) -> String {
+#[derive(Clone, Debug)]
+struct StrapKindRow {
+    kind: strapped::StrapKind,
+    total: u64,
+    entries: Vec<(strapped::Strap, u64)>,
+}
+
+const ALL_STRAP_KINDS: [strapped::StrapKind; 19] = [
+    strapped::StrapKind::Shirt,
+    strapped::StrapKind::Pants,
+    strapped::StrapKind::Shoes,
+    strapped::StrapKind::Dress,
+    strapped::StrapKind::Hat,
+    strapped::StrapKind::Glasses,
+    strapped::StrapKind::Watch,
+    strapped::StrapKind::Ring,
+    strapped::StrapKind::Necklace,
+    strapped::StrapKind::Earring,
+    strapped::StrapKind::Bracelet,
+    strapped::StrapKind::Tattoo,
+    strapped::StrapKind::Skirt,
+    strapped::StrapKind::Piercing,
+    strapped::StrapKind::Coat,
+    strapped::StrapKind::Scarf,
+    strapped::StrapKind::Gloves,
+    strapped::StrapKind::Gown,
+    strapped::StrapKind::Belt,
+];
+
+fn strap_kind_catalog() -> &'static [strapped::StrapKind] {
+    &ALL_STRAP_KINDS
+}
+
+fn aggregate_owned_straps_by_kind(owned: &[(strapped::Strap, u64)]) -> Vec<StrapKindRow> {
+    let mut rows = Vec::new();
+    for kind in strap_kind_catalog() {
+        let mut entries: Vec<(strapped::Strap, u64)> = Vec::new();
+        for (strap, amount) in owned.iter().filter(|(strap, _)| strap.kind == *kind) {
+            if let Some((_, total)) =
+                entries.iter_mut().find(|(existing, _)| existing == strap)
+            {
+                *total = total.saturating_add(*amount);
+            } else {
+                entries.push((strap.clone(), *amount));
+            }
+        }
+        entries.sort_by(|(a, _), (b, _)| {
+            a.level.cmp(&b.level).then_with(|| {
+                modifier_order_value(&a.modifier).cmp(&modifier_order_value(&b.modifier))
+            })
+        });
+        let total = entries.iter().map(|(_, amount)| *amount).sum();
+        rows.push(StrapKindRow {
+            kind: kind.clone(),
+            total,
+            entries,
+        });
+    }
+    rows
+}
+
+fn format_owned_strap_summary(owned: &[(strapped::Strap, u64)]) -> (String, bool) {
     if owned.is_empty() {
-        return String::from("none");
+        return (String::from("none"), false);
     }
 
     let mut aggregated: Vec<(strapped::Strap, u64)> = Vec::new();
@@ -1178,7 +1323,15 @@ fn format_owned_strap_summary(owned: &[(strapped::Strap, u64)]) -> String {
         .map(|(strap, amount)| format!("{}x{}", render_reward_compact(&strap), amount))
         .collect();
 
-    parts.join(", ")
+    const MAX_DISPLAY: usize = 3;
+    let has_more = parts.len() > MAX_DISPLAY;
+    let displayed = if has_more {
+        parts.into_iter().take(MAX_DISPLAY).collect::<Vec<_>>()
+    } else {
+        parts
+    };
+
+    (displayed.join(", "), has_more)
 }
 
 fn strap_kind_order_value(kind: &strapped::StrapKind) -> u8 {

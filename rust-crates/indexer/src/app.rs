@@ -323,6 +323,13 @@ impl<
                     })?;
                 Ok(())
             }
+            Query::AllKnownStraps(sender) => {
+                let straps = self.metadata.all_known_straps()?;
+                sender.send(straps).map_err(|straps| {
+                    anyhow!("Could not send `AllKnownStraps` response: {:?}", straps)
+                })?;
+                Ok(())
+            }
         }
     }
 

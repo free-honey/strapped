@@ -1,9 +1,15 @@
-use crate::snapshot::{
-    AccountSnapshot,
-    HistoricalSnapshot,
-    OverviewSnapshot,
+use crate::{
+    events::Strap,
+    snapshot::{
+        AccountSnapshot,
+        HistoricalSnapshot,
+        OverviewSnapshot,
+    },
 };
-use fuels::types::Identity;
+use fuels::types::{
+    AssetId,
+    Identity,
+};
 use std::future::Future;
 use tokio::sync::oneshot;
 
@@ -17,6 +23,7 @@ pub enum Query {
     LatestAccountSnapshot(AccountSnapshotQuery),
     HistoricalSnapshot(HistoricalSnapshotQuery),
     HistoricalAccountSnapshot(HistoricalAccountSnapshotQuery),
+    AllKnownStraps(oneshot::Sender<Vec<(AssetId, Strap)>>),
 }
 
 impl Query {
@@ -47,6 +54,10 @@ impl Query {
             sender,
         };
         Query::HistoricalAccountSnapshot(inner)
+    }
+
+    pub fn all_known_straps(sender: oneshot::Sender<Vec<(AssetId, Strap)>>) -> Query {
+        Query::AllKnownStraps(sender)
     }
 }
 
