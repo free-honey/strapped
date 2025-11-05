@@ -45,6 +45,7 @@ use generated_abi::{
     strapped_types::RollEvent,
 };
 use std::{
+    cmp::Ordering,
     collections::{
         HashMap,
         HashSet,
@@ -119,6 +120,13 @@ pub struct AppSnapshot {
     pub errors: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
+struct PendingRoll {
+    game_id: u32,
+    index: usize,
+    roll: strapped::Roll,
+}
+
 pub struct Clients {
     pub alice: strapped::MyContract<Wallet>,
     pub vrf: Option<VrfClient>,
@@ -181,6 +189,7 @@ pub struct AppController {
     last_snapshot: Option<AppSnapshot>,
     last_snapshot_time: Option<Instant>,
     history_store: HistoryStore,
+    pending_rolls: Vec<PendingRoll>,
 }
 
 impl AppController {
@@ -220,11 +229,12 @@ impl AppController {
             last_snapshot: None,
             last_snapshot_time: None,
             history_store,
+            pending_rolls: Vec::new(),
         }
     }
 
     fn poll_interval(&self) -> Duration {
-        Duration::from_millis(1000)
+        Duration::from_millis(50)
     }
 
     fn refresh_ttl(&self) -> Duration {
@@ -499,6 +509,40 @@ impl AppController {
             self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
         }
         Ok(())
+    }
+
+    fn apply_pending_rolls(&mut self, overview: &mut OverviewData) {
+        let mut pending = std::mem::take(&mut self.pending_rolls);
+        pending.sort_by_key(|p| (p.game_id, p.index));
+        let mut still_pending = Vec::new();
+
+        for pending_roll in pending.into_iter() {
+            match pending_roll.game_id.cmp(&overview.game_id) {
+                Ordering::Less => {
+                    // Indexer has already advanced past this game; drop the override.
+                }
+                Ordering::Greater => {
+                    // Hold rolls for future games until the indexer catches up.
+                    still_pending.push(pending_roll);
+                }
+                Ordering::Equal => {
+                    if overview.rolls.len() > pending_roll.index {
+                        // Indexer already reflects this roll.
+                        continue;
+                    }
+                    if overview.rolls.len() == pending_roll.index {
+                        overview.rolls.push(pending_roll.roll.clone());
+                        // Keep the pending record so a subsequent stale snapshot can be patched again.
+                        still_pending.push(pending_roll);
+                    } else {
+                        // Indexer snapshot is missing earlier rolls; retain until it catches up.
+                        still_pending.push(pending_roll);
+                    }
+                }
+            }
+        }
+
+        self.pending_rolls = still_pending;
     }
 
     fn set_status(&mut self, message: impl Into<String>) {
@@ -994,7 +1038,7 @@ impl AppController {
             .indexer
             .clone()
             .ok_or(anyhow!("No indexer configured"))?;
-        let overview = indexer
+        let mut overview = indexer
             .latest_overview()
             .await?
             .ok_or_else(|| eyre!("indexer returned no overview snapshot"))?;
@@ -1008,6 +1052,7 @@ impl AppController {
                 .await
                 .wrap_err("failed to refresh account after game advanced")?;
         }
+        self.apply_pending_rolls(&mut overview);
         self.cached_overview_time = Some(Instant::now());
         self.cached_overview = Some(overview);
         Ok(())
@@ -1372,27 +1417,55 @@ impl AppController {
         let events = response.decode_logs_with_type::<RollEvent>()?;
         if let Some(event) = events.first() {
             let rolled_value = event.rolled_value.clone();
-            self.set_status(format!("Rolled a {:?}*", &rolled_value));
+            let is_seven = matches!(rolled_value, strapped::Roll::Seven);
+            if is_seven {
+                self.set_status("Rolled a Seven! Waiting for the next game...");
+            } else {
+                self.set_status(format!("Rolled a {:?}", &rolled_value));
+            }
+
+            let event_game_id = event.game_id;
+            let mut pending_index: Option<usize> = None;
+
             if let Some(overview) = self.cached_overview.as_mut() {
-                if overview.game_id == event.game_id {
-                    overview.rolls.push(rolled_value.clone());
-                    self.shared_last_roll_history = overview.rolls.clone();
+                if overview.game_id == event_game_id {
+                    if is_seven {
+                        overview.rolls.clear();
+                        self.shared_last_roll_history = overview.rolls.clone();
+                    } else {
+                        pending_index = Some(overview.rolls.len());
+                        overview.rolls.push(rolled_value.clone());
+                        self.shared_last_roll_history = overview.rolls.clone();
+                    }
+                } else {
+                    self.shared_last_roll_history.clear();
+                }
+            } else if !is_seven
+                && self
+                    .last_seen_game_id_alice
+                    .map(|prev| prev == event_game_id)
+                    .unwrap_or(false)
+            {
+                pending_index = Some(self.shared_last_roll_history.len());
+                self.shared_last_roll_history.push(rolled_value.clone());
+            } else {
+                self.shared_last_roll_history.clear();
+                if !is_seven {
+                    pending_index = Some(0);
+                    self.shared_last_roll_history.push(rolled_value.clone());
                 }
             }
-            if self
-                .last_seen_game_id_alice
-                .map(|prev| prev == event.game_id)
-                .unwrap_or(true)
-            {
-                if self.shared_last_roll_history.is_empty()
-                    || self
-                        .shared_last_roll_history
-                        .last()
-                        .map(|last| last != &rolled_value)
-                        .unwrap_or(true)
-                {
-                    self.shared_last_roll_history.push(rolled_value);
-                }
+
+            self.last_seen_game_id_alice = Some(event_game_id);
+            if is_seven {
+                self.pending_rolls
+                    .retain(|pending| pending.game_id > event_game_id);
+            } else if let Some(index) = pending_index {
+                self.pending_rolls.push(PendingRoll {
+                    game_id: event_game_id,
+                    index,
+                    roll: rolled_value,
+                });
             }
         } else {
             tracing::warn!("roll_dice emitted no RollEvent logs");
