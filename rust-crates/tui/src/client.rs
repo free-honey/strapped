@@ -12,6 +12,7 @@ use crate::{
     indexer_client::{
         AccountData,
         IndexerClient,
+        OverviewData,
     },
     ui,
     wallets,
@@ -19,6 +20,7 @@ use crate::{
 use color_eyre::eyre::{
     Result,
     WrapErr,
+    anyhow,
     eyre,
 };
 use fuels::{
@@ -38,8 +40,10 @@ use fuels::{
     tx::ContractIdExt,
     types::Identity,
 };
-use futures::future::try_join_all;
-use generated_abi::strap_cost;
+use generated_abi::{
+    strap_cost,
+    strapped_types::RollEvent,
+};
 use std::{
     collections::{
         HashMap,
@@ -148,21 +152,21 @@ pub struct AppConfig {
     pub indexer_url: Option<String>,
 }
 
-async fn get_contract_asset_balance(
-    provider: &Provider,
-    cid: &ContractId,
-    aid: &AssetId,
-) -> Result<u64> {
-    let bal = provider.get_contract_asset_balance(cid, aid).await?;
-    Ok(bal)
-}
-
 pub struct AppController {
     pub clients: Clients,
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub status: String,
     indexer: Option<IndexerClient>,
+    cached_overview: Option<OverviewData>,
+    cached_overview_time: Option<Instant>,
+    cached_account: Option<AccountData>,
+    cached_account_time: Option<Instant>,
+    cached_active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
+    cached_active_modifiers_time: Option<Instant>,
+    known_straps: Vec<(AssetId, strapped::Strap)>,
+    cached_owned_straps: Vec<(strapped::Strap, u64)>,
+    cached_chip_balance: Option<u64>,
     alice_identity: Identity,
     last_seen_game_id_alice: Option<u32>,
     shared_last_roll_history: Vec<strapped::Roll>,
@@ -194,6 +198,15 @@ impl AppController {
             vrf_number: initial_vrf,
             status: String::from("Ready"),
             indexer,
+            cached_overview: None,
+            cached_overview_time: None,
+            cached_account: None,
+            cached_account_time: None,
+            cached_active_modifiers: Vec::new(),
+            cached_active_modifiers_time: None,
+            known_straps: Vec::new(),
+            cached_owned_straps: Vec::new(),
+            cached_chip_balance: None,
             alice_identity,
             last_seen_game_id_alice: None,
             shared_last_roll_history: Vec::new(),
@@ -211,7 +224,7 @@ impl AppController {
     }
 
     fn poll_interval(&self) -> Duration {
-        Duration::from_secs(5)
+        Duration::from_millis(1000)
     }
 
     fn refresh_ttl(&self) -> Duration {
@@ -223,22 +236,23 @@ impl AppController {
         self.last_snapshot_time = None;
     }
 
-    async fn finalize_snapshot(
-        &mut self,
-        data: SnapshotSourceData,
-    ) -> Result<AppSnapshot> {
-        let SnapshotSourceData {
-            current_block_height,
-            next_roll_height,
-            current_game_id,
-            roll_history,
-            strap_rewards,
-            modifier_triggers,
-            active_modifiers,
-            my_bets,
-            known_straps,
-        } = data;
-
+    fn finalize_snapshot(&mut self) -> Result<AppSnapshot> {
+        let overview = self
+            .cached_overview
+            .clone()
+            .ok_or_else(|| eyre!("no overview snapshot cached"))?;
+        let account = self
+            .cached_account
+            .clone()
+            .unwrap_or_else(AccountData::empty);
+        let current_block_height = overview.current_block_height;
+        let next_roll_height = overview.next_roll_height;
+        let current_game_id = overview.game_id;
+        let roll_history = overview.rolls.clone();
+        let strap_rewards = overview.rewards.clone();
+        let modifier_triggers = overview.modifier_shop.clone();
+        let active_modifiers = self.cached_active_modifiers.clone();
+        let my_bets = account.per_roll_bets.clone();
         let all_rolls = all_rolls();
         self.active_modifiers_by_game
             .insert(current_game_id, active_modifiers.clone());
@@ -282,30 +296,9 @@ impl AppController {
 
         self.prev_alice_bets = my_bets.clone();
 
-        let me = self.clients.alice.clone();
-        let provider = me.account().provider().clone();
-
-        let pot_balance = get_contract_asset_balance(
-            &provider,
-            &self.clients.contract_id,
-            &self.clients.chip_asset_id,
-        )
-        .await
-        .wrap_err("fetching pot balance failed")?;
-
-        let chip_balance = me
-            .account()
-            .get_asset_balance(&self.clients.chip_asset_id)
-            .await
-            .wrap_err("fetching wallet chip balance failed")?;
-
         self.shared_last_roll_history = roll_history.clone();
 
         let mut cells = Vec::new();
-        let mut strap_info_by_asset: HashMap<AssetId, strapped::Strap> = HashMap::new();
-        for (asset_id, strap) in &known_straps {
-            strap_info_by_asset.insert(*asset_id, strap.clone());
-        }
         for (r, bets) in &my_bets {
             let chip_total: u64 = bets
                 .iter()
@@ -323,11 +316,6 @@ impl AppController {
                     } else {
                         straps.push((s.clone(), *amt));
                     }
-                    Self::track_strap_metadata(
-                        &mut strap_info_by_asset,
-                        &self.clients.contract_id,
-                        s,
-                    );
                 }
             }
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
@@ -345,11 +333,6 @@ impl AppController {
                         count: 1,
                     });
                 }
-                Self::track_strap_metadata(
-                    &mut strap_info_by_asset,
-                    &self.clients.contract_id,
-                    s,
-                );
             }
             cells.push(RollCell {
                 roll: r.clone(),
@@ -360,50 +343,9 @@ impl AppController {
             });
         }
 
-        for (_gid, list) in &self.strap_rewards_by_game {
-            for (_r, s, _) in list {
-                Self::track_strap_metadata(
-                    &mut strap_info_by_asset,
-                    &self.clients.contract_id,
-                    s,
-                );
-            }
-        }
-
-        let mut ordered_asset_ids: Vec<AssetId> = Vec::new();
-        let mut seen_asset_ids = HashSet::new();
-        for (asset_id, _) in &known_straps {
-            if seen_asset_ids.insert(*asset_id) {
-                ordered_asset_ids.push(*asset_id);
-            }
-        }
-        for asset_id in strap_info_by_asset.keys().copied() {
-            if seen_asset_ids.insert(asset_id) {
-                ordered_asset_ids.push(asset_id);
-            }
-        }
-
-        let mut asset_balances: HashMap<AssetId, u128> = HashMap::new();
-        for asset_id in &ordered_asset_ids {
-            let balance = me.account().get_asset_balance(asset_id).await.unwrap_or(0);
-            asset_balances.insert(*asset_id, balance);
-        }
-
-        let owned_straps = Self::build_owned_straps(
-            &ordered_asset_ids,
-            &strap_info_by_asset,
-            &asset_balances,
-        );
-
-        for asset_id in &ordered_asset_ids {
-            let balance = asset_balances.get(asset_id).copied().unwrap_or(0);
-            if balance > 0 && !strap_info_by_asset.contains_key(asset_id) {
-                warn!(
-                    ?asset_id,
-                    balance, "strap asset balance present without known metadata"
-                );
-            }
-        }
+        let owned_straps = self.cached_owned_straps.clone();
+        let chip_balance = self.cached_chip_balance.unwrap_or_default();
+        let pot_balance = overview.pot_size;
 
         let mut summaries: Vec<PreviousGameSummary> = Vec::new();
         for sg in &self.shared_prev_games {
@@ -460,9 +402,7 @@ impl AppController {
             active_modifiers,
             owned_straps,
             pot_balance,
-            chip_balance: chip_balance
-                .try_into()
-                .expect("naively assuming this will fit into u64"),
+            chip_balance,
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
             vrf_mode: self.clients.vrf_mode,
@@ -475,16 +415,6 @@ impl AppController {
         };
 
         Ok(snapshot)
-    }
-
-    fn track_strap_metadata(
-        strap_info: &mut HashMap<AssetId, strapped::Strap>,
-        contract_id: &ContractId,
-        strap: &strapped::Strap,
-    ) {
-        let sub = strapped_contract::strap_to_sub_id(strap);
-        let asset_id = contract_id.asset_id(&sub);
-        strap_info.entry(asset_id).or_insert_with(|| strap.clone());
     }
 
     fn build_owned_straps(
@@ -512,52 +442,6 @@ impl AppController {
             }
         }
         owned
-    }
-
-    async fn snapshot_with_indexer(
-        &mut self,
-        client: IndexerClient,
-    ) -> Result<AppSnapshot> {
-        let overview = client
-            .latest_overview()
-            .await?
-            .ok_or_else(|| eyre!("indexer returned no overview snapshot"))?;
-
-        let alice_account = client
-            .latest_account_snapshot(&self.alice_identity)
-            .await?
-            .unwrap_or_else(AccountData::empty);
-
-        let known_straps = client.all_known_straps().await?;
-
-        let safe_limit = self.clients.safe_script_gas_limit;
-        let me_for_active = self.clients.alice.clone();
-        let active_modifiers = me_for_active
-            .methods()
-            .active_modifiers()
-            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
-            .simulate(Execution::realistic())
-            .await
-            .map(|r| r.value)
-            .map_err(color_eyre::eyre::Report::from)
-            .wrap_err("active_modifiers call failed")?;
-
-        self.backfill_recent_games_indexer(overview.game_id, &client)
-            .await?;
-
-        let data = SnapshotSourceData {
-            current_block_height: overview.current_block_height,
-            next_roll_height: overview.next_roll_height,
-            current_game_id: overview.game_id,
-            roll_history: overview.rolls.clone(),
-            strap_rewards: overview.rewards.clone(),
-            modifier_triggers: overview.modifier_shop.clone(),
-            active_modifiers,
-            my_bets: alice_account.per_roll_bets,
-            known_straps,
-        };
-
-        self.finalize_snapshot(data).await
     }
 
     async fn backfill_recent_games_indexer(
@@ -799,33 +683,6 @@ impl AppController {
                 .await
             }
         }
-    }
-
-    async fn fetch_bets(
-        &self,
-    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
-        let contract = self.clients.alice.clone();
-        let safe_limit = self.clients.safe_script_gas_limit;
-        let futures = all_rolls()
-            .into_iter()
-            .map(move |roll| {
-                let contract = contract.clone();
-                async move {
-                    let bets = contract
-                        .methods()
-                        .get_my_bets(roll.clone())
-                        .with_tx_policies(
-                            TxPolicies::default().with_script_gas_limit(safe_limit),
-                        )
-                        .simulate(Execution::realistic())
-                        .await?
-                        .value;
-                    Ok::<_, color_eyre::eyre::Report>((roll, bets))
-                }
-            })
-            .collect::<Vec<_>>();
-        let results = try_join_all(futures).await?;
-        Ok(results)
     }
 
     async fn fetch_bets_for_game(
@@ -1116,184 +973,194 @@ impl AppController {
         Ok(controller)
     }
 
-    pub async fn snapshot(&mut self, force_refresh: bool) -> Result<AppSnapshot> {
-        tracing::info!("Taking snapshot (force_refresh={})", force_refresh);
-        if !force_refresh {
-            if let (Some(last), Some(cache)) =
-                (self.last_snapshot_time, self.last_snapshot.clone())
-            {
-                if last.elapsed() < self.refresh_ttl() {
-                    return Ok(cache);
-                }
-            }
+    async fn refresh_overview_if_stale(&mut self) -> Result<()> {
+        let needs_refresh = self
+            .cached_overview_time
+            .map(|last| last.elapsed() >= self.refresh_ttl())
+            .unwrap_or(true);
+        if needs_refresh {
+            self.refresh_overview_now().await?;
         }
+        Ok(())
+    }
 
-        if let Some(indexer) = self.indexer.clone() {
-            match self.snapshot_with_indexer(indexer).await {
-                Ok(snapshot) => {
-                    self.last_snapshot = Some(snapshot.clone());
-                    self.last_snapshot_time = Some(Instant::now());
-                    return Ok(snapshot);
+    async fn refresh_overview_now(&mut self) -> Result<()> {
+        let previous_game_id = self
+            .cached_overview
+            .as_ref()
+            .map(|cached| cached.game_id)
+            .or(self.last_seen_game_id_alice);
+        let indexer = self
+            .indexer
+            .clone()
+            .ok_or(anyhow!("No indexer configured"))?;
+        let overview = indexer
+            .latest_overview()
+            .await?
+            .ok_or_else(|| eyre!("indexer returned no overview snapshot"))?;
+        self.backfill_recent_games_indexer(overview.game_id, &indexer)
+            .await?;
+        if previous_game_id
+            .map(|prev| overview.game_id > prev)
+            .unwrap_or(false)
+        {
+            self.refresh_account_now()
+                .await
+                .wrap_err("failed to refresh account after game advanced")?;
+        }
+        self.cached_overview_time = Some(Instant::now());
+        self.cached_overview = Some(overview);
+        Ok(())
+    }
+
+    async fn refresh_active_modifiers_if_stale(&mut self) -> Result<()> {
+        let needs_refresh = self
+            .cached_active_modifiers_time
+            .map(|last| last.elapsed() >= self.refresh_ttl())
+            .unwrap_or(true);
+        if needs_refresh {
+            self.refresh_active_modifiers_now().await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_active_modifiers_now(&mut self) -> Result<()> {
+        let safe_limit = self.clients.safe_script_gas_limit;
+        let me_for_active = self.clients.alice.clone();
+        let active_modifiers = me_for_active
+            .methods()
+            .active_modifiers()
+            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
+            .simulate(Execution::realistic())
+            .await
+            .map(|r| r.value)
+            .map_err(color_eyre::eyre::Report::from)
+            .wrap_err("active_modifiers call failed")?;
+        self.cached_active_modifiers = active_modifiers;
+        self.cached_active_modifiers_time = Some(Instant::now());
+        Ok(())
+    }
+
+    async fn refresh_account_if_stale(&mut self) -> Result<()> {
+        let needs_refresh = self
+            .cached_account_time
+            .map(|last| last.elapsed() >= self.refresh_ttl())
+            .unwrap_or(true);
+        if needs_refresh {
+            self.refresh_account_now().await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_account_now(&mut self) -> Result<()> {
+        let indexer = self
+            .indexer
+            .clone()
+            .ok_or(anyhow!("No indexer configured"))?;
+        let account = indexer
+            .latest_account_snapshot(&self.alice_identity)
+            .await?
+            .unwrap_or_else(AccountData::empty);
+        self.cached_account_time = Some(Instant::now());
+        self.cached_account = Some(account);
+
+        let chip_balance_raw = self
+            .clients
+            .alice
+            .account()
+            .get_asset_balance(&self.clients.chip_asset_id)
+            .await
+            .wrap_err("fetching wallet chip balance failed")?;
+        let chip_balance = u64::try_from(chip_balance_raw)
+            .map_err(|_| eyre!("chip balance exceeds u64 range"))?;
+        self.cached_chip_balance = Some(chip_balance);
+        Ok(())
+    }
+
+    async fn ensure_known_straps(&mut self) -> Result<()> {
+        if self.known_straps.is_empty() {
+            self.refresh_known_straps().await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_known_straps(&mut self) -> Result<()> {
+        let indexer = self
+            .indexer
+            .clone()
+            .ok_or(anyhow!("No indexer configured"))?;
+        self.known_straps = indexer.all_known_straps().await?;
+        Ok(())
+    }
+
+    async fn refresh_strap_inventory(&mut self) -> Result<()> {
+        self.refresh_known_straps().await?;
+        let balances = self
+            .clients
+            .alice
+            .account()
+            .get_balances()
+            .await
+            .wrap_err("fetching wallet balances failed")?;
+
+        let mut asset_balances: HashMap<AssetId, u128> = HashMap::new();
+        for (raw_id, amount) in balances {
+            match AssetId::from_str(&raw_id) {
+                Ok(asset_id) => {
+                    asset_balances.insert(asset_id, amount);
                 }
                 Err(err) => {
-                    self.push_errors(vec![format!("Indexer snapshot failed: {err:?}")]);
+                    warn!(%raw_id, ?err, "failed to parse asset id from wallet balances");
                 }
             }
         }
 
-        let me = self.clients.alice.clone();
-        let provider = me.account().provider().clone();
-        let safe_limit = self.clients.safe_script_gas_limit;
+        if let Some(amount) = asset_balances.get(&self.clients.chip_asset_id).copied() {
+            let chip_balance = u64::try_from(amount)
+                .map_err(|_| eyre!("chip balance exceeds u64 range"))?;
+            self.cached_chip_balance = Some(chip_balance);
+        }
 
-        let provider_for_height = provider.clone();
-        let me_for_game = me.clone();
-        let me_for_history = me.clone();
-        let me_for_rewards = me.clone();
-        let me_for_modifiers = me.clone();
-        let me_for_height = me.clone();
-        let me_for_active = me.clone();
+        let mut strap_info: HashMap<AssetId, strapped::Strap> = HashMap::new();
+        for (asset_id, strap) in &self.known_straps {
+            strap_info.insert(*asset_id, strap.clone());
+        }
 
-        let (
-            current_block_height,
-            next_roll_height,
-            current_game_id,
-            roll_history,
-            strap_rewards,
-            modifier_triggers,
-            active_modifiers,
-        ) = tokio::try_join!(
-            async move {
-                provider_for_height
-                    .latest_block_height()
-                    .await
-                    .map_err(color_eyre::eyre::Report::from)
-            },
-            async move {
-                let res = me_for_height
-                    .methods()
-                    .next_roll_height()
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await
-                    .map(|r| r.value)
-                    .map_err(color_eyre::eyre::Report::from)
-                    .wrap_err("next_roll_height call failed");
-                if let Err(ref e) = res {
-                    error!(error = %e, "next_roll_height simulate failed");
-                }
-                res.wrap_err("next_roll_height call failed")
-            },
-            async move {
-                let res = me_for_game
-                    .methods()
-                    .current_game_id()
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await
-                    .map(|r| r.value)
-                    .map_err(color_eyre::eyre::Report::from)
-                    .wrap_err(format!(
-                        "current_game_id call failed with gas limit: {safe_limit:?}"
-                    ));
-                if let Err(ref e) = res {
-                    error!(error = %e, "current_game_id simulate failed");
-                }
-                res
-            },
-            async move {
-                let res = me_for_history
-                    .methods()
-                    .roll_history()
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await
-                    .map(|r| r.value)
-                    .map_err(color_eyre::eyre::Report::from);
-                if let Err(ref e) = res {
-                    error!(error = %e, "roll_history simulate failed");
-                }
-                res.wrap_err(format!(
-                    "roll_history call failed with gas limit: {safe_limit:?}"
-                ))
-            },
-            async move {
-                let res = me_for_rewards
-                    .methods()
-                    .strap_rewards()
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await
-                    .map(|r| r.value)
-                    .map_err(color_eyre::eyre::Report::from);
-                if let Err(ref e) = res {
-                    error!(error = %e, "strap_rewards simulate failed");
-                }
-                res.wrap_err(format!(
-                    "strap_rewards call failed with gas limit: {safe_limit:?}"
-                ))
-            },
-            async move {
-                let res = me_for_modifiers
-                    .methods()
-                    .modifier_triggers()
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await
-                    .map(|r| r.value)
-                    .map_err(color_eyre::eyre::Report::from)
-                    .wrap_err("modifier_triggers call failed");
-                if let Err(ref e) = res {
-                    error!(error = %e, "modifier_triggers simulate failed");
-                }
-                res.wrap_err("modifier_triggers call failed")
-            },
-            async move {
-                let res = me_for_active
-                    .methods()
-                    .active_modifiers()
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await
-                    .map(|r| r.value)
-                    .map_err(color_eyre::eyre::Report::from)
-                    .wrap_err("active_modifiers call failed");
-                if let Err(ref e) = res {
-                    error!(error = %e, "active_modifiers simulate failed");
-                }
-                res.wrap_err("active_modifiers call failed")
-            }
-        )?;
+        let ordered_asset_ids: Vec<AssetId> = self
+            .known_straps
+            .iter()
+            .map(|(asset_id, _)| *asset_id)
+            .collect();
+        let owned_straps =
+            Self::build_owned_straps(&ordered_asset_ids, &strap_info, &asset_balances);
+        self.cached_owned_straps = owned_straps;
+        Ok(())
+    }
 
-        let my_bets = self
-            .fetch_bets()
-            .await
-            .wrap_err("fetching bets for active wallet failed")?;
+    fn update_cached_account_roll_bets(
+        &mut self,
+        roll: &strapped::Roll,
+        bets: Vec<(strapped::Bet, u64, u32)>,
+    ) {
+        let mut account = self
+            .cached_account
+            .clone()
+            .unwrap_or_else(AccountData::empty);
+        if let Some(entry) = account
+            .per_roll_bets
+            .iter_mut()
+            .find(|(existing_roll, _)| existing_roll == roll)
+        {
+            *entry = (roll.clone(), bets);
+        } else {
+            account.per_roll_bets.push((roll.clone(), bets));
+        }
+        self.cached_account = Some(account);
+        self.cached_account_time = Some(Instant::now());
+    }
 
-        let data = SnapshotSourceData {
-            current_block_height,
-            next_roll_height,
-            current_game_id,
-            roll_history,
-            strap_rewards,
-            modifier_triggers,
-            active_modifiers,
-            my_bets,
-            known_straps: Vec::new(),
-        };
-
-        let snapshot = self.finalize_snapshot(data).await?;
+    fn build_snapshot(&mut self) -> Result<AppSnapshot> {
+        let snapshot = self.finalize_snapshot()?;
         self.last_snapshot = Some(snapshot.clone());
         self.last_snapshot_time = Some(Instant::now());
         Ok(snapshot)
@@ -1314,22 +1181,31 @@ impl AppController {
 
     pub async fn place_chip_bet(&mut self, amount: u64) -> Result<()> {
         let me = self.clients.alice.clone();
+        let target_roll = self.selected_roll.clone();
         let call = CallParameters::new(
             amount,
             self.clients.chip_asset_id,
             self.clients.safe_script_gas_limit,
         );
         me.methods()
-            .place_bet(self.selected_roll.clone(), strapped::Bet::Chip, amount)
+            .place_bet(target_roll.clone(), strapped::Bet::Chip, amount)
             .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
             .call_params(call)?
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
-        self.set_status(format!(
-            "Placed {} chip(s) on {:?}",
-            amount, self.selected_roll
-        ));
+        let latest_bets = me
+            .methods()
+            .get_my_bets(target_roll.clone())
+            .with_tx_policies(
+                TxPolicies::default()
+                    .with_script_gas_limit(self.clients.safe_script_gas_limit),
+            )
+            .simulate(Execution::realistic())
+            .await?
+            .value;
+        self.update_cached_account_roll_bets(&target_roll, latest_bets);
+        self.set_status(format!("Placed {} chip(s) on {:?}", amount, target_roll));
         self.invalidate_cache();
         Ok(())
     }
@@ -1340,13 +1216,14 @@ impl AppController {
         amount: u64,
     ) -> Result<()> {
         let me = self.clients.alice.clone();
+        let target_roll = self.selected_roll.clone();
         let sub = strapped_contract::strap_to_sub_id(&strap);
         let asset_id = self.clients.contract_id.asset_id(&sub);
         let call =
             CallParameters::new(amount, asset_id, self.clients.safe_script_gas_limit);
         me.methods()
             .place_bet(
-                self.selected_roll.clone(),
+                target_roll.clone(),
                 strapped::Bet::Strap(strap.clone()),
                 amount,
             )
@@ -1355,11 +1232,22 @@ impl AppController {
             .with_tx_policies(self.script_policies())
             .call()
             .await?;
+        let latest_bets = me
+            .methods()
+            .get_my_bets(target_roll.clone())
+            .with_tx_policies(
+                TxPolicies::default()
+                    .with_script_gas_limit(self.clients.safe_script_gas_limit),
+            )
+            .simulate(Execution::realistic())
+            .await?
+            .value;
+        self.update_cached_account_roll_bets(&target_roll, latest_bets);
         self.set_status(format!(
             "Placed {} of {} on {:?}",
             amount,
             super_compact_strap(&strap),
-            self.selected_roll
+            target_roll
         ));
         self.invalidate_cache();
         Ok(())
@@ -1446,7 +1334,7 @@ impl AppController {
             return Ok(());
         }
         // Roll using owner instance but allow any wallet to trigger.
-        match &self.clients.vrf {
+        let response = match &self.clients.vrf {
             Some(VrfClient::Fake(vrf)) => {
                 tracing::info!(
                     "Rolling (fake VRF) with script gas limit {}",
@@ -1459,7 +1347,7 @@ impl AppController {
                     .with_contracts(&[vrf])
                     .with_tx_policies(self.script_policies())
                     .call()
-                    .await?;
+                    .await?
             }
             Some(VrfClient::Pseudo(vrf)) => {
                 tracing::info!(
@@ -1473,13 +1361,44 @@ impl AppController {
                     .with_contracts(&[vrf])
                     .with_tx_policies(self.script_policies())
                     .call()
-                    .await?;
+                    .await?
             }
             None => {
                 self.set_status("VRF contract unavailable; cannot roll");
                 return Ok(());
             }
+        };
+
+        let events = response.decode_logs_with_type::<RollEvent>()?;
+        if let Some(event) = events.first() {
+            let rolled_value = event.rolled_value.clone();
+            self.set_status(format!("Rolled a {:?}*", &rolled_value));
+            if let Some(overview) = self.cached_overview.as_mut() {
+                if overview.game_id == event.game_id {
+                    overview.rolls.push(rolled_value.clone());
+                    self.shared_last_roll_history = overview.rolls.clone();
+                }
+            }
+            if self
+                .last_seen_game_id_alice
+                .map(|prev| prev == event.game_id)
+                .unwrap_or(true)
+            {
+                if self.shared_last_roll_history.is_empty()
+                    || self
+                        .shared_last_roll_history
+                        .last()
+                        .map(|last| last != &rolled_value)
+                        .unwrap_or(true)
+                {
+                    self.shared_last_roll_history.push(rolled_value);
+                }
+            }
+        } else {
+            tracing::warn!("roll_dice emitted no RollEvent logs");
+            self.set_status("no roll event found");
         }
+
         self.invalidate_cache();
         Ok(())
     }
@@ -2015,18 +1934,6 @@ struct SharedGame {
     modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
 }
 
-struct SnapshotSourceData {
-    current_block_height: u32,
-    next_roll_height: Option<u32>,
-    current_game_id: u32,
-    roll_history: Vec<strapped::Roll>,
-    strap_rewards: Vec<(strapped::Roll, strapped::Strap, u64)>,
-    modifier_triggers: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
-    active_modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
-    my_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
-    known_straps: Vec<(AssetId, strapped::Strap)>,
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
@@ -2275,9 +2182,12 @@ async fn run_loop(
 ) -> Result<()> {
     tracing::info!("Running app loop");
     let mut ticker = time::interval(controller.poll_interval());
+    controller.refresh_overview_now().await?;
+    controller.refresh_active_modifiers_now().await?;
+    controller.refresh_account_now().await?;
+    controller.ensure_known_straps().await?;
     let mut last_snapshot = controller
-        .snapshot(true)
-        .await
+        .build_snapshot()
         .wrap_err("initial snapshot failed")?;
     ui::draw(ui_state, &last_snapshot).wrap_err("initial draw failed")?;
     let mut pending_post_action: Option<PostAction> = None;
@@ -2285,9 +2195,10 @@ async fn run_loop(
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { break; }
             _ = ticker.tick() => {
+                controller.refresh_overview_if_stale().await?;
+                controller.refresh_active_modifiers_if_stale().await?;
                 last_snapshot = controller
-                    .snapshot(false)
-                    .await
+                    .build_snapshot()
                     .wrap_err("periodic snapshot failed")?;
                 process_post_action(
                     controller,
@@ -2297,7 +2208,10 @@ async fn run_loop(
                 ui::draw(ui_state, &last_snapshot).wrap_err("periodic draw failed")?;
             }
             ev = ui::next_event(ui_state) => {
-                let mut force_refresh = false;
+                let mut refresh_overview_now = false;
+                let mut refresh_account_now = false;
+                let mut refresh_modifiers_now = false;
+                let mut refresh_strap_inventory = false;
                 match ev.wrap_err("UI event polling failed")? {
                     ui::UserEvent::Quit => break,
                     ui::UserEvent::NextRoll => {
@@ -2340,7 +2254,8 @@ async fn run_loop(
                             .wrap_err_with(|| {
                                 format!("placing chip bet of {} failed", amount)
                             })?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
+                        refresh_account_now = true;
                     }
                     ui::UserEvent::Purchase => {
                         let status_msg = format!(
@@ -2358,7 +2273,9 @@ async fn run_loop(
                             .purchase_triggered_modifier(1)
                             .await
                             .wrap_err("purchasing triggered modifier failed")?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
+                        refresh_account_now = true;
+                        refresh_modifiers_now = true;
                     }
                     ui::UserEvent::ConfirmStrapBet { strap, amount } => {
                         let strap_label = super_compact_strap(&strap);
@@ -2382,7 +2299,8 @@ async fn run_loop(
                                     amount, strap_label
                                 )
                             })?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
+                        refresh_account_now = true;
                     }
                     ui::UserEvent::Roll => {
                         let prev_len = last_snapshot.roll_history.len();
@@ -2396,7 +2314,8 @@ async fn run_loop(
                             "draw while submitting roll failed",
                         )?;
                         controller.roll().await.wrap_err("roll failed")?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
+                        refresh_modifiers_now = true;
                         pending_post_action = Some(PostAction::Roll {
                             prev_len,
                             prev_last,
@@ -2418,7 +2337,7 @@ async fn run_loop(
                             .set_vrf_number(target)
                             .await
                             .wrap_err("setting VRF number (inc) failed")?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
                     }
                     ui::UserEvent::VRFDec => {
                         controller.dec_vrf();
@@ -2435,7 +2354,7 @@ async fn run_loop(
                             .set_vrf_number(target)
                             .await
                             .wrap_err("setting VRF number (dec) failed")?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
                     }
                     ui::UserEvent::SetVrf(n) => {
                         let status_msg = format!("Setting VRF to {}...", n);
@@ -2450,7 +2369,7 @@ async fn run_loop(
                             .set_vrf_number(n)
                             .await
                             .wrap_err_with(|| format!("setting VRF number to {} failed", n))?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
                     }
                     ui::UserEvent::ConfirmClaim { game_id, enabled } => {
                         let selection_count = enabled.len();
@@ -2477,10 +2396,27 @@ async fn run_loop(
                             .wrap_err_with(|| {
                                 format!("claiming game {} with modifiers failed", game_id)
                             })?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
+                        refresh_account_now = true;
+                        refresh_strap_inventory = true;
                     }
-                    ui::UserEvent::OpenShop => { ui::draw(ui_state, &last_snapshot).wrap_err("draw after OpenShop failed")?; continue; }
-                    ui::UserEvent::OpenStrapInventory => { ui::draw(ui_state, &last_snapshot).wrap_err("draw after OpenStrapInventory failed")?; continue; }
+                    ui::UserEvent::OpenShop => {
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw after OpenShop failed")?;
+                        continue;
+                    }
+                    ui::UserEvent::OpenStrapInventory => {
+                        controller
+                            .refresh_strap_inventory()
+                            .await
+                            .wrap_err("refreshing strap inventory failed")?;
+                        last_snapshot = controller
+                            .build_snapshot()
+                            .wrap_err("snapshot refresh after opening strap inventory failed")?;
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw after OpenStrapInventory failed")?;
+                        continue;
+                    }
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
                         let status_msg = format!("Purchasing {:?} for {:?}...", modifier, roll);
                         show_processing_status(
@@ -2494,7 +2430,9 @@ async fn run_loop(
                             .purchase_modifier_for(roll, modifier, 1)
                             .await
                             .wrap_err("shop purchase failed")?;
-                        force_refresh = true;
+                        refresh_overview_now = true;
+                        refresh_account_now = true;
+                        refresh_modifiers_now = true;
                     }
                     ui::UserEvent::OpenBetModal | ui::UserEvent::OpenClaimModal | ui::UserEvent::OpenVrfModal | ui::UserEvent::Redraw => {
                         // UI-only update; redraw without hitting the chain
@@ -2504,18 +2442,43 @@ async fn run_loop(
                     }
                     _ => {}
                 }
-                if force_refresh {
-                    controller.invalidate_cache();
-                    last_snapshot = controller
-                        .snapshot(true)
+                if refresh_overview_now {
+                    controller
+                        .refresh_overview_now()
                         .await
-                        .wrap_err("forced snapshot refresh failed")?;
+                        .wrap_err("forced overview refresh failed")?;
                 } else {
-                    last_snapshot = controller
-                        .snapshot(false)
+                    controller
+                        .refresh_overview_if_stale()
                         .await
-                        .wrap_err("snapshot refresh failed")?;
+                        .wrap_err("overview refresh failed")?;
                 }
+                if refresh_account_now {
+                    controller
+                        .refresh_account_now()
+                        .await
+                        .wrap_err("account refresh failed")?;
+                }
+                if refresh_modifiers_now {
+                    controller
+                        .refresh_active_modifiers_now()
+                        .await
+                        .wrap_err("active modifiers refresh failed")?;
+                } else {
+                    controller
+                        .refresh_active_modifiers_if_stale()
+                        .await
+                        .wrap_err("active modifiers refresh failed")?;
+                }
+                if refresh_strap_inventory {
+                    controller
+                        .refresh_strap_inventory()
+                        .await
+                        .wrap_err("strap inventory refresh failed")?;
+                }
+                last_snapshot = controller
+                    .build_snapshot()
+                    .wrap_err("snapshot refresh failed")?;
                 process_post_action(
                     controller,
                     &mut last_snapshot,
