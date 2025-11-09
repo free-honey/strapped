@@ -59,7 +59,10 @@ use strapped_contract::{
     strapped_types as strapped,
     vrf_types as fake_vrf,
 };
-use tokio::time;
+use tokio::{
+    sync::mpsc,
+    time,
+};
 use tracing::{
     error,
     warn,
@@ -118,6 +121,15 @@ struct PendingRoll {
     game_id: u32,
     index: usize,
     roll: strapped::Roll,
+}
+
+#[derive(Clone, Debug)]
+struct PendingBet {
+    game_id: u32,
+    roll: strapped::Roll,
+    bet: strapped::Bet,
+    amount: u64,
+    roll_index: Option<u32>,
 }
 
 pub struct Clients {
@@ -182,6 +194,7 @@ pub struct AppController {
     last_snapshot: Option<AppSnapshot>,
     last_snapshot_time: Option<Instant>,
     pending_rolls: Vec<PendingRoll>,
+    pending_bets: Vec<PendingBet>,
 }
 
 impl AppController {
@@ -220,6 +233,7 @@ impl AppController {
             last_snapshot: None,
             last_snapshot_time: None,
             pending_rolls: Vec::new(),
+            pending_bets: Vec::new(),
         }
     }
 
@@ -252,7 +266,8 @@ impl AppController {
         let strap_rewards = overview.rewards.clone();
         let modifier_triggers = overview.modifier_shop.clone();
         let active_modifiers = self.cached_active_modifiers.clone();
-        let my_bets = account.per_roll_bets.clone();
+        let mut my_bets = account.per_roll_bets.clone();
+        self.overlay_pending_bets(current_game_id, &mut my_bets);
         let all_rolls = all_rolls();
         self.active_modifiers_by_game
             .insert(current_game_id, active_modifiers.clone());
@@ -534,6 +549,148 @@ impl AppController {
         self.pending_rolls = still_pending;
     }
 
+    fn current_game_id(&self) -> Option<u32> {
+        self.cached_overview
+            .as_ref()
+            .map(|overview| overview.game_id)
+            .or(self.last_seen_game_id_alice)
+    }
+
+    fn drop_pending_bets_for_past_games(&mut self, current_game_id: u32) {
+        self.pending_bets
+            .retain(|pending| pending.game_id >= current_game_id);
+    }
+
+    fn reconcile_pending_bets_with_account(&mut self) {
+        let Some(current_game_id) = self.current_game_id() else {
+            self.pending_bets.clear();
+            return;
+        };
+        let Some(account) = self.cached_account.clone() else {
+            return;
+        };
+        let mut account_remaining = account.per_roll_bets.clone();
+
+        let mut remaining = Vec::new();
+        for pending in self.pending_bets.drain(..) {
+            if pending.game_id < current_game_id {
+                continue;
+            }
+            if pending.game_id > current_game_id {
+                remaining.push(pending);
+                continue;
+            }
+            let target = (
+                pending.bet.clone(),
+                pending.amount,
+                pending.roll_index.unwrap_or(0),
+            );
+            let matched = account_remaining
+                .iter_mut()
+                .find(|(roll, _)| roll == &pending.roll)
+                .and_then(|(_, entries)| {
+                    entries
+                        .iter()
+                        .position(|entry| Self::bet_entry_eq(entry, &target))
+                        .map(|pos| entries.remove(pos))
+                })
+                .is_some();
+            if !matched {
+                remaining.push(pending);
+            }
+        }
+        self.pending_bets = remaining;
+    }
+
+    fn overlay_pending_bets(
+        &self,
+        current_game_id: u32,
+        per_roll_bets: &mut Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
+    ) {
+        for pending in self
+            .pending_bets
+            .iter()
+            .filter(|p| p.game_id == current_game_id)
+        {
+            let bet_entry = (
+                pending.bet.clone(),
+                pending.amount,
+                pending.roll_index.unwrap_or(0),
+            );
+            if let Some((_, bets)) = per_roll_bets
+                .iter_mut()
+                .find(|(roll, _)| roll == &pending.roll)
+            {
+                bets.push(bet_entry);
+            } else {
+                per_roll_bets.push((pending.roll.clone(), vec![bet_entry]));
+            }
+        }
+    }
+
+    fn record_new_pending_bets(
+        &mut self,
+        roll: &strapped::Roll,
+        latest_bets: Vec<(strapped::Bet, u64, u32)>,
+    ) {
+        let Some(current_game_id) = self.current_game_id() else {
+            return;
+        };
+        let mut unmatched = latest_bets;
+        if let Some(account) = &self.cached_account {
+            if let Some((_, known)) =
+                account.per_roll_bets.iter().find(|(r, _)| r == roll)
+            {
+                Self::remove_known_bets(&mut unmatched, known);
+            }
+        }
+
+        let pending_known: Vec<(strapped::Bet, u64, u32)> = self
+            .pending_bets
+            .iter()
+            .filter(|pending| pending.game_id == current_game_id && pending.roll == *roll)
+            .map(|pending| {
+                (
+                    pending.bet.clone(),
+                    pending.amount,
+                    pending.roll_index.unwrap_or(0),
+                )
+            })
+            .collect();
+        Self::remove_known_bets(&mut unmatched, &pending_known);
+
+        for (bet, amount, roll_index) in unmatched {
+            self.pending_bets.push(PendingBet {
+                game_id: current_game_id,
+                roll: roll.clone(),
+                bet,
+                amount,
+                roll_index: Some(roll_index),
+            });
+        }
+    }
+
+    fn remove_known_bets(
+        pool: &mut Vec<(strapped::Bet, u64, u32)>,
+        known: &[(strapped::Bet, u64, u32)],
+    ) {
+        for entry in known {
+            if let Some(pos) = pool
+                .iter()
+                .position(|candidate| Self::bet_entry_eq(candidate, entry))
+            {
+                pool.remove(pos);
+            }
+        }
+    }
+
+    fn bet_entry_eq(
+        lhs: &(strapped::Bet, u64, u32),
+        rhs: &(strapped::Bet, u64, u32),
+    ) -> bool {
+        lhs.1 == rhs.1 && lhs.2 == rhs.2 && lhs.0 == rhs.0
+    }
+
     fn set_status(&mut self, message: impl Into<String>) {
         self.status = message.into();
         self.errors.clear();
@@ -755,18 +912,9 @@ impl AppController {
         };
 
         tracing::info!("c");
-        let owner_descriptor = wallets::find_wallet(&wallet_dir, &owner_name)
+        let user_descriptor = wallets::find_wallet(&wallet_dir, &owner_name)
             .wrap_err("Unable to locate owner wallet")?;
-        let owner_wallet = wallets::unlock_wallet(&owner_descriptor, &provider)?;
-
-        tracing::info!("d");
-        let alice_wallet = if player_name == owner_name {
-            owner_wallet.clone()
-        } else {
-            let player_descriptor = wallets::find_wallet(&wallet_dir, &player_name)
-                .wrap_err("Unable to locate player wallet")?;
-            wallets::unlock_wallet(&player_descriptor, &provider)?
-        };
+        let user_wallet = wallets::unlock_wallet(&user_descriptor, &provider)?;
 
         tracing::info!("e");
         let store = deployment::DeploymentStore::new(env).map_err(|e| eyre!(e))?;
@@ -826,10 +974,8 @@ impl AppController {
             })?;
 
         tracing::info!("j");
-        let owner_instance =
-            strapped::MyContract::new(contract_id.clone(), owner_wallet.clone());
-        let alice_instance =
-            strapped::MyContract::new(contract_id.clone(), alice_wallet.clone());
+        let user_instance =
+            strapped::MyContract::new(contract_id.clone(), user_wallet.clone());
 
         let chip_asset_id = if let Some(id_hex) = selected.chip_asset_id.as_ref() {
             AssetId::from_str(id_hex).map_err(|e| {
@@ -848,12 +994,12 @@ impl AppController {
             (
                 Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
                     vrf_bech32.clone(),
-                    owner_wallet.clone(),
+                    user_wallet.clone(),
                 ))),
                 ContractId::from(vrf_bech32),
             )
         } else {
-            let vrf_bits = owner_instance
+            let vrf_bits = user_instance
                 .methods()
                 .current_vrf_contract_id()
                 .with_tx_policies(
@@ -868,13 +1014,13 @@ impl AppController {
             } else {
                 Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
                     id,
-                    owner_wallet.clone(),
+                    user_wallet.clone(),
                 )))
             };
             (vrf_client, id)
         };
         let clients = Clients {
-            alice: alice_instance,
+            alice: user_instance,
             vrf: vrf_client,
             vrf_mode,
             contract_id,
@@ -882,8 +1028,7 @@ impl AppController {
             safe_script_gas_limit,
         };
 
-        let mut controller = Self::from_clients(clients, initial_vrf, indexer);
-        let _ = controller.backfill_recent_games().await?;
+        let controller = Self::from_clients(clients, initial_vrf, indexer);
         Ok(controller)
     }
 
@@ -912,6 +1057,7 @@ impl AppController {
             .latest_overview()
             .await?
             .ok_or_else(|| eyre!("indexer returned no overview snapshot"))?;
+        let current_game_id = overview.game_id;
         self.backfill_recent_games_indexer(overview.game_id, &indexer)
             .await?;
         if previous_game_id
@@ -925,6 +1071,7 @@ impl AppController {
         self.apply_pending_rolls(&mut overview);
         self.cached_overview_time = Some(Instant::now());
         self.cached_overview = Some(overview);
+        self.drop_pending_bets_for_past_games(current_game_id);
         Ok(())
     }
 
@@ -967,6 +1114,7 @@ impl AppController {
             .unwrap_or_else(AccountData::empty);
         self.cached_account_time = Some(Instant::now());
         self.cached_account = Some(account);
+        self.reconcile_pending_bets_with_account();
 
         let chip_balance_raw = self
             .clients
@@ -1041,28 +1189,6 @@ impl AppController {
         Ok(())
     }
 
-    fn update_cached_account_roll_bets(
-        &mut self,
-        roll: &strapped::Roll,
-        bets: Vec<(strapped::Bet, u64, u32)>,
-    ) {
-        let mut account = self
-            .cached_account
-            .clone()
-            .unwrap_or_else(AccountData::empty);
-        if let Some(entry) = account
-            .per_roll_bets
-            .iter_mut()
-            .find(|(existing_roll, _)| existing_roll == roll)
-        {
-            *entry = (roll.clone(), bets);
-        } else {
-            account.per_roll_bets.push((roll.clone(), bets));
-        }
-        self.cached_account = Some(account);
-        self.cached_account_time = Some(Instant::now());
-    }
-
     fn build_snapshot(&mut self) -> Result<AppSnapshot> {
         let snapshot = self.finalize_snapshot()?;
         self.last_snapshot = Some(snapshot.clone());
@@ -1108,7 +1234,7 @@ impl AppController {
             .simulate(Execution::realistic())
             .await?
             .value;
-        self.update_cached_account_roll_bets(&target_roll, latest_bets);
+        self.record_new_pending_bets(&target_roll, latest_bets);
         self.set_status(format!("Placed {} chip(s) on {:?}", amount, target_roll));
         self.invalidate_cache();
         Ok(())
@@ -1146,7 +1272,7 @@ impl AppController {
             .simulate(Execution::realistic())
             .await?
             .value;
-        self.update_cached_account_roll_bets(&target_roll, latest_bets);
+        self.record_new_pending_bets(&target_roll, latest_bets);
         self.set_status(format!(
             "Placed {} of {} on {:?}",
             amount,
@@ -1794,15 +1920,22 @@ fn choose_binary<'a>(paths: &'a [&str]) -> Result<&'a str> {
         .ok_or_else(|| eyre!("Contract binary not found. Tried {:?}", paths))
 }
 
+pub fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .try_init();
+}
+
 pub async fn run_app(config: AppConfig) -> Result<()> {
-    let mut controller = AppController::new(config).await?;
+    let controller = AppController::new(config).await?;
     let mut ui_state = ui::UiState::default();
+    let mut input_events = ui::input_event_stream();
 
     tracing::info!("Starting UI");
     // UI bootstrap
     ui::terminal_enter(&mut ui_state)?;
     tracing::info!("UI ready");
-    let res = run_loop(&mut controller, &mut ui_state).await;
+    let res = run_loop(controller, &mut ui_state, &mut input_events).await;
     ui::terminal_exit()?;
     res
 }
@@ -1880,17 +2013,6 @@ fn process_post_action(
     controller.invalidate_cache();
 }
 
-fn show_processing_status(
-    controller: &mut AppController,
-    snapshot: &mut AppSnapshot,
-    ui_state: &mut ui::UiState,
-    message: impl Into<String>,
-    context: &'static str,
-) -> Result<()> {
-    sync_status(controller, snapshot, message);
-    ui::draw(ui_state, snapshot).wrap_err(context)
-}
-
 enum PostAction {
     Roll {
         prev_len: usize,
@@ -1899,318 +2021,528 @@ enum PostAction {
     },
 }
 
-async fn run_loop(
+enum ControllerCommand {
+    SelectNextRoll,
+    SelectPrevRoll,
+    PlaceChipBet(u64),
+    PurchaseTriggeredModifier,
+    PlaceStrapBet {
+        strap: strapped::Strap,
+        amount: u64,
+    },
+    Roll,
+    IncVrf,
+    DecVrf,
+    SetVrf(u64),
+    ConfirmClaim {
+        game_id: u32,
+        enabled: Vec<(strapped::Roll, strapped::Modifier)>,
+    },
+    RefreshStrapInventory,
+    PurchaseShopModifier {
+        roll: strapped::Roll,
+        modifier: strapped::Modifier,
+    },
+    Shutdown,
+}
+
+fn emit_status_snapshot(
     controller: &mut AppController,
-    ui_state: &mut ui::UiState,
+    last_snapshot: &mut AppSnapshot,
+    snapshot_tx: &mpsc::UnboundedSender<AppSnapshot>,
+    message: impl Into<String>,
 ) -> Result<()> {
-    tracing::info!("Running app loop");
-    let mut ticker = time::interval(controller.poll_interval());
+    let mut snapshot = last_snapshot.clone();
+    sync_status(controller, &mut snapshot, message);
+    snapshot_tx
+        .send(snapshot.clone())
+        .map_err(|_| eyre!("snapshot receiver dropped"))?;
+    *last_snapshot = snapshot;
+    Ok(())
+}
+
+fn push_snapshot(
+    controller: &mut AppController,
+    last_snapshot: &mut AppSnapshot,
+    snapshot_tx: &mpsc::UnboundedSender<AppSnapshot>,
+    pending_post_action: &mut Option<PostAction>,
+    context: &'static str,
+) -> Result<()> {
+    let mut snapshot = controller.build_snapshot().wrap_err(context)?;
+    process_post_action(controller, &mut snapshot, pending_post_action);
+    snapshot_tx
+        .send(snapshot.clone())
+        .map_err(|_| eyre!("snapshot receiver dropped"))?;
+    *last_snapshot = snapshot;
+    Ok(())
+}
+
+async fn controller_worker(
+    mut controller: AppController,
+    mut cmd_rx: mpsc::UnboundedReceiver<ControllerCommand>,
+    snapshot_tx: mpsc::UnboundedSender<AppSnapshot>,
+) -> Result<()> {
     controller.refresh_overview_now().await?;
     controller.refresh_active_modifiers_now().await?;
     controller.refresh_account_now().await?;
     controller.ensure_known_straps().await?;
+    let mut pending_post_action: Option<PostAction> = None;
     let mut last_snapshot = controller
         .build_snapshot()
         .wrap_err("initial snapshot failed")?;
-    ui::draw(ui_state, &last_snapshot).wrap_err("initial draw failed")?;
-    let mut pending_post_action: Option<PostAction> = None;
+    snapshot_tx
+        .send(last_snapshot.clone())
+        .map_err(|_| eyre!("snapshot receiver dropped"))?;
+    let mut ticker = time::interval(controller.poll_interval());
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => { break; }
             _ = ticker.tick() => {
                 controller.refresh_overview_if_stale().await?;
                 controller.refresh_active_modifiers_if_stale().await?;
-                last_snapshot = controller
-                    .build_snapshot()
-                    .wrap_err("periodic snapshot failed")?;
-                process_post_action(
-                    controller,
+                push_snapshot(
+                    &mut controller,
                     &mut last_snapshot,
+                    &snapshot_tx,
                     &mut pending_post_action,
-                );
-                ui::draw(ui_state, &last_snapshot).wrap_err("periodic draw failed")?;
+                    "periodic snapshot failed",
+                )?;
             }
-            ev = ui::next_event(ui_state) => {
-                let mut refresh_overview_now = false;
-                let mut refresh_account_now = false;
-                let mut refresh_modifiers_now = false;
-                let mut refresh_strap_inventory = false;
-                match ev.wrap_err("UI event polling failed")? {
-                    ui::UserEvent::Quit => break,
-                    ui::UserEvent::NextRoll => {
+            cmd = cmd_rx.recv() => {
+                let Some(cmd) = cmd else {
+                    break;
+                };
+                match cmd {
+                    ControllerCommand::Shutdown => break,
+                    ControllerCommand::SelectNextRoll => {
                         controller.select_next_roll();
-                        if let Some(cache) = controller.last_snapshot.as_mut() {
-                            cache.selected_roll = controller.selected_roll.clone();
-                        }
-                        last_snapshot.selected_roll = controller.selected_roll.clone();
-                        ui::draw(ui_state, &last_snapshot)
-                            .wrap_err("draw after NextRoll failed")?;
+                        push_snapshot(
+                            &mut controller,
+                            &mut last_snapshot,
+                            &snapshot_tx,
+                            &mut pending_post_action,
+                            "snapshot after NextRoll failed",
+                        )?;
                         continue;
                     }
-                    ui::UserEvent::PrevRoll => {
+                    ControllerCommand::SelectPrevRoll => {
                         controller.select_prev_roll();
-                        if let Some(cache) = controller.last_snapshot.as_mut() {
-                            cache.selected_roll = controller.selected_roll.clone();
-                        }
-                        last_snapshot.selected_roll = controller.selected_roll.clone();
-                        ui::draw(ui_state, &last_snapshot)
-                            .wrap_err("draw after PrevRoll failed")?;
+                        push_snapshot(
+                            &mut controller,
+                            &mut last_snapshot,
+                            &snapshot_tx,
+                            &mut pending_post_action,
+                            "snapshot after PrevRoll failed",
+                        )?;
                         continue;
                     }
-                    ui::UserEvent::PlaceBetAmount(amount) => {
-                        let roll = controller.selected_roll.clone();
-                        let chip_label = if amount == 1 { "chip" } else { "chips" };
-                        let status_msg = format!(
-                            "Placing bet of {} {} on {:?}...",
-                            amount, chip_label, roll
-                        );
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting chip bet failed",
-                        )?;
-                        controller
-                            .place_chip_bet(amount)
-                            .await
-                            .wrap_err_with(|| {
-                                format!("placing chip bet of {} failed", amount)
-                            })?;
-                        refresh_overview_now = true;
-                        refresh_account_now = true;
-                    }
-                    ui::UserEvent::Purchase => {
-                        let status_msg = format!(
-                            "Purchasing triggered modifier for {:?}...",
-                            controller.selected_roll
-                        );
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting triggered modifier purchase failed",
-                        )?;
-                        controller
-                            .purchase_triggered_modifier(1)
-                            .await
-                            .wrap_err("purchasing triggered modifier failed")?;
-                        refresh_overview_now = true;
-                        refresh_account_now = true;
-                        refresh_modifiers_now = true;
-                    }
-                    ui::UserEvent::ConfirmStrapBet { strap, amount } => {
-                        let strap_label = super_compact_strap(&strap);
-                        let status_msg = format!(
-                            "Placing {} of {} on {:?}...",
-                            amount, strap_label, controller.selected_roll
-                        );
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting strap bet failed",
-                        )?;
-                        controller
-                            .place_strap_bet(strap, amount)
-                            .await
-                            .wrap_err_with(|| {
-                                format!(
-                                    "placing strap bet of {} on {} failed",
-                                    amount, strap_label
-                                )
-                            })?;
-                        refresh_overview_now = true;
-                        refresh_account_now = true;
-                    }
-                    ui::UserEvent::Roll => {
-                        let prev_len = last_snapshot.roll_history.len();
-                        let prev_last = last_snapshot.roll_history.last().cloned();
-                        let prev_game_id = last_snapshot.current_game_id;
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            "Rolling...",
-                            "draw while submitting roll failed",
-                        )?;
-                        controller.roll().await.wrap_err("roll failed")?;
-                        refresh_overview_now = true;
-                        refresh_modifiers_now = true;
-                        pending_post_action = Some(PostAction::Roll {
-                            prev_len,
-                            prev_last,
-                            prev_game_id,
-                        });
-                    }
-                    ui::UserEvent::VRFInc => {
-                        controller.inc_vrf();
-                        let target = controller.vrf_number;
-                        let status_msg = format!("Setting VRF to {}...", target);
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting VRF increment failed",
-                        )?;
-                        controller
-                            .set_vrf_number(target)
-                            .await
-                            .wrap_err("setting VRF number (inc) failed")?;
-                        refresh_overview_now = true;
-                    }
-                    ui::UserEvent::VRFDec => {
-                        controller.dec_vrf();
-                        let target = controller.vrf_number;
-                        let status_msg = format!("Setting VRF to {}...", target);
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting VRF decrement failed",
-                        )?;
-                        controller
-                            .set_vrf_number(target)
-                            .await
-                            .wrap_err("setting VRF number (dec) failed")?;
-                        refresh_overview_now = true;
-                    }
-                    ui::UserEvent::SetVrf(n) => {
-                        let status_msg = format!("Setting VRF to {}...", n);
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting explicit VRF set failed",
-                        )?;
-                        controller
-                            .set_vrf_number(n)
-                            .await
-                            .wrap_err_with(|| format!("setting VRF number to {} failed", n))?;
-                        refresh_overview_now = true;
-                    }
-                    ui::UserEvent::ConfirmClaim { game_id, enabled } => {
-                        let selection_count = enabled.len();
-                        let status_msg = if selection_count == 0 {
-                            format!("Claiming rewards for game {}...", game_id)
-                        } else {
-                            format!(
-                                "Claiming rewards for game {} ({} modifier{})...",
-                                game_id,
-                                selection_count,
-                                if selection_count == 1 { "" } else { "s" }
-                            )
-                        };
-                        show_processing_status(
-                            controller,
-                            &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting claim failed",
-                        )?;
-                        controller
-                            .claim_game(game_id, enabled)
-                            .await
-                            .wrap_err_with(|| {
-                                format!("claiming game {} with modifiers failed", game_id)
-                            })?;
-                        refresh_overview_now = true;
-                        refresh_account_now = true;
-                        refresh_strap_inventory = true;
-                    }
-                    ui::UserEvent::OpenShop => {
-                        ui::draw(ui_state, &last_snapshot)
-                            .wrap_err("draw after OpenShop failed")?;
-                        continue;
-                    }
-                    ui::UserEvent::OpenStrapInventory => {
+                    ControllerCommand::RefreshStrapInventory => {
                         controller
                             .refresh_strap_inventory()
                             .await
                             .wrap_err("refreshing strap inventory failed")?;
-                        last_snapshot = controller
-                            .build_snapshot()
-                            .wrap_err("snapshot refresh after opening strap inventory failed")?;
-                        ui::draw(ui_state, &last_snapshot)
-                            .wrap_err("draw after OpenStrapInventory failed")?;
-                        continue;
-                    }
-                    ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
-                        let status_msg = format!("Purchasing {:?} for {:?}...", modifier, roll);
-                        show_processing_status(
-                            controller,
+                        push_snapshot(
+                            &mut controller,
                             &mut last_snapshot,
-                            ui_state,
-                            status_msg,
-                            "draw while submitting shop purchase failed",
+                            &snapshot_tx,
+                            &mut pending_post_action,
+                            "snapshot refresh after strap inventory refresh failed",
                         )?;
-                        controller
-                            .purchase_modifier_for(roll, modifier, 1)
-                            .await
-                            .wrap_err("shop purchase failed")?;
-                        refresh_overview_now = true;
-                        refresh_account_now = true;
-                        refresh_modifiers_now = true;
-                    }
-                    ui::UserEvent::OpenBetModal | ui::UserEvent::OpenClaimModal | ui::UserEvent::OpenVrfModal | ui::UserEvent::Redraw => {
-                        // UI-only update; redraw without hitting the chain
-                        ui::draw(ui_state, &last_snapshot)
-                            .wrap_err("draw during modal/redraw failed")?;
                         continue;
                     }
-                    _ => {}
+                    other => {
+                        let mut refresh_overview_now = false;
+                        let mut refresh_account_now = false;
+                        let mut refresh_modifiers_now = false;
+                        let mut refresh_strap_inventory = false;
+                        match other {
+                            ControllerCommand::PlaceChipBet(amount) => {
+                                let roll = controller.selected_roll.clone();
+                                let chip_label = if amount == 1 { "chip" } else { "chips" };
+                                let status_msg = format!(
+                                    "Placing bet of {} {} on {:?}...",
+                                    amount, chip_label, roll
+                                );
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .place_chip_bet(amount)
+                                    .await
+                                    .wrap_err_with(|| {
+                                        format!("placing chip bet of {} failed", amount)
+                                    })?;
+                                refresh_overview_now = true;
+                                refresh_account_now = true;
+                            }
+                            ControllerCommand::PurchaseTriggeredModifier => {
+                                let status_msg = format!(
+                                    "Purchasing triggered modifier for {:?}...",
+                                    controller.selected_roll
+                                );
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .purchase_triggered_modifier(1)
+                                    .await
+                                    .wrap_err("purchasing triggered modifier failed")?;
+                                refresh_overview_now = true;
+                                refresh_account_now = true;
+                                refresh_modifiers_now = true;
+                            }
+                            ControllerCommand::PlaceStrapBet { strap, amount } => {
+                                let strap_label = super_compact_strap(&strap);
+                                let status_msg = format!(
+                                    "Placing {} of {} on {:?}...",
+                                    amount, strap_label, controller.selected_roll
+                                );
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .place_strap_bet(strap, amount)
+                                    .await
+                                    .wrap_err_with(|| {
+                                        format!(
+                                            "placing strap bet of {} on {} failed",
+                                            amount, strap_label
+                                        )
+                                    })?;
+                                refresh_overview_now = true;
+                                refresh_account_now = true;
+                            }
+                            ControllerCommand::Roll => {
+                                let prev_len = last_snapshot.roll_history.len();
+                                let prev_last = last_snapshot.roll_history.last().cloned();
+                                let prev_game_id = last_snapshot.current_game_id;
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    "Rolling...",
+                                )?;
+                                controller.roll().await.wrap_err("roll failed")?;
+                                refresh_overview_now = true;
+                                refresh_modifiers_now = true;
+                                pending_post_action = Some(PostAction::Roll {
+                                    prev_len,
+                                    prev_last,
+                                    prev_game_id,
+                                });
+                            }
+                            ControllerCommand::IncVrf => {
+                                controller.inc_vrf();
+                                let target = controller.vrf_number;
+                                let status_msg = format!("Setting VRF to {}...", target);
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .set_vrf_number(target)
+                                    .await
+                                    .wrap_err("setting VRF number (inc) failed")?;
+                                refresh_overview_now = true;
+                            }
+                            ControllerCommand::DecVrf => {
+                                controller.dec_vrf();
+                                let target = controller.vrf_number;
+                                let status_msg = format!("Setting VRF to {}...", target);
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .set_vrf_number(target)
+                                    .await
+                                    .wrap_err("setting VRF number (dec) failed")?;
+                                refresh_overview_now = true;
+                            }
+                            ControllerCommand::SetVrf(n) => {
+                                let status_msg = format!("Setting VRF to {}...", n);
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .set_vrf_number(n)
+                                    .await
+                                    .wrap_err_with(|| {
+                                        format!("setting VRF number to {} failed", n)
+                                    })?;
+                                refresh_overview_now = true;
+                            }
+                            ControllerCommand::ConfirmClaim { game_id, enabled } => {
+                                let selection_count = enabled.len();
+                                let status_msg = if selection_count == 0 {
+                                    format!("Claiming rewards for game {}...", game_id)
+                                } else {
+                                    format!(
+                                        "Claiming rewards for game {} ({} modifier{})...",
+                                        game_id,
+                                        selection_count,
+                                        if selection_count == 1 { "" } else { "s" }
+                                    )
+                                };
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .claim_game(game_id, enabled)
+                                    .await
+                                    .wrap_err_with(|| {
+                                        format!(
+                                            "claiming game {} with modifiers failed",
+                                            game_id
+                                        )
+                                    })?;
+                                refresh_overview_now = true;
+                                refresh_account_now = true;
+                                refresh_strap_inventory = true;
+                            }
+                            ControllerCommand::PurchaseShopModifier { roll, modifier } => {
+                                let status_msg = format!(
+                                    "Purchasing {:?} for {:?}...",
+                                    modifier, roll
+                                );
+                                emit_status_snapshot(
+                                    &mut controller,
+                                    &mut last_snapshot,
+                                    &snapshot_tx,
+                                    status_msg,
+                                )?;
+                                controller
+                                    .purchase_modifier_for(roll, modifier, 1)
+                                    .await
+                                    .wrap_err("shop purchase failed")?;
+                                refresh_overview_now = true;
+                                refresh_account_now = true;
+                                refresh_modifiers_now = true;
+                            }
+                            _ => unreachable!("controller worker received unexpected command"),
+                        }
+
+                        if refresh_overview_now {
+                            controller
+                                .refresh_overview_now()
+                                .await
+                                .wrap_err("forced overview refresh failed")?;
+                        } else {
+                            controller
+                                .refresh_overview_if_stale()
+                                .await
+                                .wrap_err("overview refresh failed")?;
+                        }
+                        if refresh_account_now {
+                            controller
+                                .refresh_account_now()
+                                .await
+                                .wrap_err("account refresh failed")?;
+                        }
+                        if refresh_modifiers_now {
+                            controller
+                                .refresh_active_modifiers_now()
+                                .await
+                                .wrap_err("active modifiers refresh failed")?;
+                        } else {
+                            controller
+                                .refresh_active_modifiers_if_stale()
+                                .await
+                                .wrap_err("active modifiers refresh failed")?;
+                        }
+                        if refresh_strap_inventory {
+                            controller
+                                .refresh_strap_inventory()
+                                .await
+                                .wrap_err("strap inventory refresh failed")?;
+                        }
+                        push_snapshot(
+                            &mut controller,
+                            &mut last_snapshot,
+                            &snapshot_tx,
+                            &mut pending_post_action,
+                            "snapshot refresh failed",
+                        )?;
+                    }
                 }
-                if refresh_overview_now {
-                    controller
-                        .refresh_overview_now()
-                        .await
-                        .wrap_err("forced overview refresh failed")?;
-                } else {
-                    controller
-                        .refresh_overview_if_stale()
-                        .await
-                        .wrap_err("overview refresh failed")?;
-                }
-                if refresh_account_now {
-                    controller
-                        .refresh_account_now()
-                        .await
-                        .wrap_err("account refresh failed")?;
-                }
-                if refresh_modifiers_now {
-                    controller
-                        .refresh_active_modifiers_now()
-                        .await
-                        .wrap_err("active modifiers refresh failed")?;
-                } else {
-                    controller
-                        .refresh_active_modifiers_if_stale()
-                        .await
-                        .wrap_err("active modifiers refresh failed")?;
-                }
-                if refresh_strap_inventory {
-                    controller
-                        .refresh_strap_inventory()
-                        .await
-                        .wrap_err("strap inventory refresh failed")?;
-                }
-                last_snapshot = controller
-                    .build_snapshot()
-                    .wrap_err("snapshot refresh failed")?;
-                process_post_action(
-                    controller,
-                    &mut last_snapshot,
-                    &mut pending_post_action,
-                );
-                ui::draw(ui_state, &last_snapshot)
-                    .wrap_err("draw after snapshot refresh failed")?;
             }
         }
     }
     Ok(())
+}
+
+async fn run_loop(
+    controller: AppController,
+    ui_state: &mut ui::UiState,
+    input_events: &mut ui::InputEventReceiver,
+) -> Result<()> {
+    tracing::info!("Running app loop");
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (snapshot_tx, mut snapshot_rx) = mpsc::unbounded_channel();
+    let worker_future = controller_worker(controller, cmd_rx, snapshot_tx);
+    tokio::pin!(worker_future);
+
+    let mut last_snapshot = loop {
+        tokio::select! {
+            res = &mut worker_future => {
+                res?;
+                return Err(eyre!("controller worker ended before initial snapshot"));
+            }
+            maybe_snapshot = snapshot_rx.recv() => {
+                match maybe_snapshot {
+                    Some(snapshot) => break snapshot,
+                    None => return Err(eyre!("snapshot channel closed before initial snapshot")),
+                }
+            }
+        }
+    };
+    ui::draw(ui_state, &last_snapshot).wrap_err("initial draw failed")?;
+
+    let mut worker_result: Option<Result<()>> = None;
+    loop {
+        tokio::select! {
+            res = &mut worker_future => {
+                worker_result = Some(res);
+                break;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                let _ = cmd_tx.send(ControllerCommand::Shutdown);
+                break;
+            }
+            maybe_snapshot = snapshot_rx.recv() => {
+                match maybe_snapshot {
+                    Some(snapshot) => {
+                        last_snapshot = snapshot;
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw after snapshot update failed")?;
+                    }
+                    None => {
+                        tracing::warn!("snapshot channel closed; exiting UI loop");
+                        break;
+                    }
+                }
+            }
+            raw_ev = ui::next_raw_event(input_events) => {
+                let event = raw_ev?;
+                let Some(ev) = ui::interpret_event(ui_state, event) else {
+                    continue;
+                };
+                match ev {
+                    ui::UserEvent::Quit => {
+                        let _ = cmd_tx.send(ControllerCommand::Shutdown);
+                        break;
+                    }
+                    ui::UserEvent::NextRoll => {
+                        if cmd_tx.send(ControllerCommand::SelectNextRoll).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::PrevRoll => {
+                        if cmd_tx.send(ControllerCommand::SelectPrevRoll).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::PlaceBetAmount(amount) => {
+                        if cmd_tx.send(ControllerCommand::PlaceChipBet(amount)).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::Purchase => {
+                        if cmd_tx.send(ControllerCommand::PurchaseTriggeredModifier).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::ConfirmStrapBet { strap, amount } => {
+                        if cmd_tx
+                            .send(ControllerCommand::PlaceStrapBet { strap, amount })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::Roll => {
+                        if cmd_tx.send(ControllerCommand::Roll).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::VRFInc => {
+                        if cmd_tx.send(ControllerCommand::IncVrf).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::VRFDec => {
+                        if cmd_tx.send(ControllerCommand::DecVrf).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::SetVrf(n) => {
+                        if cmd_tx.send(ControllerCommand::SetVrf(n)).is_err() {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::ConfirmClaim { game_id, enabled } => {
+                        if cmd_tx
+                            .send(ControllerCommand::ConfirmClaim { game_id, enabled })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    ui::UserEvent::OpenShop
+                    | ui::UserEvent::OpenBetModal
+                    | ui::UserEvent::OpenClaimModal
+                    | ui::UserEvent::OpenVrfModal
+                    | ui::UserEvent::OpenStrapBet
+                    | ui::UserEvent::Redraw => {
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw during modal/redraw failed")?;
+                        continue;
+                    }
+                    ui::UserEvent::OpenStrapInventory => {
+                        if cmd_tx
+                            .send(ControllerCommand::RefreshStrapInventory)
+                            .is_err()
+                        {
+                            break;
+                        }
+                        ui::draw(ui_state, &last_snapshot)
+                            .wrap_err("draw after OpenStrapInventory request failed")?;
+                        continue;
+                    }
+                    ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
+                        if cmd_tx
+                            .send(ControllerCommand::PurchaseShopModifier { roll, modifier })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    drop(cmd_tx);
+    match worker_result {
+        Some(res) => res,
+        None => worker_future.await,
+    }
 }
