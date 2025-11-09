@@ -2034,6 +2034,7 @@ async fn run_loop(
 ) -> Result<()> {
     tracing::info!("Running app loop");
     controller.ensure_known_straps().await?;
+    controller.refresh_strap_inventory().await?;
     controller.refresh_active_modifiers_now().await?;
     let poll_interval = controller.poll_interval();
     let indexer = controller
