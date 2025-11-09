@@ -144,7 +144,6 @@ fn parse_cli_args() -> Result<client::AppConfig> {
     let dir = wallets::resolve_wallet_dir(wallet_dir.as_deref())?;
     let wallets = client::WalletConfig::ForcKeystore {
         owner: wallet.clone(),
-        player: wallet,
         dir,
     };
 

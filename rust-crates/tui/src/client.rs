@@ -150,11 +150,7 @@ pub enum NetworkTarget {
 
 #[derive(Clone, Debug)]
 pub enum WalletConfig {
-    ForcKeystore {
-        owner: String,
-        player: String,
-        dir: PathBuf,
-    },
+    ForcKeystore { owner: String, dir: PathBuf },
 }
 
 #[derive(Clone, Debug)]
@@ -763,131 +759,6 @@ impl AppController {
         }
     }
 
-    async fn fetch_bets_for_game(
-        &self,
-        game_id: u32,
-    ) -> Result<Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>> {
-        let contract = self.clients.alice.clone();
-        let safe_limit = self.clients.safe_script_gas_limit;
-        let bets = contract
-            .methods()
-            .get_my_bets_for_game(game_id)
-            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
-            .simulate(Execution::realistic())
-            .await?
-            .value;
-        Ok(bets)
-    }
-
-    async fn backfill_recent_games(&mut self) -> Result<bool> {
-        let safe_limit = self.clients.safe_script_gas_limit;
-        let current_game_id_u32 = self
-            .clients
-            .alice
-            .methods()
-            .current_game_id()
-            .with_tx_policies(TxPolicies::default().with_script_gas_limit(safe_limit))
-            .simulate(Execution::realistic())
-            .await?
-            .value;
-        if current_game_id_u32 == 0 {
-            return Ok(false);
-        }
-
-        let mut updated_any = false;
-        let start = current_game_id_u32.saturating_sub(GAME_HISTORY_DEPTH as u32);
-        for game_id in start..current_game_id_u32 {
-            let mut game_updated = false;
-            if !self.shared_prev_games.iter().any(|g| g.game_id == game_id) {
-                let rolls = self
-                    .clients
-                    .alice
-                    .methods()
-                    .roll_history_for_game(game_id)
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await?
-                    .value;
-                if rolls.is_empty() {
-                    continue;
-                }
-                let modifiers = self
-                    .clients
-                    .alice
-                    .methods()
-                    .active_modifiers_for_game(game_id)
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await?
-                    .value;
-                self.active_modifiers_by_game
-                    .insert(game_id, modifiers.clone());
-                self.upsert_shared_game(game_id, rolls, modifiers);
-                game_updated = true;
-            } else if !self.active_modifiers_by_game.contains_key(&game_id) {
-                let modifiers = self
-                    .clients
-                    .alice
-                    .methods()
-                    .active_modifiers_for_game(game_id)
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await?
-                    .value;
-                self.active_modifiers_by_game.insert(game_id, modifiers);
-                game_updated = true;
-            }
-
-            if !self.strap_rewards_by_game.contains_key(&game_id) {
-                let strap_rewards = self
-                    .clients
-                    .alice
-                    .methods()
-                    .strap_rewards_for_game(game_id)
-                    .with_tx_policies(
-                        TxPolicies::default().with_script_gas_limit(safe_limit),
-                    )
-                    .simulate(Execution::realistic())
-                    .await?
-                    .value;
-                if !strap_rewards.is_empty() {
-                    self.strap_rewards_by_game.insert(game_id, strap_rewards);
-                    game_updated = true;
-                }
-            }
-
-            if !self.alice_bets_hist.contains_key(&game_id) {
-                let alice_bets = self.fetch_bets_for_game(game_id).await?;
-                let alice_claimed = alice_bets.iter().all(|(_, bets)| bets.is_empty());
-                self.alice_bets_hist.insert(game_id, alice_bets);
-                if alice_claimed {
-                    self.alice_claimed.insert(game_id);
-                }
-                game_updated = true;
-            }
-
-            if game_updated {
-                updated_any = true;
-            }
-        }
-
-        if updated_any {
-            self.shared_prev_games
-                .sort_by(|a, b| b.game_id.cmp(&a.game_id));
-            if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
-                self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
-            }
-        }
-
-        Ok(updated_any)
-    }
-
     pub async fn new_remote(
         vrf_mode: VrfMode,
         env: deployment::DeploymentEnv,
@@ -907,8 +778,8 @@ impl AppController {
             .wrap_err_with(|| format!("Failed to connect to provider at {url}"))?;
 
         tracing::info!("b");
-        let (owner_name, player_name, wallet_dir) = match wallet_config {
-            WalletConfig::ForcKeystore { owner, player, dir } => (owner, player, dir),
+        let (owner_name, wallet_dir) = match wallet_config {
+            WalletConfig::ForcKeystore { owner, dir } => (owner, dir),
         };
 
         tracing::info!("c");
@@ -1920,6 +1791,7 @@ fn choose_binary<'a>(paths: &'a [&str]) -> Result<&'a str> {
         .ok_or_else(|| eyre!("Contract binary not found. Tried {:?}", paths))
 }
 
+#[allow(unused)]
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -2150,7 +2022,7 @@ async fn controller_worker(
                         continue;
                     }
                     other => {
-                        let mut refresh_overview_now = false;
+                        let refresh_overview_now ;
                         let mut refresh_account_now = false;
                         let mut refresh_modifiers_now = false;
                         let mut refresh_strap_inventory = false;
