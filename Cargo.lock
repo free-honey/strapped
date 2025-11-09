@@ -6652,6 +6652,7 @@ dependencies = [
  "shellexpand",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

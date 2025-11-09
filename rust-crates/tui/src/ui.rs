@@ -3,7 +3,10 @@ use crate::client::{
     PreviousGameSummary,
     VrfMode,
 };
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{
+    Result,
+    eyre,
+};
 use crossterm::{
     event::{
         self,
@@ -20,8 +23,13 @@ use ratatui::{
     prelude::*,
     widgets::*,
 };
-use std::io::stdout;
+use std::{
+    io::stdout,
+    thread,
+};
 use strapped_contract::strapped_types as strapped;
+use tokio::sync::mpsc;
+use tracing::error;
 
 pub enum UserEvent {
     Quit,
@@ -181,315 +189,355 @@ pub fn draw(state: &mut UiState, snap: &AppSnapshot) -> Result<()> {
     Ok(())
 }
 
-pub async fn next_event(state: &mut UiState) -> Result<UserEvent> {
-    loop {
-        if let Event::Key(k) = event::read()? {
-            if k.kind != KeyEventKind::Press {
-                continue;
-            }
-            // Modal handling
-            match &mut state.mode {
-                Mode::BetModal(bs) => match k.code {
-                    KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Enter => {
-                        let amt = bs.amount;
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::PlaceBetAmount(amt));
-                    }
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
-                        bs.amount = bs.amount.saturating_add(1);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
-                        bs.amount = bs.amount.saturating_sub(1);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Backspace => {
-                        bs.amount /= 10;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Char(c) if c.is_ascii_digit() => {
-                        let d = c.to_digit(10).unwrap() as u64;
-                        bs.amount = (bs.amount.saturating_mul(10)).saturating_add(d);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    _ => {}
-                },
-                Mode::ClaimModal(cs) => match k.code {
-                    KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Left | KeyCode::Char('h') => {
-                        cs.focus = ClaimFocus::Games;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Right | KeyCode::Char('l') => {
-                        if let Some(g) = state.prev_games.get(cs.game_idx)
-                            && !g.modifiers.is_empty()
-                        {
-                            cs.focus = ClaimFocus::Modifiers;
-                            cs.mod_idx =
-                                cs.mod_idx.min(g.modifiers.len().saturating_sub(1));
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        match cs.focus {
-                            ClaimFocus::Games => {
-                                if cs.game_idx > 0 {
-                                    cs.game_idx -= 1;
-                                    cs.mod_idx = 0;
-                                    if let Some(g) = state.prev_games.get(cs.game_idx) {
-                                        prune_selected(cs, g);
-                                    }
-                                }
-                            }
-                            ClaimFocus::Modifiers => {
-                                if cs.mod_idx > 0 {
-                                    cs.mod_idx -= 1;
-                                }
-                            }
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        match cs.focus {
-                            ClaimFocus::Games => {
-                                let len = state.prev_games.len();
-                                if len > 0 && cs.game_idx + 1 < len {
-                                    cs.game_idx += 1;
-                                    cs.mod_idx = 0;
-                                    if let Some(g) = state.prev_games.get(cs.game_idx) {
-                                        prune_selected(cs, g);
-                                    }
-                                }
-                            }
-                            ClaimFocus::Modifiers => {
-                                if let Some(g) = state.prev_games.get(cs.game_idx)
-                                    && !g.modifiers.is_empty()
-                                {
-                                    cs.mod_idx =
-                                        (cs.mod_idx + 1).min(g.modifiers.len() - 1);
-                                }
-                            }
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Char(' ') => {
-                        if cs.focus != ClaimFocus::Modifiers
-                            && let Some(g) = state.prev_games.get(cs.game_idx)
-                        {
-                            if !g.modifiers.is_empty() {
-                                cs.focus = ClaimFocus::Modifiers;
-                            } else {
-                                return Ok(UserEvent::Redraw);
-                            }
-                        }
-                        if let Some(g) = state.prev_games.get(cs.game_idx)
-                            && let Some((r, m, _idx)) = g.modifiers.get(cs.mod_idx)
-                        {
-                            if let Some(pos) =
-                                cs.selected.iter().position(|(rr, mm)| rr == r && mm == m)
-                            {
-                                cs.selected.remove(pos);
-                            } else {
-                                cs.selected.push((r.clone(), m.clone()));
-                            }
-                        }
+pub type InputEventReceiver = mpsc::UnboundedReceiver<Event>;
 
-                        return Ok(UserEvent::Redraw);
+pub fn input_event_stream() -> InputEventReceiver {
+    let (tx, rx) = mpsc::unbounded_channel();
+    thread::spawn(move || {
+        loop {
+            match event::read() {
+                Ok(ev) => {
+                    if tx.send(ev).is_err() {
+                        break;
                     }
-                    KeyCode::Enter => {
-                        if let Some(g) = state.prev_games.get(cs.game_idx) {
-                            let enabled = cs.selected.clone();
-                            let game_id = g.game_id;
-                            state.mode = Mode::Normal;
-                            return Ok(UserEvent::ConfirmClaim { game_id, enabled });
-                        }
-                        continue;
-                    }
-                    _ => {}
-                },
-                Mode::VrfModal(vs) => match k.code {
-                    KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
-                        vs.value = vs.value.saturating_add(1);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
-                        vs.value = vs.value.saturating_sub(1);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Backspace => {
-                        vs.value /= 10;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Char(c) if c.is_ascii_digit() => {
-                        let d = c.to_digit(10).unwrap() as u64;
-                        vs.value = vs.value.saturating_mul(10).saturating_add(d);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Enter => {
-                        let n = vs.value;
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::SetVrf(n));
-                    }
-                    _ => {}
-                },
-                Mode::ShopModal(ss) => match k.code {
-                    KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if ss.idx > 0 {
-                            ss.idx -= 1;
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let max = state.shop_items.len().saturating_sub(1);
-                        ss.idx = (ss.idx + 1).min(max);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Enter => {
-                        if let Some((_from, to, m, on)) =
-                            state.shop_items.get(ss.idx).cloned()
-                        {
-                            if on {
-                                state.mode = Mode::Normal;
-                                return Ok(UserEvent::ConfirmShopPurchase {
-                                    roll: to,
-                                    modifier: m,
-                                });
-                            } else {
-                                return Ok(UserEvent::Redraw);
-                            }
-                        } else {
-                            return Ok(UserEvent::Redraw);
-                        }
-                    }
-                    _ => {}
-                },
-                Mode::StrapBet(sb) => match k.code {
-                    KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if sb.idx > 0 {
-                            sb.idx -= 1;
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let max = state.owned_straps.len().saturating_sub(1);
-                        sb.idx = (sb.idx + 1).min(max);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Char('+') | KeyCode::Right => {
-                        sb.amount = sb.amount.saturating_add(1);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Char('-') | KeyCode::Left => {
-                        sb.amount = sb.amount.saturating_sub(1).max(1);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Enter => {
-                        if let Some((s, bal)) = state.owned_straps.get(sb.idx).cloned() {
-                            let amt = sb.amount.min(bal);
-                            state.mode = Mode::Normal;
-                            return Ok(UserEvent::ConfirmStrapBet {
-                                strap: s,
-                                amount: amt,
-                            });
-                        } else {
-                            return Ok(UserEvent::Redraw);
-                        }
-                    }
-                    _ => {}
-                },
-                Mode::StrapInventory(si) => match k.code {
-                    KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if si.idx > 0 {
-                            si.idx -= 1;
-                        }
-                        return Ok(UserEvent::Redraw);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let max = strap_kind_catalog().len().saturating_sub(1);
-                        si.idx = (si.idx + 1).min(max);
-                        return Ok(UserEvent::Redraw);
-                    }
-                    _ => {}
-                },
-                Mode::QuitModal => match k.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        return Ok(UserEvent::Quit);
-                    }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        state.mode = Mode::Normal;
-                        return Ok(UserEvent::Redraw);
-                    }
-                    _ => {}
-                },
-                Mode::Normal => {}
+                }
+                Err(err) => {
+                    error!(?err, "terminal input read failed");
+                    break;
+                }
             }
-            return Ok(match k.code {
-                KeyCode::Char('q') | KeyCode::Esc => {
-                    state.mode = Mode::QuitModal;
-                    UserEvent::Redraw
+        }
+    });
+    rx
+}
+
+pub async fn next_raw_event(events: &mut InputEventReceiver) -> Result<Event> {
+    events
+        .recv()
+        .await
+        .ok_or_else(|| eyre!("terminal input channel closed"))
+}
+
+pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
+    let Event::Key(k) = event else {
+        return None;
+    };
+    if k.kind != KeyEventKind::Press {
+        return None;
+    }
+
+    match &mut state.mode {
+        Mode::BetModal(bs) => {
+            return match k.code {
+                KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
                 }
-                KeyCode::Right | KeyCode::Char('l') => UserEvent::NextRoll,
-                KeyCode::Left | KeyCode::Char('h') => UserEvent::PrevRoll,
-                KeyCode::Char('b') => {
-                    state.mode = Mode::BetModal(BetState::default());
-                    UserEvent::OpenBetModal
+                KeyCode::Enter => {
+                    let amt = bs.amount;
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::PlaceBetAmount(amt))
                 }
-                KeyCode::Char('t') => {
-                    state.mode = Mode::StrapBet(StrapBetState::default());
-                    UserEvent::OpenStrapBet
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
+                    bs.amount = bs.amount.saturating_add(1);
+                    Some(UserEvent::Redraw)
                 }
-                KeyCode::Char('m') => UserEvent::Purchase,
-                KeyCode::Char('r') => UserEvent::Roll,
-                KeyCode::Char(']') => UserEvent::VRFInc,
-                KeyCode::Char('[') => UserEvent::VRFDec,
-                KeyCode::Char('/') => {
-                    state.mode = Mode::VrfModal(VrfState::default());
-                    UserEvent::OpenVrfModal
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
+                    bs.amount = bs.amount.saturating_sub(1);
+                    Some(UserEvent::Redraw)
                 }
-                KeyCode::Char('s') => {
-                    state.mode = Mode::ShopModal(ShopState::default());
-                    UserEvent::OpenShop
+                KeyCode::Backspace => {
+                    bs.amount /= 10;
+                    Some(UserEvent::Redraw)
                 }
-                KeyCode::Char('i') => {
-                    state.mode = Mode::StrapInventory(StrapInventoryState::default());
-                    UserEvent::OpenStrapInventory
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    let d = c.to_digit(10).unwrap() as u64;
+                    bs.amount = bs.amount.saturating_mul(10).saturating_add(d);
+                    Some(UserEvent::Redraw)
                 }
-                KeyCode::Char('c') => {
-                    let mut cs = ClaimState::default();
-                    if let Some(g) = state.prev_games.get(cs.game_idx) {
-                        if !g.modifiers.is_empty() {
-                            cs.selected = default_claim_selection(g);
+                _ => None,
+            };
+        }
+        Mode::ClaimModal(cs) => {
+            return match k.code {
+                KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    cs.focus = ClaimFocus::Games;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    if let Some(g) = state.prev_games.get(cs.game_idx)
+                        && !g.modifiers.is_empty()
+                    {
+                        cs.focus = ClaimFocus::Modifiers;
+                        cs.mod_idx = cs.mod_idx.min(g.modifiers.len().saturating_sub(1));
+                    }
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    match cs.focus {
+                        ClaimFocus::Games => {
+                            if cs.game_idx > 0 {
+                                cs.game_idx -= 1;
+                                if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                    prune_selected(cs, g);
+                                }
+                            }
+                        }
+                        ClaimFocus::Modifiers => {
+                            if cs.mod_idx > 0 {
+                                cs.mod_idx -= 1;
+                            }
                         }
                     }
-                    state.mode = Mode::ClaimModal(cs);
-                    UserEvent::OpenClaimModal
+                    Some(UserEvent::Redraw)
                 }
-                _ => continue,
-            });
+                KeyCode::Down | KeyCode::Char('j') => {
+                    match cs.focus {
+                        ClaimFocus::Games => {
+                            if cs.game_idx + 1 < state.prev_games.len() {
+                                cs.game_idx += 1;
+                                if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                    prune_selected(cs, g);
+                                }
+                            }
+                        }
+                        ClaimFocus::Modifiers => {
+                            if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                if cs.mod_idx + 1 < g.modifiers.len() {
+                                    cs.mod_idx += 1;
+                                }
+                            }
+                        }
+                    }
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Char(' ') => {
+                    if cs.focus != ClaimFocus::Modifiers
+                        && let Some(g) = state.prev_games.get(cs.game_idx)
+                        && !g.modifiers.is_empty()
+                    {
+                        cs.focus = ClaimFocus::Modifiers;
+                    }
+                    if let Some(g) = state.prev_games.get(cs.game_idx)
+                        && let Some((roll, modifier, _)) = g.modifiers.get(cs.mod_idx)
+                    {
+                        if let Some(pos) = cs
+                            .selected
+                            .iter()
+                            .position(|(r, m)| r == roll && m == modifier)
+                        {
+                            cs.selected.remove(pos);
+                        } else {
+                            cs.selected.push((roll.clone(), modifier.clone()));
+                        }
+                    }
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Enter => {
+                    if let Some(game) = state.prev_games.get(cs.game_idx) {
+                        let enabled = cs.selected.clone();
+                        state.mode = Mode::Normal;
+                        Some(UserEvent::ConfirmClaim {
+                            game_id: game.game_id,
+                            enabled,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
         }
+        Mode::VrfModal(vs) => {
+            return match k.code {
+                KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('+') => {
+                    vs.value = vs.value.saturating_add(1);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('-') => {
+                    vs.value = vs.value.saturating_sub(1);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Backspace => {
+                    vs.value /= 10;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    let d = c.to_digit(10).unwrap() as u64;
+                    vs.value = vs.value.saturating_mul(10).saturating_add(d);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Enter => {
+                    let value = vs.value;
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::SetVrf(value))
+                }
+                _ => None,
+            };
+        }
+        Mode::ShopModal(ss) => {
+            return match k.code {
+                KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if ss.idx > 0 {
+                        ss.idx -= 1;
+                    }
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let max = state.shop_items.len().saturating_sub(1);
+                    ss.idx = (ss.idx + 1).min(max);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Enter => {
+                    if let Some((_from, roll, modifier, enabled)) =
+                        state.shop_items.get(ss.idx).cloned()
+                    {
+                        if enabled {
+                            state.mode = Mode::Normal;
+                            Some(UserEvent::ConfirmShopPurchase { roll, modifier })
+                        } else {
+                            Some(UserEvent::Redraw)
+                        }
+                    } else {
+                        Some(UserEvent::Redraw)
+                    }
+                }
+                _ => None,
+            };
+        }
+        Mode::StrapBet(sb) => {
+            return match k.code {
+                KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if sb.idx > 0 {
+                        sb.idx -= 1;
+                    }
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let max = state.owned_straps.len().saturating_sub(1);
+                    sb.idx = (sb.idx + 1).min(max);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Char('+') | KeyCode::Right => {
+                    sb.amount = sb.amount.saturating_add(1);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Char('-') | KeyCode::Left => {
+                    sb.amount = sb.amount.saturating_sub(1).max(1);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Enter => {
+                    if let Some((strap, balance)) =
+                        state.owned_straps.get(sb.idx).cloned()
+                    {
+                        let amount = sb.amount.min(balance);
+                        state.mode = Mode::Normal;
+                        Some(UserEvent::ConfirmStrapBet { strap, amount })
+                    } else {
+                        Some(UserEvent::Redraw)
+                    }
+                }
+                _ => None,
+            };
+        }
+        Mode::StrapInventory(si) => {
+            return match k.code {
+                KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if si.idx > 0 {
+                        si.idx -= 1;
+                    }
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let max = strap_kind_catalog().len().saturating_sub(1);
+                    si.idx = (si.idx + 1).min(max);
+                    Some(UserEvent::Redraw)
+                }
+                KeyCode::Enter => {
+                    state.mode = Mode::StrapBet(StrapBetState {
+                        idx: si.idx,
+                        amount: 1,
+                    });
+                    Some(UserEvent::OpenStrapBet)
+                }
+                _ => None,
+            };
+        }
+        Mode::QuitModal => {
+            return match k.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => Some(UserEvent::Quit),
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    state.mode = Mode::Normal;
+                    Some(UserEvent::Redraw)
+                }
+                _ => None,
+            };
+        }
+        Mode::Normal => {}
+    }
+
+    match k.code {
+        KeyCode::Char('q') | KeyCode::Esc => {
+            state.mode = Mode::QuitModal;
+            Some(UserEvent::Redraw)
+        }
+        KeyCode::Right | KeyCode::Char('l') => Some(UserEvent::NextRoll),
+        KeyCode::Left | KeyCode::Char('h') => Some(UserEvent::PrevRoll),
+        KeyCode::Char('b') => {
+            state.mode = Mode::BetModal(BetState::default());
+            Some(UserEvent::OpenBetModal)
+        }
+        KeyCode::Char('t') => {
+            state.mode = Mode::StrapBet(StrapBetState::default());
+            Some(UserEvent::OpenStrapBet)
+        }
+        KeyCode::Char('m') => Some(UserEvent::Purchase),
+        KeyCode::Char('r') => Some(UserEvent::Roll),
+        KeyCode::Char(']') => Some(UserEvent::VRFInc),
+        KeyCode::Char('[') => Some(UserEvent::VRFDec),
+        KeyCode::Char('/') => {
+            state.mode = Mode::VrfModal(VrfState::default());
+            Some(UserEvent::OpenVrfModal)
+        }
+        KeyCode::Char('s') => {
+            state.mode = Mode::ShopModal(ShopState::default());
+            Some(UserEvent::OpenShop)
+        }
+        KeyCode::Char('i') => {
+            state.mode = Mode::StrapInventory(StrapInventoryState::default());
+            Some(UserEvent::OpenStrapInventory)
+        }
+        KeyCode::Char('c') => {
+            let mut cs = ClaimState::default();
+            if let Some(g) = state.prev_games.get(cs.game_idx) {
+                if !g.modifiers.is_empty() {
+                    cs.selected = default_claim_selection(g);
+                }
+            }
+            state.mode = Mode::ClaimModal(cs);
+            Some(UserEvent::OpenClaimModal)
+        }
+        _ => None,
     }
 }
 
