@@ -2272,20 +2272,18 @@ async fn run_loop(
     let worker_future = controller_worker(controller, cmd_rx, snapshot_tx);
     tokio::pin!(worker_future);
 
-    let mut last_snapshot = loop {
-        tokio::select! {
-            res = &mut worker_future => {
-                res?;
-                return Err(eyre!("controller worker ended before initial snapshot"));
-            }
-            maybe_snapshot = snapshot_rx.recv() => {
-                match maybe_snapshot {
-                    Some(snapshot) => break snapshot,
-                    None => return Err(eyre!("snapshot channel closed before initial snapshot")),
-                }
+    let mut last_snapshot = tokio::select! {
+        res = &mut worker_future => {
+            res?;
+            return Err(eyre!("controller worker ended before initial snapshot"));
+        }
+        maybe_snapshot = snapshot_rx.recv() => {
+            match maybe_snapshot {
+                Some(snapshot) => Ok( snapshot),
+                None => Err(eyre!("snapshot channel closed before initial snapshot")),
             }
         }
-    };
+    }?;
     ui::draw(ui_state, &last_snapshot).wrap_err("initial draw failed")?;
 
     let mut worker_result: Option<Result<()>> = None;
