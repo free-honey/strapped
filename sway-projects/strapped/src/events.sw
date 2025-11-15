@@ -28,13 +28,26 @@ pub struct RollEvent {
     game_id: u32,
     roll_index: u32,
     rolled_value: Roll,
+    roll_total_chips: u64,
+    chips_owed_total: u64,
+    house_pot_total: u64,
 }
 
-pub fn log_roll_event(game_id: u32, roll_index: u32, rolled_value: Roll) {
+pub fn log_roll_event(
+    game_id: u32,
+    roll_index: u32,
+    rolled_value: Roll,
+    roll_total_chips: u64,
+    chips_owed_total: u64,
+    house_pot_total: u64,
+) {
     let event = RollEvent {
         game_id,
         roll_index,
         rolled_value,
+        roll_total_chips,
+        chips_owed_total,
+        house_pot_total,
     };
     log(event);
 }
