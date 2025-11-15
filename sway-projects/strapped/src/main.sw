@@ -199,7 +199,7 @@ impl Strapped for Contract {
         storage.roll_history.get(current_game_id).push(roll);
         let chips_owed_total = storage.chips_owed.read();
         let house_pot_total = storage.house_pot.read();
-        let roll_total_chips = 0;
+        let roll_total_chips = storage.current_game_bets.get(roll).try_read().unwrap_or(0);
         let bets_for_roll = storage.current_game_bets.get(roll).try_read().unwrap_or(0);
         let owed_for_roll = storage.payouts.read().calculate_payout(bets_for_roll, roll);
         let new_chips_owed_total = chips_owed_total + owed_for_roll;
@@ -219,7 +219,18 @@ impl Strapped for Contract {
                 let new_straps = generate_straps(random_number);
                 storage.roll_index.write(0);
                 storage.modifier_triggers.clear();
-                storage.current_game_bets.clear();
+                // Manually clear each roll entry; StorageMap::clear() only resets metadata.
+                storage.current_game_bets.remove(Roll::Two);
+                storage.current_game_bets.remove(Roll::Three);
+                storage.current_game_bets.remove(Roll::Four);
+                storage.current_game_bets.remove(Roll::Five);
+                storage.current_game_bets.remove(Roll::Six);
+                storage.current_game_bets.remove(Roll::Seven);
+                storage.current_game_bets.remove(Roll::Eight);
+                storage.current_game_bets.remove(Roll::Nine);
+                storage.current_game_bets.remove(Roll::Ten);
+                storage.current_game_bets.remove(Roll::Eleven);
+                storage.current_game_bets.remove(Roll::Twelve);
                 let new_modifiers = modifier_triggers_for_roll(random_number);
                 for (roll, strap, cost) in new_straps.iter() {
                     storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
@@ -292,6 +303,8 @@ impl Strapped for Contract {
                 let new_roll_total_bets = storage.current_game_bets.get(roll).try_read().unwrap_or(0) + amount;
                 storage.current_game_bets.insert(roll, new_roll_total_bets);
                 log_place_chip_bet_event(current_game_id, roll_index, caller, roll, amount);
+                let new_pot_total = storage.house_pot.read() + amount;
+                storage.house_pot.write(new_pot_total);
             },
             Bet::Strap(strap) => {
                 log_place_strap_bet_event(current_game_id, roll_index, caller, roll, strap, amount);
