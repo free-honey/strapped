@@ -23,41 +23,7 @@ type Amount = u64;
 type RollIndex = u32;
 
 
-pub struct PayoutConfig {
-    two_payout_multiplier: u64,
-    three_payout_multiplier: u64,
-    four_payout_multiplier: u64,
-    five_payout_multiplier: u64,
-    six_payout_multiplier: u64,
-    seven_payout_multiplier: u64,
-    eight_payout_multiplier: u64,
-    nine_payout_multiplier: u64,
-    ten_payout_multiplier: u64,
-    eleven_payout_multiplier: u64,
-    twelve_payout_multiplier: u64,
-}
 
-impl PayoutConfig {
-    pub fn calculate_payout(self, principal: u64, roll: Roll) -> u64 {
-        principal * self.multiplier_for_roll(roll)
-    }
-
-    fn multiplier_for_roll(self, roll: Roll) -> u64 {
-        match roll {
-            Roll::Two => self.two_payout_multiplier,
-            Roll::Three => self.three_payout_multiplier,
-            Roll::Four => self.four_payout_multiplier,
-            Roll::Five => self.five_payout_multiplier,
-            Roll::Six => self.six_payout_multiplier,
-            Roll::Seven => self.seven_payout_multiplier,
-            Roll::Eight => self.eight_payout_multiplier,
-            Roll::Nine => self.nine_payout_multiplier,
-            Roll::Ten => self.ten_payout_multiplier,
-            Roll::Eleven => self.eleven_payout_multiplier,
-            Roll::Twelve => self.twelve_payout_multiplier,
-        }
-    }
-}
 
 storage {
     /// History of rolls for each game
@@ -101,19 +67,25 @@ storage {
     /// Max owed percentage
     max_owed_percentage: u64 = 90,
 
-    // Payout configuration
+    /// Current game bets
+    /// Allows the contract to track the owed chips per game for solvency checks
+    /// Is cleared after each game ends
+    current_game_bets: StorageMap<Roll, u64> = StorageMap {},
+
+    /// Payout configuration
+    // TODO: probably doesn't need to be in storage, can be a constant
     payouts: PayoutConfig = PayoutConfig {
-        two_payout_multiplier: 6,
-        three_payout_multiplier: 5,
-        four_payout_multiplier: 4,
-        five_payout_multiplier: 3,
-        six_payout_multiplier: 2,
-        seven_payout_multiplier: 0,
-        eight_payout_multiplier: 2,
-        nine_payout_multiplier: 3,
-        ten_payout_multiplier: 4,
-        eleven_payout_multiplier: 5,
-        twelve_payout_multiplier: 6,
+        two_payout_multiplier: (6, 1),
+        three_payout_multiplier: (6, 2),
+        four_payout_multiplier: (6, 3),
+        five_payout_multiplier: (6, 4),
+        six_payout_multiplier: (6, 5),
+        seven_payout_multiplier: (0, 1),
+        eight_payout_multiplier: (6, 5),
+        nine_payout_multiplier: (6, 4),
+        ten_payout_multiplier: (6, 3),
+        eleven_payout_multiplier: (6, 2),
+        twelve_payout_multiplier: (6, 1),
     },
 }
 
@@ -225,7 +197,21 @@ impl Strapped for Contract {
         let random_number = rng_abi.get_random(roll_height);
         let roll = u64_to_roll(random_number);
         storage.roll_history.get(current_game_id).push(roll);
-        log_roll_event(current_game_id, new_roll_index, roll);
+        let chips_owed_total = storage.chips_owed.read();
+        let house_pot_total = storage.house_pot.read();
+        let roll_total_chips = 0;
+        let bets_for_roll = storage.current_game_bets.get(roll).try_read().unwrap_or(0);
+        let owed_for_roll = storage.payouts.read().calculate_payout(bets_for_roll, roll);
+        let new_chips_owed_total = chips_owed_total + owed_for_roll;
+        storage.chips_owed.write(new_chips_owed_total);
+        log_roll_event(
+            current_game_id,
+            new_roll_index,
+            roll,
+            roll_total_chips,
+            new_chips_owed_total,
+            house_pot_total,
+        );
         match roll {
             Roll::Seven => {
                 let new_game_id = current_game_id + 1;
@@ -233,6 +219,7 @@ impl Strapped for Contract {
                 let new_straps = generate_straps(random_number);
                 storage.roll_index.write(0);
                 storage.modifier_triggers.clear();
+                storage.current_game_bets.clear();
                 let new_modifiers = modifier_triggers_for_roll(random_number);
                 for (roll, strap, cost) in new_straps.iter() {
                     storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
@@ -302,6 +289,8 @@ impl Strapped for Contract {
         storage.bets.get(key).push((bet, amount, roll_index));
         match bet {
             Bet::Chip => {
+                let new_roll_total_bets = storage.current_game_bets.get(roll).try_read().unwrap_or(0) + amount;
+                storage.current_game_bets.insert(roll, new_roll_total_bets);
                 log_place_chip_bet_event(current_game_id, roll_index, caller, roll, amount);
             },
             Bet::Strap(strap) => {
@@ -498,7 +487,7 @@ impl Strapped for Contract {
                 }
                 if remove {
                     // don't increment if we removed the bet (to account for shifting indices)
-                    storage.bets.get((game_id, identity, roll)).remove(bet_index);
+                    let _ = storage.bets.get((game_id, identity, roll)).remove(bet_index);
                 } else {
                     // only increment if we didn't remove
                     bet_index += 1;
@@ -529,6 +518,13 @@ impl Strapped for Contract {
             for (strap, amount) in rewards.iter() {
                 let sub_id = strap.into_sub_id();
                 mint_to(identity, sub_id, amount);
+            }
+            let old_total_owed = storage.chips_owed.read();
+            if total_chips_winnings > old_total_owed {
+                storage.chips_owed.write(0);
+            } else {
+                let new_total_owed = old_total_owed - total_chips_winnings;
+                storage.chips_owed.write(new_total_owed);
             }
             log_claim_rewards_event(game_id, identity, enabled_modifiers, total_chips_winnings, rewards);
         } else {

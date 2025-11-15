@@ -2,26 +2,12 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{
-        AssetConfig,
-        AssetId,
-        CallParameters,
-        Execution,
-        VariableOutputPolicy,
-    },
+    prelude::{AssetConfig, AssetId, CallParameters, Execution, VariableOutputPolicy},
     tx::ContractIdExt,
 };
 use generated_abi::{
-    contract_id,
-    strap_to_sub_id,
-    strapped_types::{
-        self,
-        Bet,
-        Modifier,
-        Roll,
-        Strap,
-        StrapKind,
-    },
+    contract_id, strap_to_sub_id,
+    strapped_types::{self, Bet, Modifier, Roll, Strap, StrapKind},
     test_helpers::*,
 };
 use proptest::prelude::*;
@@ -66,7 +52,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .value;
 
     let target_roll = roll_from_vrf_bucket(vrf_number);
-    let expected_multiplier = multiplier_for_roll(&payout_config, &target_roll);
+    let expected_multiplier = payout_multiplier(&payout_config, &target_roll);
 
     place_chip_bet(&ctx, target_roll.clone(), bet_amount).await;
 
@@ -760,23 +746,6 @@ fn roll_from_vrf_bucket(vrf_bucket: u64) -> Roll {
         30 | 31 | 32 => Roll::Ten,
         33 | 34 => Roll::Eleven,
         _ => Roll::Twelve,
-    }
-}
-
-fn multiplier_for_roll(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
-    match roll {
-        Roll::Two => cfg.two_payout_multiplier,
-        // Roll::Three => panic!("{}", cfg.three_payout_multiplier),
-        Roll::Three => cfg.three_payout_multiplier,
-        Roll::Four => cfg.four_payout_multiplier,
-        Roll::Five => cfg.five_payout_multiplier,
-        Roll::Six => cfg.six_payout_multiplier,
-        Roll::Seven => cfg.seven_payout_multiplier,
-        Roll::Eight => cfg.eight_payout_multiplier,
-        Roll::Nine => cfg.nine_payout_multiplier,
-        Roll::Ten => cfg.ten_payout_multiplier,
-        Roll::Eleven => cfg.eleven_payout_multiplier,
-        Roll::Twelve => cfg.twelve_payout_multiplier,
     }
 }
 

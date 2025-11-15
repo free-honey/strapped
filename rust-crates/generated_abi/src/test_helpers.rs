@@ -28,6 +28,47 @@ use crate::{
     vrf_types,
 };
 
+pub fn calculate_payout(
+    cfg: &strapped_types::PayoutConfig,
+    roll: &Roll,
+    principal: u64,
+) -> u64 {
+    let numerator = payout_numerator(cfg, roll);
+    let denominator = payout_denominator(cfg, roll);
+    (principal / denominator) * numerator
+}
+pub fn payout_numerator(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => cfg.two_payout_multiplier.0,
+        Roll::Three => cfg.three_payout_multiplier.0,
+        Roll::Four => cfg.four_payout_multiplier.0,
+        Roll::Five => cfg.five_payout_multiplier.0,
+        Roll::Six => cfg.six_payout_multiplier.0,
+        Roll::Seven => cfg.seven_payout_multiplier.0,
+        Roll::Eight => cfg.eight_payout_multiplier.0,
+        Roll::Nine => cfg.nine_payout_multiplier.0,
+        Roll::Ten => cfg.ten_payout_multiplier.0,
+        Roll::Eleven => cfg.eleven_payout_multiplier.0,
+        Roll::Twelve => cfg.twelve_payout_multiplier.0,
+    }
+}
+
+pub fn payout_denominator(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => cfg.two_payout_multiplier.1,
+        Roll::Three => cfg.three_payout_multiplier.1,
+        Roll::Four => cfg.four_payout_multiplier.1,
+        Roll::Five => cfg.five_payout_multiplier.1,
+        Roll::Six => cfg.six_payout_multiplier.1,
+        Roll::Seven => cfg.seven_payout_multiplier.1,
+        Roll::Eight => cfg.eight_payout_multiplier.1,
+        Roll::Nine => cfg.nine_payout_multiplier.1,
+        Roll::Ten => cfg.ten_payout_multiplier.1,
+        Roll::Eleven => cfg.eleven_payout_multiplier.1,
+        Roll::Twelve => cfg.twelve_payout_multiplier.1,
+    }
+}
+
 const CHIP_ASSET_BYTES: [u8; 32] = [1u8; 32];
 const DEFAULT_ROLL_FREQUENCY: u32 = 10;
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000;
