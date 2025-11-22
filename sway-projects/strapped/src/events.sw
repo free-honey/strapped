@@ -207,3 +207,35 @@ pub fn log_purchase_modifier_event(
     };
     log(event);
 }
+
+pub struct WithdrawHousePotEvent {
+    amount: u64,
+    to: Identity,
+}
+
+pub fn log_house_withdrawal_event(amount: u64, to: Identity) {
+    let event = WithdrawHousePotEvent {
+        amount,
+        to,
+    };
+    log(event);
+}
+
+pub struct InsufficientHouseWithdrawalEvent {
+    requested_amount: u64,
+    available_amount: u64,
+    to: Identity,
+}
+
+pub fn log_insufficient_house_withdrawal_event(
+    requested_amount: u64,
+    available_amount: u64,
+    to: Identity,
+) {
+    let event = InsufficientHouseWithdrawalEvent {
+        requested_amount,
+        available_amount,
+        to,
+    };
+    log(event);
+}

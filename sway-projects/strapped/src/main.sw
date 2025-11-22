@@ -89,6 +89,10 @@ storage {
         eleven_payout_multiplier: (6, 2),
         twelve_payout_multiplier: (6, 1),
     },
+
+    /// Pending house withdrawals
+    /// Will be distributed on the next `Seven` roll (to avoid affecting solvency calculations)
+    pending_house_withdrawals: StorageVec<(Identity, u64)> = StorageVec {},
 }
 
 abi Strapped {
@@ -162,6 +166,9 @@ abi Strapped {
     /// Get payout configuration
     #[storage(read)]
     fn payouts() -> PayoutConfig;
+
+    #[storage(read, write)]
+    fn request_house_withdrawal(amount: u64, to: Identity);
 }
 
 impl Strapped for Contract {
@@ -241,6 +248,21 @@ impl Strapped for Contract {
                     storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
                 }
                 storage.total_bets.write(0);
+                let mut pending_house_withdrawals = storage.pending_house_withdrawals.load_vec();
+                for (receiver, amount) in storage.pending_house_withdrawals.load_vec().iter() {
+                    let chip_asset_id = storage.chip_asset_id.read();
+                    let house_pot_total = storage.house_pot.read();
+                    if amount > house_pot_total {
+                        log_insufficient_house_withdrawal_event(amount, house_pot_total, receiver);
+                        break
+                    } else {
+                    transfer(receiver, chip_asset_id, amount);
+                    let new_house_pot = house_pot_total - amount;
+                    storage.house_pot.write(new_house_pot);
+                    storage.pending_house_withdrawals.remove(0);
+                    log_house_withdrawal_event(amount, receiver);
+                    } 
+                }
                 log_new_game_event(new_game_id, new_straps, new_modifiers);
             }
             _ => {
@@ -644,6 +666,11 @@ impl Strapped for Contract {
     #[storage(read)]
     fn payouts() -> PayoutConfig {
         storage.payouts.read()
+    }
+
+    #[storage(read, write)]
+    fn request_house_withdrawal(amount: u64, to: Identity) {
+        storage.pending_house_withdrawals.push((to, amount));
     }
 }
 

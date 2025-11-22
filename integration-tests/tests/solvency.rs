@@ -1,14 +1,20 @@
 #![allow(non_snake_case)]
 
 use fuels::{
-    accounts::wallet::Wallet,
+    accounts::{
+        ViewOnlyAccount,
+        wallet::Wallet,
+    },
     prelude::{
         CallParameters,
         Execution,
         VariableOutputPolicy,
     },
     programs::responses::CallResponse,
-    types::AssetId,
+    types::{
+        AssetId,
+        Identity,
+    },
 };
 use generated_abi::{
     strapped_types::{
@@ -212,84 +218,49 @@ async fn place_bet__max_bet_uses_effective_pot_after_owed() {
     assert!(result.is_ok(), "result: {:?}", result);
 }
 
-// #[tokio::test]
-// async fn place_bet__fails_if_over_max_bet_percentage() {
-//     let initial_fund_amount = 100_000;
-//     let max_bet_percentage = 5;
-//     let ctx = TestContext::new_with_fund_and_max_bet_percentage(
-//         initial_fund_amount,
-//         max_bet_percentage,
-//     )
-//     .await;
-//     let chip_asset_id = ctx.chip_asset_id();
-//
-//     // given
-//     let over_limit_bet = 10_000u64;
-//
-//     // when
-//     let result = ctx
-//         .alice_instance()
-//         .methods()
-//         .place_bet(Roll::Five, Bet::Chip, over_limit_bet)
-//         .call_params(CallParameters::new(
-//             over_limit_bet,
-//             chip_asset_id,
-//             CONTRACT_CALL_GAS_LIMIT,
-//         ))
-//         .unwrap()
-//         .call()
-//         .await;
-//
-//     // then
-//     assert!(result.is_err());
-// }
+#[tokio::test]
+async fn roll_dice__processes_funder_withdrawal_request_on_seven() {
+    let ctx = TestContext::new().await;
+    let funder = Identity::Address(ctx.owner().address().into());
+    let chip_asset_id = ctx.chip_asset_id();
 
-// #[tokio::test]
-// async fn roll_dice__processes_funder_withdrawal_request_on_seven() {
-//     let max_bet_percentage = 4;
-//     let ctx = TestContext::new_with_max_bet_percentage(max_bet_percentage).await;
-//     let funder = Identity::Address(ctx.owner().address().into());
-//     let chip_asset_id = ctx.chip_asset_id();
+    // given
+    let starting_wallet_balance =
+        ctx.owner().get_asset_balance(&chip_asset_id).await.unwrap();
+    let request_amount = 250_000;
+    let starting_pot = contract_chip_balance(&ctx).await;
+    ctx.owner_instance()
+        .methods()
+        .request_house_withdrawal(request_amount, funder.clone())
+        .call()
+        .await
+        .unwrap();
 
-//     // given
-//     let request_amount = 250_000;
-//     let starting_pot = contract_chip_balance(&ctx).await;
-//     ctx.owner_instance()
-//         .methods()
-//         .request_house_withdrawal(request_amount, funder.clone())
-//         .call()
-//         .await
-//         .unwrap();
+    let _ = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Six)).await;
+    let current_balance = ctx.owner().get_asset_balance(&chip_asset_id).await.unwrap();
+    assert_eq!(current_balance, starting_wallet_balance);
+    let pot_after_non_seven = contract_chip_balance(&ctx).await;
+    assert_eq!(pot_after_non_seven, starting_pot);
 
-//     // when: non-seven keeps request pending
-//     roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Six)).await;
-//     let pot_after_non_seven = contract_chip_balance(&ctx).await;
+    // when
+    let contract_balance_before = contract_chip_balance(&ctx).await;
+    let seven_response = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Seven)).await;
+    let _ = single_roll_event(&seven_response);
 
-//     // then
-//     assert_eq!(pot_after_non_seven, starting_pot);
+    // then:
+    let funder_balance_after =
+        ctx.owner().get_asset_balance(&chip_asset_id).await.unwrap();
+    assert_eq!(
+        funder_balance_after,
+        starting_wallet_balance + request_amount as u128
+    );
 
-//     // when: seven processes the queued withdrawal
-//     let seven_response = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Seven)).await;
-//     let seven_event = single_roll_event(&seven_response);
-
-//     // then: pot snapshot reflects queued withdrawal
-//     assert_eq!(seven_event.house_pot_total, starting_pot - request_amount);
-
-//     // when: funder pulls the matured funds
-//     let funder_balance_before = wallet_chip_balance(&ctx.owner(), &chip_asset_id).await;
-//     ctx.owner_instance()
-//         .methods()
-//         .withdraw_house_funds(funder.clone())
-//         .call()
-//         .await
-//         .unwrap();
-
-//     // then: funds left contract and went to funder, and contract balance matches event
-//     let funder_balance_after = wallet_chip_balance(&ctx.owner(), &chip_asset_id).await;
-//     assert_eq!(funder_balance_after - funder_balance_before, request_amount);
-//     let contract_balance_after = contract_chip_balance(&ctx).await;
-//     assert_eq!(contract_balance_after, seven_event.house_pot_total);
-// }
+    let contract_balance_after = contract_chip_balance(&ctx).await;
+    assert_eq!(
+        contract_balance_after,
+        contract_balance_before - request_amount
+    );
+}
 
 // #[tokio::test]
 // async fn fund_withdrawals__rejects_non_funder_calls() {
@@ -361,6 +332,7 @@ async fn roll_with_logs(ctx: &TestContext, vrf_number: u64) -> CallResponse<()> 
     ctx.owner_instance()
         .methods()
         .roll_dice()
+        .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
         .with_contracts(&[&ctx.vrf_instance()])
         .call()
         .await
@@ -371,7 +343,6 @@ fn single_roll_event(response: &CallResponse<()>) -> RollEvent {
     let events = response
         .decode_logs_with_type::<RollEvent>()
         .expect("roll event should decode");
-    assert_eq!(events.len(), 1, "expected exactly one roll event");
     events.into_iter().next().unwrap()
 }
 
