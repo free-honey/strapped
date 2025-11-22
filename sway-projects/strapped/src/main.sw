@@ -240,6 +240,7 @@ impl Strapped for Contract {
                 for (trigger_roll, modifier_roll, modifier) in new_modifiers.iter() {
                     storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
                 }
+                storage.total_bets.write(0);
                 log_new_game_event(new_game_id, new_straps, new_modifiers);
             }
             _ => {

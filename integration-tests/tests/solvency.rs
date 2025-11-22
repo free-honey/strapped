@@ -172,13 +172,13 @@ async fn place_bet__max_bet_uses_effective_pot_after_owed() {
     );
     // when
     // place any other bet, it will always be rejected as we are exceeding max bet % of effective pot
-    let any_bet = 1;
+    let minimal_bet = 1;
     let res = ctx
         .alice_instance()
         .methods()
-        .place_bet(Roll::Five, Bet::Chip, any_bet)
+        .place_bet(Roll::Five, Bet::Chip, minimal_bet)
         .call_params(CallParameters::new(
-            any_bet,
+            minimal_bet,
             chip_asset_id,
             CONTRACT_CALL_GAS_LIMIT,
         ))
@@ -188,23 +188,28 @@ async fn place_bet__max_bet_uses_effective_pot_after_owed() {
     // then
     assert!(res.is_err());
 
-    // // when, place bet after game ends,
-    // let _ = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Seven)).await;
-    //
-    // let result = ctx
-    //     .alice_instance()
-    //     .methods()
-    //     .place_bet(Roll::Five, Bet::Chip, any_bet)
-    //     .call_params(CallParameters::new(
-    //         any_bet,
-    //         chip_asset_id,
-    //         CONTRACT_CALL_GAS_LIMIT,
-    //     ))
-    //     .unwrap()
-    //     .call()
-    //     .await;
-    //
-    // assert!(result.is_ok());
+    // given
+    let _ = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Seven)).await;
+    // when, place bet after game ends,
+    // bet amount is now 0, and the effective pot is still 80, so max bet is now 4
+    // the bet should be accepted
+
+    // when
+    let result = ctx
+        .alice_instance()
+        .methods()
+        .place_bet(Roll::Five, Bet::Chip, minimal_bet)
+        .call_params(CallParameters::new(
+            minimal_bet,
+            chip_asset_id,
+            CONTRACT_CALL_GAS_LIMIT,
+        ))
+        .unwrap()
+        .call()
+        .await;
+
+    // then
+    assert!(result.is_ok(), "result: {:?}", result);
 }
 
 // #[tokio::test]
