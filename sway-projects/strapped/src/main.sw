@@ -64,8 +64,10 @@ storage {
     house_pot: u64 = 0,
     /// Total chips owed to players (to ensure solvency)
     chips_owed: u64 = 0,
+    /// Total bets
+    total_bets: u64 = 0,
     /// Max owed percentage
-    max_owed_percentage: u64 = 90,
+    max_owed_percentage: u64 = 5,
 
     /// Current game bets
     /// Allows the contract to track the owed chips per game for solvency checks
@@ -276,7 +278,18 @@ impl Strapped for Contract {
             Bet::Chip => {
                 let chip_asset_id = storage.chip_asset_id.read();
                 require(msg_asset_id() == chip_asset_id, "Must bet with chips");
-
+                // ensure solvency
+                // if the bet amount / (house pot - chips owed) > max owed percentage, reject
+                let house_pot = storage.house_pot.read();
+                let chips_owed = storage.chips_owed.read();
+                let max_owed_percentage = storage.max_owed_percentage.read();
+                let old_total_bets = storage.total_bets.read();
+                let effectived_total_bet_limit = (house_pot - chips_owed) * max_owed_percentage / 100;
+                let effective_single_bet_limit = effectived_total_bet_limit - old_total_bets;
+                require(amount <= effective_single_bet_limit, "Bet would exceed house solvency limits");
+                // increment total bets
+                let new_total_bets = old_total_bets + amount;
+                storage.total_bets.write(new_total_bets);
             },
             Bet::Strap(strap) => {
                 let strap_sub_id = strap.into_sub_id();

@@ -144,6 +144,175 @@ async fn roll_dice__owed_total_persists_until_claim() {
     assert_eq!(post_claim_event.chips_owed_total, 0);
 }
 
+#[tokio::test]
+async fn place_bet__max_bet_uses_effective_pot_after_owed() {
+    // max bet % is 5%
+    let ctx = TestContext::builder().with_pot_amount(100).build().await;
+    let chip_asset_id = ctx.chip_asset_id();
+    let payout_config = ctx
+        .owner_instance()
+        .methods()
+        .payouts()
+        .simulate(Execution::state_read_only())
+        .await
+        .unwrap()
+        .value;
+
+    // given
+    // Starting pot 100 (from builder) and max bet % 5%.
+    let winning_bet = 4;
+    place_chip_bet(ctx.alice_instance(), chip_asset_id, Roll::Two, winning_bet).await;
+    // when hit occurs on `Two`, the owed should be 4 * 6 = 24
+    // house pot is now 104, effective pot 80, total bet limit 4 => we should already be at the cap
+    let event =
+        single_roll_event(&roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Two)).await);
+    assert_eq!(
+        event.chips_owed_total,
+        calculate_payout(&payout_config, &Roll::Two, winning_bet)
+    );
+    // when
+    // place any other bet, it will always be rejected as we are exceeding max bet % of effective pot
+    let any_bet = 1;
+    let res = ctx
+        .alice_instance()
+        .methods()
+        .place_bet(Roll::Five, Bet::Chip, any_bet)
+        .call_params(CallParameters::new(
+            any_bet,
+            chip_asset_id,
+            CONTRACT_CALL_GAS_LIMIT,
+        ))
+        .unwrap()
+        .call()
+        .await;
+    // then
+    assert!(res.is_err());
+
+    // // when, place bet after game ends,
+    // let _ = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Seven)).await;
+    //
+    // let result = ctx
+    //     .alice_instance()
+    //     .methods()
+    //     .place_bet(Roll::Five, Bet::Chip, any_bet)
+    //     .call_params(CallParameters::new(
+    //         any_bet,
+    //         chip_asset_id,
+    //         CONTRACT_CALL_GAS_LIMIT,
+    //     ))
+    //     .unwrap()
+    //     .call()
+    //     .await;
+    //
+    // assert!(result.is_ok());
+}
+
+// #[tokio::test]
+// async fn place_bet__fails_if_over_max_bet_percentage() {
+//     let initial_fund_amount = 100_000;
+//     let max_bet_percentage = 5;
+//     let ctx = TestContext::new_with_fund_and_max_bet_percentage(
+//         initial_fund_amount,
+//         max_bet_percentage,
+//     )
+//     .await;
+//     let chip_asset_id = ctx.chip_asset_id();
+//
+//     // given
+//     let over_limit_bet = 10_000u64;
+//
+//     // when
+//     let result = ctx
+//         .alice_instance()
+//         .methods()
+//         .place_bet(Roll::Five, Bet::Chip, over_limit_bet)
+//         .call_params(CallParameters::new(
+//             over_limit_bet,
+//             chip_asset_id,
+//             CONTRACT_CALL_GAS_LIMIT,
+//         ))
+//         .unwrap()
+//         .call()
+//         .await;
+//
+//     // then
+//     assert!(result.is_err());
+// }
+
+// #[tokio::test]
+// async fn roll_dice__processes_funder_withdrawal_request_on_seven() {
+//     let max_bet_percentage = 4;
+//     let ctx = TestContext::new_with_max_bet_percentage(max_bet_percentage).await;
+//     let funder = Identity::Address(ctx.owner().address().into());
+//     let chip_asset_id = ctx.chip_asset_id();
+
+//     // given
+//     let request_amount = 250_000;
+//     let starting_pot = contract_chip_balance(&ctx).await;
+//     ctx.owner_instance()
+//         .methods()
+//         .request_house_withdrawal(request_amount, funder.clone())
+//         .call()
+//         .await
+//         .unwrap();
+
+//     // when: non-seven keeps request pending
+//     roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Six)).await;
+//     let pot_after_non_seven = contract_chip_balance(&ctx).await;
+
+//     // then
+//     assert_eq!(pot_after_non_seven, starting_pot);
+
+//     // when: seven processes the queued withdrawal
+//     let seven_response = roll_with_logs(&ctx, roll_to_vrf_number(&Roll::Seven)).await;
+//     let seven_event = single_roll_event(&seven_response);
+
+//     // then: pot snapshot reflects queued withdrawal
+//     assert_eq!(seven_event.house_pot_total, starting_pot - request_amount);
+
+//     // when: funder pulls the matured funds
+//     let funder_balance_before = wallet_chip_balance(&ctx.owner(), &chip_asset_id).await;
+//     ctx.owner_instance()
+//         .methods()
+//         .withdraw_house_funds(funder.clone())
+//         .call()
+//         .await
+//         .unwrap();
+
+//     // then: funds left contract and went to funder, and contract balance matches event
+//     let funder_balance_after = wallet_chip_balance(&ctx.owner(), &chip_asset_id).await;
+//     assert_eq!(funder_balance_after - funder_balance_before, request_amount);
+//     let contract_balance_after = contract_chip_balance(&ctx).await;
+//     assert_eq!(contract_balance_after, seven_event.house_pot_total);
+// }
+
+// #[tokio::test]
+// async fn fund_withdrawals__rejects_non_funder_calls() {
+//     let max_bet_percentage = 4;
+//     let ctx = TestContext::new_with_max_bet_percentage(max_bet_percentage).await;
+//     let funder = Identity::Address(ctx.owner().address().into());
+//     let chip_asset_id = ctx.chip_asset_id();
+//     let request_amount = 100_000;
+
+//     // when
+//     let request_result = ctx
+//         .alice_instance()
+//         .methods()
+//         .request_house_withdrawal(request_amount, funder.clone())
+//         .call()
+//         .await;
+//     let withdraw_result = ctx
+//         .alice_instance()
+//         .methods()
+//         .withdraw_house_funds(funder.clone())
+//         .call()
+//         .await;
+
+//     // then
+//     assert!(request_result.is_err());
+//     assert!(withdraw_result.is_err());
+// }
+
 async fn place_chip_bet(
     contract: strapped_types::MyContract<Wallet>,
     chip_asset_id: AssetId,

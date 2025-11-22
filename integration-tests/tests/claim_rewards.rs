@@ -436,12 +436,14 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
 
@@ -484,12 +486,14 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
 
@@ -576,7 +580,10 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             })
             .collect::<Vec<_>>();
 
-        let ctx = TestContext::new_with_extra_assets(extra_assets).await;
+        let ctx = TestContext::builder()
+            .with_extra_assets(extra_assets)
+            .build()
+            .await;
 
         ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
         let available_triggers = modifier_triggers_for_roll(some_seven_vrf_number);
@@ -664,12 +671,14 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
     let (trigger_roll, modifier_roll, modifier) =

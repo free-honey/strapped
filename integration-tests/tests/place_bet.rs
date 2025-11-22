@@ -79,12 +79,14 @@ async fn place_bet__can_bet_strap() {
     let strap_sub_id = strap_to_sub_id(&strap);
     let strap_asset_id = contract_id.asset_id(&strap_sub_id);
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: strap_asset_id,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: strap_asset_id,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     // given
     let strap_asset_id = ctx.contract_id().asset_id(&strap_sub_id);
