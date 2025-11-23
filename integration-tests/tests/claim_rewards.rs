@@ -2,12 +2,26 @@
 
 use fuels::{
     accounts::ViewOnlyAccount,
-    prelude::{AssetConfig, AssetId, CallParameters, Execution, VariableOutputPolicy},
+    prelude::{
+        AssetConfig,
+        AssetId,
+        CallParameters,
+        Execution,
+        VariableOutputPolicy,
+    },
     tx::ContractIdExt,
 };
 use generated_abi::{
-    contract_id, strap_to_sub_id,
-    strapped_types::{self, Bet, Modifier, Roll, Strap, StrapKind},
+    contract_id,
+    strap_to_sub_id,
+    strapped_types::{
+        self,
+        Bet,
+        Modifier,
+        Roll,
+        Strap,
+        StrapKind,
+    },
     test_helpers::*,
 };
 use proptest::prelude::*;
@@ -52,7 +66,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .value;
 
     let target_roll = roll_from_vrf_bucket(vrf_number);
-    let expected_multiplier = payout_multiplier(&payout_config, &target_roll);
+    let winnings = calculate_payout(&payout_config, &target_roll, bet_amount);
 
     place_chip_bet(&ctx, target_roll.clone(), bet_amount).await;
 
@@ -80,7 +94,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .unwrap();
 
     // when
-    if expected_multiplier != 0 {
+    if winnings != 0 {
         ctx.alice_contract()
             .methods()
             .claim_rewards(bet_game_id, Vec::new())
@@ -91,7 +105,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
     }
 
     // then
-    let expected = balance_before + bet_amount * expected_multiplier;
+    let expected = balance_before + winnings;
     let actual: u64 = ctx
         .alice()
         .get_asset_balance(&chip_asset_id)
@@ -109,6 +123,14 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
 
     // given
     let chip_asset_id = ctx.chip_asset_id();
+    let payout_config = ctx
+        .owner_contract()
+        .methods()
+        .payouts()
+        .simulate(Execution::state_read_only())
+        .await
+        .unwrap()
+        .value;
 
     let bet_amount = 100;
     let roll = Roll::Six;
@@ -122,10 +144,11 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .await
         .unwrap()
         .value;
+    let hits = 3;
 
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    for _ in 0..hits {
+        ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    }
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     let balance_before: u64 = ctx
@@ -153,7 +176,8 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .unwrap()
         .try_into()
         .unwrap();
-    let expected = balance_before + bet_amount * 2 * 3;
+    let winnings = hits * calculate_payout(&payout_config, &roll, bet_amount);
+    let expected = balance_before + winnings;
     assert_eq!(balance_after, expected);
 }
 

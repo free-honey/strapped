@@ -26,6 +26,8 @@ type RollIndex = u32;
 
 
 storage {
+    /// Owner of the contract
+    contract_owner: Option<Identity> = Option::None,
     /// History of rolls for each game
     roll_history: StorageMap<GameId, StorageVec<Roll>> = StorageMap {},
     /// Current roll of the active game
@@ -34,7 +36,6 @@ storage {
     next_roll_block_height: Option<u32> = None,
     /// Number of blocks between rolls
     roll_frequency: u32 = 1,
-
     /// ID of the VRF contract to use for randomness
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
     /// Asset ID of the chips used for betting
@@ -58,8 +59,6 @@ storage {
     modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
     // Active modifiers for the current game
     active_modifiers: StorageMap<GameId, StorageVec<(Roll, Modifier, RollIndex)>> = StorageMap {},
-
-
     /// Total chips in the house pot
     house_pot: u64 = 0,
     /// Total chips owed to players (to ensure solvency)
@@ -68,12 +67,10 @@ storage {
     total_bets: u64 = 0,
     /// Max owed percentage
     max_owed_percentage: u64 = 5,
-
     /// Current game bets
     /// Allows the contract to track the owed chips per game for solvency checks
     /// Is cleared after each game ends
     current_game_bets: StorageMap<Roll, u64> = StorageMap {},
-
     /// Payout configuration
     // TODO: probably doesn't need to be in storage, can be a constant
     payouts: PayoutConfig = PayoutConfig {
@@ -89,7 +86,6 @@ storage {
         eleven_payout_multiplier: (6, 2),
         twelve_payout_multiplier: (6, 1),
     },
-
     /// Pending house withdrawals
     /// Will be distributed on the next `Seven` roll (to avoid affecting solvency calculations)
     pending_house_withdrawals: StorageVec<(Identity, u64)> = StorageVec {},
@@ -179,6 +175,14 @@ impl Strapped for Contract {
         storage.roll_frequency.write(roll_frequency);
         let current_height = height();
         storage.next_roll_block_height.write(Some(current_height + roll_frequency));
+        let caller = match msg_sender() {
+            Ok(id) => id,
+            Err(_) => {
+                require(false, "initialization requires a known sender");
+                return;
+            }
+        };
+        storage.contract_owner.write(Some(caller));
         log_initialized_event(vrf_contract_id, chip_asset_id, roll_frequency, current_height);
     }
 
@@ -670,7 +674,23 @@ impl Strapped for Contract {
 
     #[storage(read, write)]
     fn request_house_withdrawal(amount: u64, to: Identity) {
-        storage.pending_house_withdrawals.push((to, amount));
+        // check that the requester is the contract owner
+        let requester = match msg_sender() {
+            Ok(id) => id,
+            Err(_) => {
+                require(false, "house withdrawal requests require a known sender");
+                return;
+            }
+        };
+        match storage.contract_owner.read(){
+            Some(owner) => {
+                require(requester == owner, "Only the contract owner can request house withdrawals");
+                storage.pending_house_withdrawals.push((to, amount));
+            },
+            None => {
+                require(false, "contract owner not set. Please initialize the contract first.");
+            }
+        };
     }
 }
 

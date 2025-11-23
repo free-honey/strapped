@@ -6,6 +6,7 @@ members = [
     "rust-crates/indexer",
     "rust-crates/tui",
     "integration-tests",
+    "xtask",
 ]
 resolver = "2"
 

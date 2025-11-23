@@ -262,32 +262,25 @@ async fn roll_dice__processes_funder_withdrawal_request_on_seven() {
     );
 }
 
-// #[tokio::test]
-// async fn fund_withdrawals__rejects_non_funder_calls() {
-//     let max_bet_percentage = 4;
-//     let ctx = TestContext::new_with_max_bet_percentage(max_bet_percentage).await;
-//     let funder = Identity::Address(ctx.owner().address().into());
-//     let chip_asset_id = ctx.chip_asset_id();
-//     let request_amount = 100_000;
+#[tokio::test]
+async fn fund_withdrawals__rejects_non_funder_calls() {
+    let ctx = TestContext::new().await;
 
-//     // when
-//     let request_result = ctx
-//         .alice_instance()
-//         .methods()
-//         .request_house_withdrawal(request_amount, funder.clone())
-//         .call()
-//         .await;
-//     let withdraw_result = ctx
-//         .alice_instance()
-//         .methods()
-//         .withdraw_house_funds(funder.clone())
-//         .call()
-//         .await;
+    // given
+    let alice = Identity::Address(ctx.alice().address().into());
+    let request_amount = 100_000;
 
-//     // then
-//     assert!(request_result.is_err());
-//     assert!(withdraw_result.is_err());
-// }
+    // when
+    let request_result = ctx
+        .alice_instance()
+        .methods()
+        .request_house_withdrawal(request_amount, alice.clone())
+        .call()
+        .await;
+
+    // then
+    assert!(request_result.is_err());
+}
 
 async fn place_chip_bet(
     contract: strapped_types::MyContract<Wallet>,
