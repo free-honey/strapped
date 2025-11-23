@@ -547,12 +547,11 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8), // wallet + overview
-            Constraint::Length(4), // roll history
-            // Constraint::Length(17), // horizontal grid (even taller cells)
-            Constraint::Length(12), // horizontal grid (even taller cells)
-            Constraint::Length(14), // shop + previous games (about 4x taller)
-            Constraint::Length(12), // status/errors + help
+            Constraint::Percentage(18), // wallet + overview
+            Constraint::Percentage(8),  // roll history
+            Constraint::Percentage(32), // grid
+            Constraint::Percentage(22), // shop + previous games
+            Constraint::Percentage(20), // status/errors + help
         ])
         .split(f.area());
 
@@ -570,7 +569,7 @@ fn ui(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
 fn draw_top(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Length(4)])
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
     draw_wallet_panel(f, rows[0], snap);
     draw_overview_panel(f, rows[1], snap);
@@ -832,13 +831,13 @@ fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         Some(h) => h.to_string(),
         None => String::from("N/A"),
     };
-    let text = match snap.vrf_mode {
+    let mut lines = Vec::new();
+    let vrf_line = match snap.vrf_mode {
         VrfMode::Fake => {
             let vrf_roll = vrf_to_roll(snap.vrf_number);
             format!(
-                "Game: {} | Pot: {} | Fake VRF: {} ({:?}) | Next Roll Height: {} | Current Block Height: {}",
+                "Game: {} | Fake VRF: {} ({:?}) | Next Roll Height: {} | Current Block Height: {}",
                 snap.current_game_id,
-                snap.pot_balance,
                 snap.vrf_number,
                 vrf_roll,
                 next_roll_text.as_str(),
@@ -846,15 +845,20 @@ fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
             )
         }
         VrfMode::Pseudo => format!(
-            "Game: {} | Pot: {} | Pseudo VRF Mode | Next Roll Height: {} | Current Block Height: {}",
+            "Game: {} | Pseudo VRF Mode | Next Roll Height: {} | Current Block Height: {}",
             snap.current_game_id,
-            snap.pot_balance,
             next_roll_text.as_str(),
             snap.current_block_height
         ),
     };
-    let widget =
-        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Game"));
+    lines.push(Line::from(vrf_line));
+    lines.push(Line::from(format!(
+        "Pot: {} | Owed: {} | Chip Bets: {} | Remaining Capacity: {}",
+        snap.pot_balance, snap.chips_owed, snap.total_chip_bets, snap.available_bet_capacity
+    )));
+    let widget = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Game"))
+        .wrap(Wrap { trim: false });
     f.render_widget(widget, area);
 }
 

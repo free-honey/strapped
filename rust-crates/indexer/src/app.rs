@@ -362,6 +362,8 @@ impl<
         tracing::info!("Handling RollEvent at height {}", height);
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.rolls.push(event.rolled_value);
+        snapshot.chips_owed = event.chips_owed_total;
+        snapshot.pot_size = event.house_pot_total;
         let frequency = self.frequency()?;
         self.refresh_height(&mut snapshot, height);
         snapshot.next_roll_height =
@@ -403,6 +405,8 @@ impl<
             game_id,
             new_straps,
             new_modifiers,
+            pot_size,
+            chips_owed_total,
         } = event;
 
         let (previous_snapshot, _) = self.snapshots.latest_snapshot()?;
@@ -418,7 +422,9 @@ impl<
             .write_historical_snapshot(previous_snapshot.game_id, &historical);
 
         let mut snapshot = OverviewSnapshot::default();
-        snapshot.pot_size = previous_snapshot.pot_size;
+        snapshot.pot_size = pot_size;
+        snapshot.chips_owed = chips_owed_total;
+        snapshot.total_chip_bets = 0;
         snapshot.game_id = game_id;
         snapshot.roll_frequency = self.roll_frequency;
         snapshot.first_roll_height = self.first_roll_height;
@@ -453,6 +459,7 @@ impl<
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_add(amount);
+        snapshot.total_chip_bets = snapshot.total_chip_bets.saturating_add(amount);
         let idx = roll_to_index(&roll);
         snapshot.current_block_height = height;
 
@@ -542,6 +549,9 @@ impl<
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_sub(total_chips_winnings);
+        snapshot.chips_owed = snapshot
+            .chips_owed
+            .saturating_sub(total_chips_winnings);
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
 

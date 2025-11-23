@@ -219,7 +219,14 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             let game_id = u32::try_from(event.game_id).ok()?;
             let roll_index = u32::try_from(event.roll_index).ok()?;
             let rolled_value = map_roll(event.rolled_value);
-            Some(Event::roll_event(game_id, roll_index, rolled_value))
+            Some(Event::roll_event(
+                game_id,
+                roll_index,
+                rolled_value,
+                event.roll_total_chips,
+                event.chips_owed_total,
+                event.house_pot_total,
+            ))
         },
         AbiNewGameEvent => |event| {
             let game_id = u32::try_from(event.game_id).ok()?;
@@ -243,6 +250,8 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
                 game_id,
                 new_straps,
                 new_modifiers,
+                pot_size: event.pot_size,
+                chips_owed_total: event.chips_owed_total,
             };
             Some(Event::ContractEvent(ContractEvent::NewGame(inner)))
         },

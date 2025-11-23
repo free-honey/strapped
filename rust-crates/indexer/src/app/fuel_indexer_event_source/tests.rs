@@ -215,8 +215,13 @@ async fn next_event_batch__can_get_roll_event() {
     }
 
     let actual_event = actual_event.expect("expected to receive roll event");
-    let expected = Event::roll_event(0, 1, crate::events::Roll::Two);
-    assert_eq!(actual_event, expected);
+    if let Event::ContractEvent(ContractEvent::Roll(inner)) = actual_event {
+        assert_eq!(inner.game_id, 0);
+        assert_eq!(inner.roll_index, 1);
+        assert_eq!(inner.rolled_value, crate::events::Roll::Two);
+    } else {
+        panic!("expected roll event, got {actual_event:?}");
+    }
 }
 
 #[tokio::test]

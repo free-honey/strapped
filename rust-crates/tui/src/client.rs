@@ -76,6 +76,7 @@ const STRAPPED_BIN_CANDIDATES: [&str; 1] =
 // const STRAPPED_BIN_CANDIDATES: [&str; 1] =
 //     ["./sway-projects/strapped/out/debug/strapped.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
+const MAX_OWED_PERCENTAGE: u64 = 5;
 const GAME_HISTORY_DEPTH: usize = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,6 +105,9 @@ pub struct AppSnapshot {
     )>,
     pub owned_straps: Vec<(strapped::Strap, u64)>,
     pub pot_balance: u64,
+    pub chips_owed: u64,
+    pub total_chip_bets: u64,
+    pub available_bet_capacity: u64,
     pub chip_balance: u64,
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
@@ -357,6 +361,13 @@ impl AppController {
         let owned_straps = self.cached_owned_straps.clone();
         let chip_balance = self.cached_chip_balance.unwrap_or_default();
         let pot_balance = overview.pot_size;
+        let chips_owed = overview.chips_owed;
+        let total_chip_bets = overview.total_chip_bets;
+        let available_bet_capacity = {
+            let safe_pool = pot_balance.saturating_sub(chips_owed);
+            let limit = safe_pool.saturating_mul(MAX_OWED_PERCENTAGE) / 100;
+            limit.saturating_sub(total_chip_bets)
+        };
 
         let mut summaries: Vec<PreviousGameSummary> = Vec::new();
         for sg in &self.shared_prev_games {
@@ -413,6 +424,9 @@ impl AppController {
             active_modifiers,
             owned_straps,
             pot_balance,
+            chips_owed,
+            total_chip_bets,
+            available_bet_capacity,
             chip_balance,
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
@@ -1826,6 +1840,21 @@ fn sync_status(
     snapshot.errors = controller.errors.clone();
 }
 
+fn sync_error(
+    controller: &mut AppController,
+    snapshot: &mut AppSnapshot,
+    error_msg: impl Into<String>,
+) {
+    let error_msg = error_msg.into();
+    controller.push_errors(vec![error_msg]);
+    if let Some(cache) = controller.last_snapshot.as_mut() {
+        cache.errors = controller.errors.clone();
+        cache.status = controller.status.clone();
+    }
+    snapshot.errors = controller.errors.clone();
+    snapshot.status = controller.status.clone();
+}
+
 fn process_post_action(
     controller: &mut AppController,
     snapshot: &mut AppSnapshot,
@@ -2169,12 +2198,24 @@ async fn run_loop(
                                 "draw while submitting chip bet failed",
                             )?;
                         }
-                        controller
-                            .place_chip_bet(amount)
-                            .await
-                            .wrap_err_with(|| format!("placing chip bet of {} failed", amount))?;
-                        request_snapshot = true;
-                        refresh_chip_balance = true;
+                        match controller.place_chip_bet(amount).await {
+                            Ok(_) => {
+                                request_snapshot = true;
+                                refresh_chip_balance = true;
+                            }
+                            Err(e) => {
+                                let msg = format!("Chip bet failed: {}", e);
+                                error!(error = %e, "chip bet failed");
+                                if let Some(snapshot) = last_snapshot.as_mut() {
+                                    sync_error(&mut controller, snapshot, msg);
+                                    ui::draw(ui_state, snapshot)
+                                        .wrap_err("draw after chip bet failure failed")?;
+                                } else {
+                                    controller.push_errors(vec![msg]);
+                                }
+                                continue;
+                            }
+                        }
                     }
                     ui::UserEvent::Purchase => {
                         if let Some(snapshot) = last_snapshot.as_mut() {
@@ -2213,12 +2254,24 @@ async fn run_loop(
                                 "draw while submitting strap bet failed",
                             )?;
                         }
-                        controller
-                            .place_strap_bet(strap, amount)
-                            .await
-                            .wrap_err("placing strap bet failed")?;
-                        request_snapshot = true;
-                        refresh_strap_inventory = true;
+                        match controller.place_strap_bet(strap, amount).await {
+                            Ok(_) => {
+                                request_snapshot = true;
+                                refresh_strap_inventory = true;
+                            }
+                            Err(e) => {
+                                let msg = format!("Strap bet failed: {}", e);
+                                error!(error = %e, "strap bet failed");
+                                if let Some(snapshot) = last_snapshot.as_mut() {
+                                    sync_error(&mut controller, snapshot, msg);
+                                    ui::draw(ui_state, snapshot)
+                                        .wrap_err("draw after strap bet failure failed")?;
+                                } else {
+                                    controller.push_errors(vec![msg]);
+                                }
+                                continue;
+                            }
+                        }
                     }
                     ui::UserEvent::Roll => {
                         if let Some(snapshot) = last_snapshot.as_ref() {

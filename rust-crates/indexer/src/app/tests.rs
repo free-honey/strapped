@@ -179,7 +179,17 @@ async fn run__roll_event__updates_snapshot() {
     );
     app.roll_frequency = Some(10);
 
-    let roll_event = Event::roll_event(game_id, roll_index, rolled_value.clone());
+    let chips_owed_total = 25;
+    let house_pot_total = 200;
+    let roll_total_chips = 50;
+    let roll_event = Event::roll_event(
+        game_id,
+        roll_index,
+        rolled_value.clone(),
+        roll_total_chips,
+        chips_owed_total,
+        house_pot_total,
+    );
     let roll_height = 110;
 
     // when
@@ -193,6 +203,8 @@ async fn run__roll_event__updates_snapshot() {
     let expected = {
         let mut snap = existing_snapshot;
         snap.rolls.push(rolled_value);
+        snap.chips_owed = chips_owed_total;
+        snap.pot_size = house_pot_total;
         snap.current_block_height = roll_height;
         snap
     };
@@ -239,11 +251,15 @@ async fn run__new_game_event__resets_overview_snapshot() {
         Strap::new(2, StrapKind::Coat, Modifier::Nothing),
         150,
     );
+    let new_pot_size = 750;
+    let new_chips_owed = 25;
 
     let new_game_event = ContractEvent::NewGame(NewGameEvent {
         game_id: next_game_id,
         new_straps: vec![strap_reward.clone()],
         new_modifiers: vec![shop_modifier.clone()],
+        pot_size: new_pot_size,
+        chips_owed_total: new_chips_owed,
     });
     let new_game_height = 210;
 
@@ -265,7 +281,8 @@ async fn run__new_game_event__resets_overview_snapshot() {
         shop_modifier.2.clone(),
         false,
     )];
-    expected.pot_size = existing_snapshot.pot_size;
+    expected.pot_size = new_pot_size;
+    expected.chips_owed = new_chips_owed;
     expected.current_block_height = new_game_height;
     assert_eq!(expected, actual);
 
@@ -308,11 +325,15 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
         game_id: 2,
         new_straps: vec![],
         new_modifiers: vec![],
+        pot_size: 300,
+        chips_owed_total: 10,
     });
     let second_new_game = ContractEvent::NewGame(NewGameEvent {
         game_id: 3,
         new_straps: vec![],
         new_modifiers: vec![],
+        pot_size: 400,
+        chips_owed_total: 0,
     });
 
     event_sender
@@ -395,6 +416,8 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         game_id: 6,
         new_straps: vec![],
         new_modifiers: vec![],
+        pot_size: 0,
+        chips_owed_total: 0,
     });
 
     event_sender

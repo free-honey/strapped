@@ -56,17 +56,23 @@ pub struct NewGameEvent {
     game_id: u32,
     new_straps: Vec<(Roll, Strap, u64)>,
     new_modifiers: Vec<(Roll, Roll, Modifier)>,
+    pot_size: u64,
+    chips_owed_total: u64,
 }
 
 pub fn log_new_game_event(
     game_id: u32,
     new_straps: Vec<(Roll, Strap, u64)>,
     new_modifiers: Vec<(Roll, Roll, Modifier)>,
+    pot_size: u64,
+    chips_owed_total: u64,
 ) {
     let event = NewGameEvent {
         game_id,
         new_straps,
         new_modifiers,
+        pot_size,
+        chips_owed_total,
     };
     log(event);
 }

@@ -267,7 +267,9 @@ impl Strapped for Contract {
                     log_house_withdrawal_event(amount, receiver);
                     } 
                 }
-                log_new_game_event(new_game_id, new_straps, new_modifiers);
+                let pot_size = storage.house_pot.read();
+                let chips_owed_total = storage.chips_owed.read();
+                log_new_game_event(new_game_id, new_straps, new_modifiers, pot_size, chips_owed_total);
             }
             _ => {
                 let modifier_triggers = storage.modifier_triggers.load_vec();
