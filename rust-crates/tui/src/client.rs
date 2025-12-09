@@ -35,8 +35,10 @@ use fuels::{
 };
 use generated_abi::{
     strap_cost,
-    strapped_types::ClaimRewardsEvent,
-    strapped_types::RollEvent,
+    strapped_types::{
+        ClaimRewardsEvent,
+        RollEvent,
+    },
 };
 use std::{
     cmp::Ordering,
@@ -1441,18 +1443,16 @@ impl AppController {
         let balance_chip_delta = post_chip.saturating_sub(pre_chip);
         let balance_chip_delta_u64 =
             u64::try_from(balance_chip_delta).unwrap_or(u64::MAX);
-        let event_chip_delta = claim_response
-            .as_ref()
-            .and_then(|resp| {
-                resp.decode_logs_with_type::<ClaimRewardsEvent>()
-                    .ok()
-                    .and_then(|events| {
-                        events
-                            .iter()
-                            .find(|ev| ev.player == self.alice_identity)
-                            .map(|ev| ev.total_chips_winnings)
-                    })
-            });
+        let event_chip_delta = claim_response.as_ref().and_then(|resp| {
+            resp.decode_logs_with_type::<ClaimRewardsEvent>()
+                .ok()
+                .and_then(|events| {
+                    events
+                        .iter()
+                        .find(|ev| ev.player == self.alice_identity)
+                        .map(|ev| ev.total_chips_winnings)
+                })
+        });
         let claimed_chips = event_chip_delta.unwrap_or(balance_chip_delta_u64);
         let total_chip_bet: u64 = self
             .alice_bets_hist
