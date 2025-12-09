@@ -200,7 +200,7 @@ struct OverviewSnapshotDto {
     next_roll_height: Option<u32>,
     rewards: Vec<(RollDto, StrapDto, u64)>,
     total_chip_bets: u64,
-    total_bets: Vec<(u64, Vec<(StrapDto, u64)>)>,
+    specific_bets: Vec<(u64, Vec<(StrapDto, u64)>)>,
     modifiers_active: Vec<Option<ModifierDto>>,
     modifier_shop: Vec<(RollDto, RollDto, ModifierDto, bool)>,
 }

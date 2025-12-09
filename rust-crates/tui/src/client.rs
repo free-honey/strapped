@@ -35,6 +35,7 @@ use fuels::{
 };
 use generated_abi::{
     strap_cost,
+    strapped_types::ClaimRewardsEvent,
     strapped_types::RollEvent,
 };
 use std::{
@@ -1355,7 +1356,7 @@ impl AppController {
         let me = self.clients.alice.clone();
         let mut errs: Vec<String> = Vec::new();
         // pre-claim balances
-        let pre_chip = me
+        let pre_chip: u128 = me
             .account()
             .get_asset_balance(&self.clients.chip_asset_id)
             .await
@@ -1390,6 +1391,7 @@ impl AppController {
         }
 
         let mut claimed_ok = false;
+        let mut claim_response = None;
         match me
             .methods()
             .claim_rewards(game_id, enabled.clone())
@@ -1398,8 +1400,9 @@ impl AppController {
             .call()
             .await
         {
-            Ok(_) => {
+            Ok(resp) => {
                 claimed_ok = true;
+                claim_response = Some(resp);
             }
             Err(e) => {
                 error!(
@@ -1430,12 +1433,48 @@ impl AppController {
         // mark as claimed in local cache for the current user
         self.alice_claimed.insert(game_id);
         // post-claim deltas
-        let post_chip = me
+        let post_chip: u128 = me
             .account()
             .get_asset_balance(&self.clients.chip_asset_id)
             .await
             .unwrap_or(0);
-        let chip_delta = post_chip.saturating_sub(pre_chip);
+        let balance_chip_delta = post_chip.saturating_sub(pre_chip);
+        let balance_chip_delta_u64 =
+            u64::try_from(balance_chip_delta).unwrap_or(u64::MAX);
+        let event_chip_delta = claim_response
+            .as_ref()
+            .and_then(|resp| {
+                resp.decode_logs_with_type::<ClaimRewardsEvent>()
+                    .ok()
+                    .and_then(|events| {
+                        events
+                            .iter()
+                            .find(|ev| ev.player == self.alice_identity)
+                            .map(|ev| ev.total_chips_winnings)
+                    })
+            });
+        let claimed_chips = event_chip_delta.unwrap_or(balance_chip_delta_u64);
+        let total_chip_bet: u64 = self
+            .alice_bets_hist
+            .get(&game_id)
+            .map(|bets| {
+                bets.iter()
+                    .flat_map(|(_, bs)| bs.iter())
+                    .filter_map(|(b, amt, _)| match b {
+                        strapped::Bet::Chip => Some(*amt),
+                        _ => None,
+                    })
+                    .sum()
+            })
+            .unwrap_or(0);
+        let net_chips: i128 = i128::from(claimed_chips) - i128::from(total_chip_bet);
+        let net_part = if total_chip_bet > 0 {
+            let sign = if net_chips >= 0 { "+" } else { "-" };
+            let magnitude = net_chips.unsigned_abs();
+            format!(" | Bet {} | Net {}{}", total_chip_bet, sign, magnitude)
+        } else {
+            String::from("")
+        };
         let mut strap_deltas: Vec<String> = Vec::new();
         for (s, pre) in pre_straps {
             let sub = strapped_contract::strap_to_sub_id(&s);
@@ -1452,8 +1491,8 @@ impl AppController {
             format!(" | Straps: {}", strap_deltas.join(" "))
         };
         self.set_status(format!(
-            "Claimed game {} | Chips +{}{}",
-            game_id, chip_delta, strap_part
+            "Claimed game {} | Chips {}{}{}",
+            game_id, claimed_chips, net_part, strap_part
         ));
         self.push_errors(errs);
         self.invalidate_cache();
@@ -2090,6 +2129,7 @@ async fn run_loop(
 
     let mut pending_post_action: Option<PostAction> = None;
     let mut last_snapshot: Option<AppSnapshot> = None;
+    let mut snapshot_worker_closed = false;
 
     loop {
         tokio::select! {
@@ -2134,6 +2174,7 @@ async fn run_loop(
                     }
                     None => {
                         tracing::warn!("snapshot worker channel closed");
+                        snapshot_worker_closed = true;
                         break;
                     }
                 }
@@ -2488,8 +2529,20 @@ async fn run_loop(
     }
 
     let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::Shutdown);
-    if let Err(err) = snapshot_handle.await {
-        warn!(?err, "snapshot worker task failed");
+    match snapshot_handle.await {
+        Ok(Ok(())) => {
+            if snapshot_worker_closed {
+                return Err(anyhow!(
+                    "Snapshot worker exited unexpectedly; check the indexer connection"
+                ));
+            }
+        }
+        Ok(Err(err)) => {
+            return Err(err).wrap_err("snapshot worker failed");
+        }
+        Err(err) => {
+            return Err(anyhow!(err)).wrap_err("snapshot worker panicked");
+        }
     }
     Ok(())
 }
