@@ -23,43 +23,11 @@ type Amount = u64;
 type RollIndex = u32;
 
 
-pub struct PayoutConfig {
-    two_payout_multiplier: u64,
-    three_payout_multiplier: u64,
-    four_payout_multiplier: u64,
-    five_payout_multiplier: u64,
-    six_payout_multiplier: u64,
-    seven_payout_multiplier: u64,
-    eight_payout_multiplier: u64,
-    nine_payout_multiplier: u64,
-    ten_payout_multiplier: u64,
-    eleven_payout_multiplier: u64,
-    twelve_payout_multiplier: u64,
-}
 
-impl PayoutConfig {
-    pub fn calculate_payout(self, principal: u64, roll: Roll) -> u64 {
-        principal * self.multiplier_for_roll(roll)
-    }
-
-    fn multiplier_for_roll(self, roll: Roll) -> u64 {
-        match roll {
-            Roll::Two => self.two_payout_multiplier,
-            Roll::Three => self.three_payout_multiplier,
-            Roll::Four => self.four_payout_multiplier,
-            Roll::Five => self.five_payout_multiplier,
-            Roll::Six => self.six_payout_multiplier,
-            Roll::Seven => self.seven_payout_multiplier,
-            Roll::Eight => self.eight_payout_multiplier,
-            Roll::Nine => self.nine_payout_multiplier,
-            Roll::Ten => self.ten_payout_multiplier,
-            Roll::Eleven => self.eleven_payout_multiplier,
-            Roll::Twelve => self.twelve_payout_multiplier,
-        }
-    }
-}
 
 storage {
+    /// Owner of the contract
+    contract_owner: Option<Identity> = Option::None,
     /// History of rolls for each game
     roll_history: StorageMap<GameId, StorageVec<Roll>> = StorageMap {},
     /// Current roll of the active game
@@ -68,7 +36,6 @@ storage {
     next_roll_block_height: Option<u32> = None,
     /// Number of blocks between rolls
     roll_frequency: u32 = 1,
-
     /// ID of the VRF contract to use for randomness
     vrf_contract_id: b256 = 0x0000000000000000000000000000000000000000000000000000000000000000,
     /// Asset ID of the chips used for betting
@@ -92,29 +59,36 @@ storage {
     modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
     // Active modifiers for the current game
     active_modifiers: StorageMap<GameId, StorageVec<(Roll, Modifier, RollIndex)>> = StorageMap {},
-
-
     /// Total chips in the house pot
     house_pot: u64 = 0,
     /// Total chips owed to players (to ensure solvency)
     chips_owed: u64 = 0,
+    /// Total bets
+    total_bets: u64 = 0,
     /// Max owed percentage
-    max_owed_percentage: u64 = 90,
-
-    // Payout configuration
+    max_owed_percentage: u64 = 5,
+    /// Current game bets
+    /// Allows the contract to track the owed chips per game for solvency checks
+    /// Is cleared after each game ends
+    current_game_bets: StorageMap<Roll, u64> = StorageMap {},
+    /// Payout configuration
+    // TODO: probably doesn't need to be in storage, can be a constant
     payouts: PayoutConfig = PayoutConfig {
-        two_payout_multiplier: 6,
-        three_payout_multiplier: 5,
-        four_payout_multiplier: 4,
-        five_payout_multiplier: 3,
-        six_payout_multiplier: 2,
-        seven_payout_multiplier: 0,
-        eight_payout_multiplier: 2,
-        nine_payout_multiplier: 3,
-        ten_payout_multiplier: 4,
-        eleven_payout_multiplier: 5,
-        twelve_payout_multiplier: 6,
+        two_payout_multiplier: (6, 1),
+        three_payout_multiplier: (6, 2),
+        four_payout_multiplier: (6, 3),
+        five_payout_multiplier: (6, 4),
+        six_payout_multiplier: (6, 5),
+        seven_payout_multiplier: (0, 1),
+        eight_payout_multiplier: (6, 5),
+        nine_payout_multiplier: (6, 4),
+        ten_payout_multiplier: (6, 3),
+        eleven_payout_multiplier: (6, 2),
+        twelve_payout_multiplier: (6, 1),
     },
+    /// Pending house withdrawals
+    /// Will be distributed on the next `Seven` roll (to avoid affecting solvency calculations)
+    pending_house_withdrawals: StorageVec<(Identity, u64)> = StorageVec {},
 }
 
 abi Strapped {
@@ -188,6 +162,9 @@ abi Strapped {
     /// Get payout configuration
     #[storage(read)]
     fn payouts() -> PayoutConfig;
+
+    #[storage(read, write)]
+    fn request_house_withdrawal(amount: u64, to: Identity);
 }
 
 impl Strapped for Contract {
@@ -198,6 +175,14 @@ impl Strapped for Contract {
         storage.roll_frequency.write(roll_frequency);
         let current_height = height();
         storage.next_roll_block_height.write(Some(current_height + roll_frequency));
+        let caller = match msg_sender() {
+            Ok(id) => id,
+            Err(_) => {
+                require(false, "initialization requires a known sender");
+                return;
+            }
+        };
+        storage.contract_owner.write(Some(caller));
         log_initialized_event(vrf_contract_id, chip_asset_id, roll_frequency, current_height);
     }
 
@@ -225,7 +210,21 @@ impl Strapped for Contract {
         let random_number = rng_abi.get_random(roll_height);
         let roll = u64_to_roll(random_number);
         storage.roll_history.get(current_game_id).push(roll);
-        log_roll_event(current_game_id, new_roll_index, roll);
+        let chips_owed_total = storage.chips_owed.read();
+        let house_pot_total = storage.house_pot.read();
+        let roll_total_chips = storage.current_game_bets.get(roll).try_read().unwrap_or(0);
+        let bets_for_roll = storage.current_game_bets.get(roll).try_read().unwrap_or(0);
+        let owed_for_roll = storage.payouts.read().calculate_payout(bets_for_roll, roll);
+        let new_chips_owed_total = chips_owed_total + owed_for_roll;
+        storage.chips_owed.write(new_chips_owed_total);
+        log_roll_event(
+            current_game_id,
+            new_roll_index,
+            roll,
+            roll_total_chips,
+            new_chips_owed_total,
+            house_pot_total,
+        );
         match roll {
             Roll::Seven => {
                 let new_game_id = current_game_id + 1;
@@ -233,6 +232,18 @@ impl Strapped for Contract {
                 let new_straps = generate_straps(random_number);
                 storage.roll_index.write(0);
                 storage.modifier_triggers.clear();
+                // Manually clear each roll entry; StorageMap::clear() only resets metadata.
+                storage.current_game_bets.remove(Roll::Two);
+                storage.current_game_bets.remove(Roll::Three);
+                storage.current_game_bets.remove(Roll::Four);
+                storage.current_game_bets.remove(Roll::Five);
+                storage.current_game_bets.remove(Roll::Six);
+                storage.current_game_bets.remove(Roll::Seven);
+                storage.current_game_bets.remove(Roll::Eight);
+                storage.current_game_bets.remove(Roll::Nine);
+                storage.current_game_bets.remove(Roll::Ten);
+                storage.current_game_bets.remove(Roll::Eleven);
+                storage.current_game_bets.remove(Roll::Twelve);
                 let new_modifiers = modifier_triggers_for_roll(random_number);
                 for (roll, strap, cost) in new_straps.iter() {
                     storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
@@ -240,7 +251,25 @@ impl Strapped for Contract {
                 for (trigger_roll, modifier_roll, modifier) in new_modifiers.iter() {
                     storage.modifier_triggers.push((trigger_roll, modifier_roll, modifier, false));
                 }
-                log_new_game_event(new_game_id, new_straps, new_modifiers);
+                storage.total_bets.write(0);
+                let mut pending_house_withdrawals = storage.pending_house_withdrawals.load_vec();
+                for (receiver, amount) in storage.pending_house_withdrawals.load_vec().iter() {
+                    let chip_asset_id = storage.chip_asset_id.read();
+                    let house_pot_total = storage.house_pot.read();
+                    if amount > house_pot_total {
+                        log_insufficient_house_withdrawal_event(amount, house_pot_total, receiver);
+                        break
+                    } else {
+                    transfer(receiver, chip_asset_id, amount);
+                    let new_house_pot = house_pot_total - amount;
+                    storage.house_pot.write(new_house_pot);
+                    storage.pending_house_withdrawals.remove(0);
+                    log_house_withdrawal_event(amount, receiver);
+                    } 
+                }
+                let pot_size = storage.house_pot.read();
+                let chips_owed_total = storage.chips_owed.read();
+                log_new_game_event(new_game_id, new_straps, new_modifiers, pot_size, chips_owed_total);
             }
             _ => {
                 let modifier_triggers = storage.modifier_triggers.load_vec();
@@ -278,7 +307,18 @@ impl Strapped for Contract {
             Bet::Chip => {
                 let chip_asset_id = storage.chip_asset_id.read();
                 require(msg_asset_id() == chip_asset_id, "Must bet with chips");
-
+                // ensure solvency
+                // if the bet amount / (house pot - chips owed) > max owed percentage, reject
+                let house_pot = storage.house_pot.read();
+                let chips_owed = storage.chips_owed.read();
+                let max_owed_percentage = storage.max_owed_percentage.read();
+                let old_total_bets = storage.total_bets.read();
+                let effectived_total_bet_limit = (house_pot - chips_owed) * max_owed_percentage / 100;
+                let effective_single_bet_limit = effectived_total_bet_limit - old_total_bets;
+                require(amount <= effective_single_bet_limit, "Bet would exceed house solvency limits");
+                // increment total bets
+                let new_total_bets = old_total_bets + amount;
+                storage.total_bets.write(new_total_bets);
             },
             Bet::Strap(strap) => {
                 let strap_sub_id = strap.into_sub_id();
@@ -302,7 +342,11 @@ impl Strapped for Contract {
         storage.bets.get(key).push((bet, amount, roll_index));
         match bet {
             Bet::Chip => {
+                let new_roll_total_bets = storage.current_game_bets.get(roll).try_read().unwrap_or(0) + amount;
+                storage.current_game_bets.insert(roll, new_roll_total_bets);
                 log_place_chip_bet_event(current_game_id, roll_index, caller, roll, amount);
+                let new_pot_total = storage.house_pot.read() + amount;
+                storage.house_pot.write(new_pot_total);
             },
             Bet::Strap(strap) => {
                 log_place_strap_bet_event(current_game_id, roll_index, caller, roll, strap, amount);
@@ -498,7 +542,7 @@ impl Strapped for Contract {
                 }
                 if remove {
                     // don't increment if we removed the bet (to account for shifting indices)
-                    storage.bets.get((game_id, identity, roll)).remove(bet_index);
+                    let _ = storage.bets.get((game_id, identity, roll)).remove(bet_index);
                 } else {
                     // only increment if we didn't remove
                     bet_index += 1;
@@ -529,6 +573,13 @@ impl Strapped for Contract {
             for (strap, amount) in rewards.iter() {
                 let sub_id = strap.into_sub_id();
                 mint_to(identity, sub_id, amount);
+            }
+            let old_total_owed = storage.chips_owed.read();
+            if total_chips_winnings > old_total_owed {
+                storage.chips_owed.write(0);
+            } else {
+                let new_total_owed = old_total_owed - total_chips_winnings;
+                storage.chips_owed.write(new_total_owed);
             }
             log_claim_rewards_event(game_id, identity, enabled_modifiers, total_chips_winnings, rewards);
         } else {
@@ -621,6 +672,27 @@ impl Strapped for Contract {
     #[storage(read)]
     fn payouts() -> PayoutConfig {
         storage.payouts.read()
+    }
+
+    #[storage(read, write)]
+    fn request_house_withdrawal(amount: u64, to: Identity) {
+        // check that the requester is the contract owner
+        let requester = match msg_sender() {
+            Ok(id) => id,
+            Err(_) => {
+                require(false, "house withdrawal requests require a known sender");
+                return;
+            }
+        };
+        match storage.contract_owner.read(){
+            Some(owner) => {
+                require(requester == owner, "Only the contract owner can request house withdrawals");
+                storage.pending_house_withdrawals.push((to, amount));
+            },
+            None => {
+                require(false, "contract owner not set. Please initialize the contract first.");
+            }
+        };
     }
 }
 

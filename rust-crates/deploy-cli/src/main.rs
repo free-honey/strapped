@@ -19,6 +19,7 @@ use fuel_core_client::client::{
     types::TransactionStatus,
 };
 use fuels::{
+    accounts::ViewOnlyAccount,
     prelude::{
         AssetId,
         CallParameters,
@@ -33,14 +34,22 @@ use fuels::{
         Regular,
     },
     tx::TxId,
-    types::Bits256,
+    types::{
+        Address,
+        Bits256,
+        ContractId,
+        Identity,
+    },
 };
 use generated_abi::{
     pseudo_vrf_types,
     strapped_types,
 };
 use rand::Rng;
-use std::path::Path;
+use std::{
+    path::Path,
+    str::FromStr,
+};
 
 use crate::wallets::{
     find_wallet,
@@ -61,7 +70,7 @@ const VRF_BIN_CANDIDATES: [&str; 1] =
 #[derive(Parser, Debug)]
 #[command(
     name = "strapped-deploy",
-    about = "Deploy the strapped contract and record metadata",
+    about = "Deploy strapped or perform owner utilities (withdraw, balance)",
     version,
     group(
         ArgGroup::new("network")
@@ -94,13 +103,32 @@ struct Args {
     #[arg(long)]
     wallet_dir: Option<String>,
 
-    /// Asset id to use for chips (defaults to the chain base asset)
+    /// Which action to perform (defaults to deploy)
+    #[arg(short, long, value_enum, default_value = "deploy")]
+    action: Action,
+
+    /// Asset id to use for chips (defaults to the chain base asset, or stored deployment when not deploying)
     #[arg(long)]
     chip_asset_id: Option<String>,
 
-    /// Amount of chips to fund the strapped contract with
+    /// Amount of chips to fund the strapped contract with (deploy only)
     #[arg(long)]
     funding_amount: Option<u64>,
+
+    /// Destination address for withdrawal (defaults to this wallet)
+    #[arg(long)]
+    withdraw_to: Option<String>,
+
+    /// Withdrawal amount (required for withdraw action)
+    #[arg(long)]
+    withdraw: Option<u64>,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum Action {
+    Deploy,
+    Balance,
+    Withdraw,
 }
 
 #[tokio::main]
@@ -138,6 +166,14 @@ async fn main() -> Result<()> {
         .await
         .context("fetching consensus parameters")?;
     let default_chip_asset = *consensus_parameters.base_asset_id();
+    let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
+    let safe_script_gas_limit = std::cmp::max(
+        1,
+        std::cmp::min(
+            DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
+            max_gas_per_tx.saturating_sub(1),
+        ),
+    );
     let chip_asset_id = if let Some(arg) = args.chip_asset_id.as_deref() {
         parse_asset_id(arg)?
     } else {
@@ -149,14 +185,80 @@ async fn main() -> Result<()> {
         AssetId::from(default_chip_asset)
     };
 
-    let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
-    let safe_script_gas_limit = std::cmp::max(
-        1,
-        std::cmp::min(
-            DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
-            max_gas_per_tx.saturating_sub(1),
-        ),
-    );
+    let store = DeploymentStore::new(env).context("opening deployment store")?;
+
+    let action = match args.action {
+        Action::Deploy => Action::Deploy,
+        Action::Balance => Action::Balance,
+        Action::Withdraw => {
+            args.withdraw.ok_or_else(|| {
+                anyhow::anyhow!("--withdraw <amount> is required for withdraw action")
+            })?;
+            Action::Withdraw
+        }
+    };
+
+    if matches!(action, Action::Balance | Action::Withdraw) {
+        let record = latest_record(&store)?;
+        let contract_id: ContractId = record
+            .contract_id
+            .parse()
+            .map_err(|e| anyhow::anyhow!("parsing stored contract id: {e}"))?;
+        let chip_asset_id = if let Some(arg) = args.chip_asset_id.as_deref() {
+            parse_asset_id(arg)?
+        } else if let Some(stored) = record.chip_asset_id.as_deref() {
+            parse_asset_id(stored)?
+        } else {
+            AssetId::from(default_chip_asset)
+        };
+
+        if let Action::Balance = action {
+            let balance = wallet
+                .get_asset_balance(&chip_asset_id)
+                .await
+                .context("fetching wallet balance")?;
+            println!("Wallet '{}'", args.wallet);
+            println!(
+                "  Chip balance (asset {}): {}",
+                hex::encode::<[u8; 32]>(chip_asset_id.into()),
+                balance
+            );
+            println!(
+                "  Pot size: not available (contract lacks a pot getter; fetch via indexer)"
+            );
+        }
+
+        if let Action::Withdraw = action {
+            let amount = args
+                .withdraw
+                .expect("withdraw amount required for withdraw action");
+            let to_identity = if let Some(raw) = args.withdraw_to.as_deref() {
+                parse_identity(raw)?
+            } else {
+                Identity::Address(wallet.address().into())
+            };
+            let dest_display = args
+                .withdraw_to
+                .clone()
+                .unwrap_or_else(|| wallet.address().to_string());
+            let strap_instance =
+                strapped_types::MyContract::new(contract_id.clone(), wallet.clone());
+            strap_instance
+                .methods()
+                .request_house_withdrawal(amount, to_identity)
+                .with_tx_policies(script_policies(safe_script_gas_limit))
+                .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
+                .call()
+                .await
+                .context("submitting house withdrawal request")?;
+            println!(
+                "Requested withdrawal of {} chips to {} for contract {}",
+                amount, dest_display, contract_id
+            );
+        }
+
+        return Ok(());
+    }
 
     let strap_path =
         choose_binary(&STRAPPED_BIN_CANDIDATES).context("locating strapped binary")?;
@@ -248,7 +350,6 @@ async fn main() -> Result<()> {
         deployment_block_height: Some(strap_block_height),
     };
 
-    let store = DeploymentStore::new(env).context("opening deployment store")?;
     store.append(record).context("recording deployment")?;
     println!("Deployment metadata written to {}", store.path().display());
     Ok(())
@@ -295,4 +396,19 @@ async fn fetch_block_height(client: &FuelClient, tx_id: &TxId) -> Result<u64> {
         }
         other => anyhow::bail!("transaction {tx_id} not successful: {:?}", other),
     }
+}
+
+fn parse_identity(raw: &str) -> Result<Identity> {
+    let addr = raw
+        .parse::<Address>()
+        .or_else(|_| Address::from_str(raw))
+        .map_err(|_| anyhow::anyhow!("unable to parse address/identity: {raw}"))?;
+    Ok(Identity::Address(addr.into()))
+}
+
+fn latest_record(store: &DeploymentStore) -> Result<DeploymentRecord> {
+    let mut records = store.load().context("loading deployment records")?;
+    records
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("no deployments found for this environment"))
 }

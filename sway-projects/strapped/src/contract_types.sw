@@ -359,3 +359,57 @@ impl Strap {
         b256::from_be_bytes(sub_id)
     }
 }
+
+pub struct PayoutConfig {
+    pub two_payout_multiplier: (u64, u64),
+    pub three_payout_multiplier: (u64, u64),
+    pub four_payout_multiplier: (u64, u64),
+    pub five_payout_multiplier: (u64, u64),
+    pub six_payout_multiplier: (u64, u64),
+    pub seven_payout_multiplier: (u64, u64),
+    pub eight_payout_multiplier: (u64, u64),
+    pub nine_payout_multiplier: (u64, u64),
+    pub ten_payout_multiplier: (u64, u64),
+    pub eleven_payout_multiplier: (u64, u64),
+    pub twelve_payout_multiplier: (u64, u64),
+}
+
+impl PayoutConfig {
+    pub fn calculate_payout(self, principal: u64, roll: Roll) -> u64 {
+        (principal / self.denominator_for_roll(roll)) * self.numerator_for_roll(roll)
+    }
+
+    fn numerator_for_roll(self, roll: Roll) -> u64 {
+        match roll {
+            Roll::Two => self.two_payout_multiplier.0,
+            Roll::Three => self.three_payout_multiplier.0,
+            Roll::Four => self.four_payout_multiplier.0,
+            Roll::Five => self.five_payout_multiplier.0,
+            Roll::Six => self.six_payout_multiplier.0,
+            Roll::Seven => self.seven_payout_multiplier.0,
+            Roll::Eight => self.eight_payout_multiplier.0,
+            Roll::Nine => self.nine_payout_multiplier.0,
+            Roll::Ten => self.ten_payout_multiplier.0,
+            Roll::Eleven => self.eleven_payout_multiplier.0,
+            Roll::Twelve => self.twelve_payout_multiplier.0,
+        }
+    }
+
+    fn denominator_for_roll(self, roll: Roll) -> u64 {
+        match roll {
+            Roll::Two => self.two_payout_multiplier.1,
+            Roll::Three => self.three_payout_multiplier.1,
+            Roll::Four => self.four_payout_multiplier.1,
+            Roll::Five => self.five_payout_multiplier.1,
+            Roll::Six => self.six_payout_multiplier.1,
+            Roll::Seven => self.seven_payout_multiplier.1,
+            Roll::Eight => self.eight_payout_multiplier.1,
+            Roll::Nine => self.nine_payout_multiplier.1,
+            Roll::Ten => self.ten_payout_multiplier.1,
+            Roll::Eleven => self.eleven_payout_multiplier.1,
+            Roll::Twelve => self.twelve_payout_multiplier.1,
+        }
+    }
+
+
+}

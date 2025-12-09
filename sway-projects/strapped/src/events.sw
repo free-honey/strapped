@@ -28,13 +28,26 @@ pub struct RollEvent {
     game_id: u32,
     roll_index: u32,
     rolled_value: Roll,
+    roll_total_chips: u64,
+    chips_owed_total: u64,
+    house_pot_total: u64,
 }
 
-pub fn log_roll_event(game_id: u32, roll_index: u32, rolled_value: Roll) {
+pub fn log_roll_event(
+    game_id: u32,
+    roll_index: u32,
+    rolled_value: Roll,
+    roll_total_chips: u64,
+    chips_owed_total: u64,
+    house_pot_total: u64,
+) {
     let event = RollEvent {
         game_id,
         roll_index,
         rolled_value,
+        roll_total_chips,
+        chips_owed_total,
+        house_pot_total,
     };
     log(event);
 }
@@ -43,17 +56,23 @@ pub struct NewGameEvent {
     game_id: u32,
     new_straps: Vec<(Roll, Strap, u64)>,
     new_modifiers: Vec<(Roll, Roll, Modifier)>,
+    pot_size: u64,
+    chips_owed_total: u64,
 }
 
 pub fn log_new_game_event(
     game_id: u32,
     new_straps: Vec<(Roll, Strap, u64)>,
     new_modifiers: Vec<(Roll, Roll, Modifier)>,
+    pot_size: u64,
+    chips_owed_total: u64,
 ) {
     let event = NewGameEvent {
         game_id,
         new_straps,
         new_modifiers,
+        pot_size,
+        chips_owed_total,
     };
     log(event);
 }
@@ -191,6 +210,38 @@ pub fn log_purchase_modifier_event(
         expected_roll,
         expected_modifier,
         purchaser,
+    };
+    log(event);
+}
+
+pub struct WithdrawHousePotEvent {
+    amount: u64,
+    to: Identity,
+}
+
+pub fn log_house_withdrawal_event(amount: u64, to: Identity) {
+    let event = WithdrawHousePotEvent {
+        amount,
+        to,
+    };
+    log(event);
+}
+
+pub struct InsufficientHouseWithdrawalEvent {
+    requested_amount: u64,
+    available_amount: u64,
+    to: Identity,
+}
+
+pub fn log_insufficient_house_withdrawal_event(
+    requested_amount: u64,
+    available_amount: u64,
+    to: Identity,
+) {
+    let event = InsufficientHouseWithdrawalEvent {
+        requested_amount,
+        available_amount,
+        to,
     };
     log(event);
 }

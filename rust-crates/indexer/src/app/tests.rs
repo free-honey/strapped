@@ -179,7 +179,17 @@ async fn run__roll_event__updates_snapshot() {
     );
     app.roll_frequency = Some(10);
 
-    let roll_event = Event::roll_event(game_id, roll_index, rolled_value.clone());
+    let chips_owed_total = 25;
+    let house_pot_total = 200;
+    let roll_total_chips = 50;
+    let roll_event = Event::roll_event(
+        game_id,
+        roll_index,
+        rolled_value.clone(),
+        roll_total_chips,
+        chips_owed_total,
+        house_pot_total,
+    );
     let roll_height = 110;
 
     // when
@@ -193,6 +203,8 @@ async fn run__roll_event__updates_snapshot() {
     let expected = {
         let mut snap = existing_snapshot;
         snap.rolls.push(rolled_value);
+        snap.chips_owed = chips_owed_total;
+        snap.pot_size = house_pot_total;
         snap.current_block_height = roll_height;
         snap
     };
@@ -239,11 +251,15 @@ async fn run__new_game_event__resets_overview_snapshot() {
         Strap::new(2, StrapKind::Coat, Modifier::Nothing),
         150,
     );
+    let new_pot_size = 750;
+    let new_chips_owed = 25;
 
     let new_game_event = ContractEvent::NewGame(NewGameEvent {
         game_id: next_game_id,
         new_straps: vec![strap_reward.clone()],
         new_modifiers: vec![shop_modifier.clone()],
+        pot_size: new_pot_size,
+        chips_owed_total: new_chips_owed,
     });
     let new_game_height = 210;
 
@@ -265,7 +281,8 @@ async fn run__new_game_event__resets_overview_snapshot() {
         shop_modifier.2.clone(),
         false,
     )];
-    expected.pot_size = existing_snapshot.pot_size;
+    expected.pot_size = new_pot_size;
+    expected.chips_owed = new_chips_owed;
     expected.current_block_height = new_game_height;
     assert_eq!(expected, actual);
 
@@ -308,11 +325,15 @@ async fn run__multiple_new_game_events__persists_historical_snapshots() {
         game_id: 2,
         new_straps: vec![],
         new_modifiers: vec![],
+        pot_size: 300,
+        chips_owed_total: 10,
     });
     let second_new_game = ContractEvent::NewGame(NewGameEvent {
         game_id: 3,
         new_straps: vec![],
         new_modifiers: vec![],
+        pot_size: 400,
+        chips_owed_total: 0,
     });
 
     event_sender
@@ -395,6 +416,8 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
         game_id: 6,
         new_straps: vec![],
         new_modifiers: vec![],
+        pot_size: 0,
+        chips_owed_total: 0,
     });
 
     event_sender
@@ -472,8 +495,10 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
-    existing_snapshot.pot_size = 200;
-    existing_snapshot.total_bets[4].0 = 50; // Roll::Six index
+    let original_pot_size = 200;
+    let previous_six_bet = 50;
+    existing_snapshot.pot_size = original_pot_size;
+    existing_snapshot.specific_bets[4].0 = previous_six_bet; // Roll::Six index
 
     let snapshot_storage =
         InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
@@ -489,24 +514,43 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
         zero_contract_id(),
     );
 
-    let chip_event = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
+    let amount_1 = 175;
+    let chip_event_1 = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 0,
         player: Identity::Address(Address::from([0u8; 32])),
         roll: Roll::Six,
-        amount: 150,
+        amount: amount_1,
+    });
+
+    let amount_2 = 200;
+    let chip_event_2 = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
+        game_id: existing_snapshot.game_id,
+        bet_roll_index: 0,
+        player: Identity::Address(Address::from([0u8; 32])),
+        roll: Roll::Eight,
+        amount: amount_2,
     });
 
     event_sender
-        .send((vec![Event::ContractEvent(chip_event)], 305))
+        .send((
+            vec![
+                Event::ContractEvent(chip_event_1),
+                Event::ContractEvent(chip_event_2),
+            ],
+            305,
+        ))
         .await
         .unwrap();
+
     app.run(pending()).await.unwrap();
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.pot_size = 350;
-    expected.total_bets[4].0 = 200;
+    expected.pot_size = original_pot_size + amount_1 + amount_2;
+    expected.specific_bets[4].0 = previous_six_bet + amount_1;
+    expected.specific_bets[6].0 = amount_2;
+    expected.total_chip_bets = amount_1 + amount_2;
     expected.current_block_height = 305;
     assert_eq!(expected, actual);
 }
@@ -574,7 +618,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
-    existing_snapshot.total_bets[3].1 =
+    existing_snapshot.specific_bets[3].1 =
         vec![(Strap::new(1, StrapKind::Gloves, Modifier::Lucky), 1)];
 
     let snapshot_storage =
@@ -610,7 +654,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.total_bets[3].1.push((strap, 2));
+    expected.specific_bets[3].1.push((strap, 2));
     expected.current_block_height = 415;
     assert_eq!(expected, actual);
 }
@@ -796,6 +840,8 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
             (Roll::Three, strap_b.clone(), 0),
         ],
         new_modifiers: vec![],
+        pot_size: 123,
+        chips_owed_total: 456,
     });
     event_sender
         .send((vec![Event::ContractEvent(new_game)], 100))
@@ -969,6 +1015,7 @@ fn arb_snapshot() -> OverviewSnapshot {
         game_id: 1234,
         rolls: vec![Roll::Two, Roll::Three, Roll::Four, Roll::Five, Roll::Six],
         pot_size: 999999999,
+        chips_owed: 123,
         current_block_height: 123,
         next_roll_height: Some(333),
         roll_frequency: Some(10),
@@ -982,7 +1029,8 @@ fn arb_snapshot() -> OverviewSnapshot {
             },
             4444,
         )],
-        total_bets: [
+        total_chip_bets: 456,
+        specific_bets: [
             (100, vec![]),
             (200, vec![]),
             (300, vec![]),

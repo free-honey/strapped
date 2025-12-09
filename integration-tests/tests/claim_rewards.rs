@@ -15,7 +15,6 @@ use generated_abi::{
     contract_id,
     strap_to_sub_id,
     strapped_types::{
-        self,
         Bet,
         Modifier,
         Roll,
@@ -66,7 +65,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .value;
 
     let target_roll = roll_from_vrf_bucket(vrf_number);
-    let expected_multiplier = multiplier_for_roll(&payout_config, &target_roll);
+    let winnings = calculate_payout(&payout_config, &target_roll, bet_amount);
 
     place_chip_bet(&ctx, target_roll.clone(), bet_amount).await;
 
@@ -94,7 +93,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
         .unwrap();
 
     // when
-    if expected_multiplier != 0 {
+    if winnings != 0 {
         ctx.alice_contract()
             .methods()
             .claim_rewards(bet_game_id, Vec::new())
@@ -105,7 +104,7 @@ async fn _claim_rewards__adds_chips_to_wallet(
     }
 
     // then
-    let expected = balance_before + bet_amount * expected_multiplier;
+    let expected = balance_before + winnings;
     let actual: u64 = ctx
         .alice()
         .get_asset_balance(&chip_asset_id)
@@ -123,6 +122,14 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
 
     // given
     let chip_asset_id = ctx.chip_asset_id();
+    let payout_config = ctx
+        .owner_contract()
+        .methods()
+        .payouts()
+        .simulate(Execution::state_read_only())
+        .await
+        .unwrap()
+        .value;
 
     let bet_amount = 100;
     let roll = Roll::Six;
@@ -136,10 +143,11 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .await
         .unwrap()
         .value;
+    let hits = 3;
 
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
-    ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    for _ in 0..hits {
+        ctx.advance_and_roll(SIX_VRF_NUMBER).await;
+    }
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await;
 
     let balance_before: u64 = ctx
@@ -167,7 +175,8 @@ async fn claim_rewards__multiple_hits_results_in_additional_winnings() {
         .unwrap()
         .try_into()
         .unwrap();
-    let expected = balance_before + bet_amount * 2 * 3;
+    let winnings = hits * calculate_payout(&payout_config, &roll, bet_amount);
+    let expected = balance_before + winnings;
     assert_eq!(balance_after, expected);
 }
 
@@ -450,12 +459,14 @@ async fn claim_rewards__bet_straps_are_levelled_up() {
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
 
@@ -498,12 +509,14 @@ async fn claim_rewards__bet_straps_only_give_one_reward_with_multiple_hits() {
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     place_strap_bet(&ctx, &base_strap, Roll::Six, 1).await;
 
@@ -590,7 +603,10 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
             })
             .collect::<Vec<_>>();
 
-        let ctx = TestContext::new_with_extra_assets(extra_assets).await;
+        let ctx = TestContext::builder()
+            .with_extra_assets(extra_assets)
+            .build()
+            .await;
 
         ctx.advance_and_roll(some_seven_vrf_number).await; // seed modifiers
         let available_triggers = modifier_triggers_for_roll(some_seven_vrf_number);
@@ -678,12 +694,14 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
     let base_strap = Strap::new(1, StrapKind::Shirt, Modifier::Nothing);
     let base_strap_asset = base_contract_id.asset_id(&strap_to_sub_id(&base_strap));
 
-    let ctx = TestContext::new_with_extra_assets(vec![AssetConfig {
-        id: base_strap_asset,
-        num_coins: 1,
-        coin_amount: 1,
-    }])
-    .await;
+    let ctx = TestContext::builder()
+        .with_extra_assets(vec![AssetConfig {
+            id: base_strap_asset,
+            num_coins: 1,
+            coin_amount: 1,
+        }])
+        .build()
+        .await;
 
     ctx.advance_and_roll(SEVEN_VRF_NUMBER).await; // seed modifiers
     let (trigger_roll, modifier_roll, modifier) =
@@ -760,23 +778,6 @@ fn roll_from_vrf_bucket(vrf_bucket: u64) -> Roll {
         30 | 31 | 32 => Roll::Ten,
         33 | 34 => Roll::Eleven,
         _ => Roll::Twelve,
-    }
-}
-
-fn multiplier_for_roll(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
-    match roll {
-        Roll::Two => cfg.two_payout_multiplier,
-        // Roll::Three => panic!("{}", cfg.three_payout_multiplier),
-        Roll::Three => cfg.three_payout_multiplier,
-        Roll::Four => cfg.four_payout_multiplier,
-        Roll::Five => cfg.five_payout_multiplier,
-        Roll::Six => cfg.six_payout_multiplier,
-        Roll::Seven => cfg.seven_payout_multiplier,
-        Roll::Eight => cfg.eight_payout_multiplier,
-        Roll::Nine => cfg.nine_payout_multiplier,
-        Roll::Ten => cfg.ten_payout_multiplier,
-        Roll::Eleven => cfg.eleven_payout_multiplier,
-        Roll::Twelve => cfg.twelve_payout_multiplier,
     }
 }
 

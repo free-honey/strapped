@@ -28,6 +28,47 @@ use crate::{
     vrf_types,
 };
 
+pub fn calculate_payout(
+    cfg: &strapped_types::PayoutConfig,
+    roll: &Roll,
+    principal: u64,
+) -> u64 {
+    let numerator = payout_numerator(cfg, roll);
+    let denominator = payout_denominator(cfg, roll);
+    (principal / denominator) * numerator
+}
+pub fn payout_numerator(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => cfg.two_payout_multiplier.0,
+        Roll::Three => cfg.three_payout_multiplier.0,
+        Roll::Four => cfg.four_payout_multiplier.0,
+        Roll::Five => cfg.five_payout_multiplier.0,
+        Roll::Six => cfg.six_payout_multiplier.0,
+        Roll::Seven => cfg.seven_payout_multiplier.0,
+        Roll::Eight => cfg.eight_payout_multiplier.0,
+        Roll::Nine => cfg.nine_payout_multiplier.0,
+        Roll::Ten => cfg.ten_payout_multiplier.0,
+        Roll::Eleven => cfg.eleven_payout_multiplier.0,
+        Roll::Twelve => cfg.twelve_payout_multiplier.0,
+    }
+}
+
+pub fn payout_denominator(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u64 {
+    match roll {
+        Roll::Two => cfg.two_payout_multiplier.1,
+        Roll::Three => cfg.three_payout_multiplier.1,
+        Roll::Four => cfg.four_payout_multiplier.1,
+        Roll::Five => cfg.five_payout_multiplier.1,
+        Roll::Six => cfg.six_payout_multiplier.1,
+        Roll::Seven => cfg.seven_payout_multiplier.1,
+        Roll::Eight => cfg.eight_payout_multiplier.1,
+        Roll::Nine => cfg.nine_payout_multiplier.1,
+        Roll::Ten => cfg.ten_payout_multiplier.1,
+        Roll::Eleven => cfg.eleven_payout_multiplier.1,
+        Roll::Twelve => cfg.twelve_payout_multiplier.1,
+    }
+}
+
 const CHIP_ASSET_BYTES: [u8; 32] = [1u8; 32];
 const DEFAULT_ROLL_FREQUENCY: u32 = 10;
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000;
@@ -64,12 +105,32 @@ pub struct TestContext {
     vrf_instance: vrf_types::FakeVRFContract<Wallet>,
 }
 
-impl TestContext {
-    pub async fn new() -> Self {
-        Self::new_with_extra_assets(vec![]).await
+pub struct TestContextBuilder {
+    extra_assets: Vec<AssetConfig>,
+    fund_amount: u64,
+}
+
+impl Default for TestContextBuilder {
+    fn default() -> Self {
+        Self {
+            extra_assets: Vec::new(),
+            fund_amount: DEFAULT_FUND_AMOUNT,
+        }
+    }
+}
+
+impl TestContextBuilder {
+    pub fn with_extra_assets(mut self, extra_assets: Vec<AssetConfig>) -> Self {
+        self.extra_assets = extra_assets;
+        self
     }
 
-    pub async fn new_with_extra_assets(extra_assets: Vec<AssetConfig>) -> Self {
+    pub fn with_pot_amount(mut self, amount: u64) -> Self {
+        self.fund_amount = amount;
+        self
+    }
+
+    pub async fn build(self) -> TestContext {
         let chip_asset_id = AssetId::from(CHIP_ASSET_BYTES);
         let mut base_assets = vec![
             AssetConfig {
@@ -83,7 +144,7 @@ impl TestContext {
                 coin_amount: 10_000_000_000,
             },
         ];
-        base_assets.extend(extra_assets);
+        base_assets.extend(self.extra_assets);
         let mut wallets = launch_custom_provider_and_get_wallets(
             WalletsConfig::new_multiple_assets(3, base_assets),
             None,
@@ -116,7 +177,7 @@ impl TestContext {
             .methods()
             .fund()
             .call_params(CallParameters::new(
-                DEFAULT_FUND_AMOUNT,
+                self.fund_amount,
                 chip_asset_id,
                 1_000_000,
             ))
@@ -125,7 +186,7 @@ impl TestContext {
             .await
             .expect("contract funding failed");
 
-        Self {
+        TestContext {
             alice,
             owner,
             contract_id,
@@ -134,6 +195,23 @@ impl TestContext {
             alice_instance,
             vrf_instance,
         }
+    }
+}
+
+impl TestContext {
+    pub async fn new() -> Self {
+        Self::builder().build().await
+    }
+
+    pub async fn new_with_extra_assets(extra_assets: Vec<AssetConfig>) -> Self {
+        Self::builder()
+            .with_extra_assets(extra_assets)
+            .build()
+            .await
+    }
+
+    pub fn builder() -> TestContextBuilder {
+        TestContextBuilder::default()
     }
 
     pub fn alice(&self) -> Wallet {

@@ -161,6 +161,9 @@ pub struct RollEvent {
     pub game_id: u32,
     pub roll_index: u32,
     pub rolled_value: Roll,
+    pub roll_total_chips: u64,
+    pub chips_owed_total: u64,
+    pub house_pot_total: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +171,8 @@ pub struct NewGameEvent {
     pub game_id: u32,
     pub new_straps: Vec<(Roll, Strap, u64)>,
     pub new_modifiers: Vec<(Roll, Roll, Modifier)>,
+    pub pot_size: u64,
+    pub chips_owed_total: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
@@ -238,12 +243,39 @@ impl Event {
         Event::ContractEvent(ContractEvent::Initialized(inner))
     }
 
-    pub fn roll_event(game_id: u32, roll_index: u32, rolled_value: Roll) -> Self {
+    pub fn roll_event(
+        game_id: u32,
+        roll_index: u32,
+        rolled_value: Roll,
+        roll_total_chips: u64,
+        chips_owed_total: u64,
+        house_pot_total: u64,
+    ) -> Self {
         let inner = RollEvent {
             game_id,
             roll_index,
             rolled_value,
+            roll_total_chips,
+            chips_owed_total,
+            house_pot_total,
         };
         Event::ContractEvent(ContractEvent::Roll(inner))
+    }
+
+    pub fn new_game_event(
+        game_id: u32,
+        new_straps: Vec<(Roll, Strap, u64)>,
+        new_modifiers: Vec<(Roll, Roll, Modifier)>,
+        pot_size: u64,
+        chips_owed_total: u64,
+    ) -> Self {
+        let inner = NewGameEvent {
+            game_id,
+            new_straps,
+            new_modifiers,
+            pot_size,
+            chips_owed_total,
+        };
+        Event::ContractEvent(ContractEvent::NewGame(inner))
     }
 }
