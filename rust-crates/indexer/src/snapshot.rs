@@ -23,7 +23,7 @@ pub struct OverviewSnapshot {
     pub(crate) first_roll_height: Option<u32>,
     pub(crate) rewards: Vec<(Roll, Strap, u64)>,
     pub(crate) total_chip_bets: u64,
-    pub(crate) total_bets: [(u64, Vec<(Strap, u64)>); 11],
+    pub(crate) specific_bets: [(u64, Vec<(Strap, u64)>); 11],
     pub(crate) modifiers_active: [Option<Modifier>; 11],
     pub(crate) modifier_shop: Vec<(Roll, Roll, Modifier, bool)>,
 }
@@ -67,7 +67,7 @@ impl Default for OverviewSnapshot {
             first_roll_height: None,
             rewards: Vec::new(),
             total_chip_bets: 0,
-            total_bets,
+            specific_bets: total_bets,
             modifiers_active: [None; 11],
             modifier_shop: Vec::new(),
         }

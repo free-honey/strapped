@@ -495,8 +495,10 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
-    existing_snapshot.pot_size = 200;
-    existing_snapshot.total_bets[4].0 = 50; // Roll::Six index
+    let original_pot_size = 200;
+    let previous_six_bet = 50;
+    existing_snapshot.pot_size = original_pot_size;
+    existing_snapshot.specific_bets[4].0 = previous_six_bet; // Roll::Six index
 
     let snapshot_storage =
         InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 300);
@@ -512,26 +514,43 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
         zero_contract_id(),
     );
 
-    let amount = 150;
-    let chip_event = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
+    let amount_1 = 175;
+    let chip_event_1 = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 0,
         player: Identity::Address(Address::from([0u8; 32])),
         roll: Roll::Six,
-        amount,
+        amount: amount_1,
+    });
+
+    let amount_2 = 200;
+    let chip_event_2 = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
+        game_id: existing_snapshot.game_id,
+        bet_roll_index: 0,
+        player: Identity::Address(Address::from([0u8; 32])),
+        roll: Roll::Eight,
+        amount: amount_2,
     });
 
     event_sender
-        .send((vec![Event::ContractEvent(chip_event)], 305))
+        .send((
+            vec![
+                Event::ContractEvent(chip_event_1),
+                Event::ContractEvent(chip_event_2),
+            ],
+            305,
+        ))
         .await
         .unwrap();
+
     app.run(pending()).await.unwrap();
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.pot_size = 350;
-    expected.total_bets[4].0 = 200;
-    expected.total_chip_bets = amount;
+    expected.pot_size = original_pot_size + amount_1 + amount_2;
+    expected.specific_bets[4].0 = previous_six_bet + amount_1;
+    expected.specific_bets[6].0 = amount_2;
+    expected.total_chip_bets = amount_1 + amount_2;
     expected.current_block_height = 305;
     assert_eq!(expected, actual);
 }
@@ -599,7 +618,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
 
     let mut existing_snapshot = OverviewSnapshot::default();
-    existing_snapshot.total_bets[3].1 =
+    existing_snapshot.specific_bets[3].1 =
         vec![(Strap::new(1, StrapKind::Gloves, Modifier::Lucky), 1)];
 
     let snapshot_storage =
@@ -635,7 +654,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.total_bets[3].1.push((strap, 2));
+    expected.specific_bets[3].1.push((strap, 2));
     expected.current_block_height = 415;
     assert_eq!(expected, actual);
 }
@@ -1011,7 +1030,7 @@ fn arb_snapshot() -> OverviewSnapshot {
             4444,
         )],
         total_chip_bets: 456,
-        total_bets: [
+        specific_bets: [
             (100, vec![]),
             (200, vec![]),
             (300, vec![]),

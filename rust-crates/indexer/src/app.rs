@@ -463,7 +463,7 @@ impl<
         let idx = roll_to_index(&roll);
         snapshot.current_block_height = height;
 
-        let entry = &mut snapshot.total_bets[idx];
+        let entry = &mut snapshot.specific_bets[idx];
         entry.0 = entry.0.saturating_add(amount);
 
         self.snapshots.update_snapshot(&snapshot, height)?;
@@ -507,8 +507,8 @@ impl<
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         let idx = roll_to_index(&roll);
-        if idx < snapshot.total_bets.len() {
-            accumulate_strap(&mut snapshot.total_bets[idx].1, &strap, amount);
+        if idx < snapshot.specific_bets.len() {
+            accumulate_strap(&mut snapshot.specific_bets[idx].1, &strap, amount);
         }
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
