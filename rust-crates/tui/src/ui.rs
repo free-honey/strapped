@@ -854,7 +854,10 @@ fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     lines.push(Line::from(vrf_line));
     lines.push(Line::from(format!(
         "Pot: {} | Owed: {} | Chip Bets: {} | Remaining Capacity: {}",
-        snap.pot_balance, snap.chips_owed, snap.total_chip_bets, snap.available_bet_capacity
+        snap.pot_balance,
+        snap.chips_owed,
+        snap.total_chip_bets,
+        snap.available_bet_capacity
     )));
     let widget = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title("Game"))

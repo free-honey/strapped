@@ -1260,6 +1260,7 @@ impl AppController {
                     .roll_dice()
                     .with_contracts(&[vrf])
                     .with_tx_policies(self.script_policies())
+                    .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
                     .call()
                     .await?
             }
@@ -1274,6 +1275,7 @@ impl AppController {
                     .roll_dice()
                     .with_contracts(&[vrf])
                     .with_tx_policies(self.script_policies())
+                    .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
                     .call()
                     .await?
             }
@@ -1881,8 +1883,11 @@ fn process_post_action(
 
     if new_game_started {
         let message = format!(
-            "Rolled a Seven! Board was cleared! Starting Game {}!",
-            new_game_id
+            "Rolled a Seven! New Game {} | Pot: {} | Owed: {} | Capacity: {}",
+            new_game_id,
+            snapshot.pot_balance,
+            snapshot.chips_owed,
+            snapshot.available_bet_capacity
         );
         sync_status(controller, snapshot, message);
         pending.take();

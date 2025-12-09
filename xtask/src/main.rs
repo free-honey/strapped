@@ -138,7 +138,9 @@ fn run_integration_tests(root: &Path) -> Result<()> {
 
 fn run_command(mut cmd: Command, label: &str) -> Result<()> {
     println!("Running: {}", label);
-    let status = cmd.status().with_context(|| format!("failed to run {label}"))?;
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to run {label}"))?;
     ensure!(status.success(), "{label} failed with status {status}");
     Ok(())
 }

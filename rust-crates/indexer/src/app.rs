@@ -549,9 +549,7 @@ impl<
         } = event;
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         snapshot.pot_size = snapshot.pot_size.saturating_sub(total_chips_winnings);
-        snapshot.chips_owed = snapshot
-            .chips_owed
-            .saturating_sub(total_chips_winnings);
+        snapshot.chips_owed = snapshot.chips_owed.saturating_sub(total_chips_winnings);
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
 
