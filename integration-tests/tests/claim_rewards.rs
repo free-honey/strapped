@@ -15,7 +15,6 @@ use generated_abi::{
     contract_id,
     strap_to_sub_id,
     strapped_types::{
-        self,
         Bet,
         Modifier,
         Roll,

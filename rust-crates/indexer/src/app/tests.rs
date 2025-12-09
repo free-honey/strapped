@@ -512,12 +512,13 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
         zero_contract_id(),
     );
 
+    let amount = 150;
     let chip_event = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 0,
         player: Identity::Address(Address::from([0u8; 32])),
         roll: Roll::Six,
-        amount: 150,
+        amount,
     });
 
     event_sender
@@ -530,6 +531,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let mut expected = existing_snapshot;
     expected.pot_size = 350;
     expected.total_bets[4].0 = 200;
+    expected.total_chip_bets = amount;
     expected.current_block_height = 305;
     assert_eq!(expected, actual);
 }
@@ -819,6 +821,8 @@ async fn run__claim_rewards_event__records_strap_winnings_in_account_snapshot() 
             (Roll::Three, strap_b.clone(), 0),
         ],
         new_modifiers: vec![],
+        pot_size: 123,
+        chips_owed_total: 456,
     });
     event_sender
         .send((vec![Event::ContractEvent(new_game)], 100))
@@ -992,6 +996,7 @@ fn arb_snapshot() -> OverviewSnapshot {
         game_id: 1234,
         rolls: vec![Roll::Two, Roll::Three, Roll::Four, Roll::Five, Roll::Six],
         pot_size: 999999999,
+        chips_owed: 123,
         current_block_height: 123,
         next_roll_height: Some(333),
         roll_frequency: Some(10),
@@ -1005,6 +1010,7 @@ fn arb_snapshot() -> OverviewSnapshot {
             },
             4444,
         )],
+        total_chip_bets: 456,
         total_bets: [
             (100, vec![]),
             (200, vec![]),
