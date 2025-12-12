@@ -226,6 +226,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
                 event.roll_total_chips,
                 event.chips_owed_total,
                 event.house_pot_total,
+                event.next_roll_height,
             ))
         },
         AbiNewGameEvent => |event| {

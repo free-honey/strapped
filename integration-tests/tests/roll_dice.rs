@@ -191,3 +191,55 @@ async fn roll_dice__resets_active_modifiers_and_triggers() {
         .value;
     assert!(active_modifiers.is_empty());
 }
+
+#[tokio::test]
+async fn roll_dice__sets_next_roll_as_current_height_plus_frequency() {
+    let ctx = TestContext::new().await;
+    let owner = ctx.owner();
+
+    // given
+    let initial_next_height = ctx
+        .owner_instance()
+        .methods()
+        .next_roll_height()
+        .simulate(Execution::state_read_only())
+        .await
+        .unwrap()
+        .value
+        .expect("next roll height should be set after initialization");
+    let frequency = DEFAULT_ROLL_FREQUENCY;
+    let target_height = initial_next_height + frequency + 1;
+    ctx.advance_to_block_height(target_height).await;
+
+    // when
+    ctx.vrf_instance()
+        .methods()
+        .set_number(SIX_VRF_NUMBER)
+        .call()
+        .await
+        .unwrap();
+    ctx.owner_instance()
+        .methods()
+        .roll_dice()
+        .with_contracts(&[&ctx.vrf_instance()])
+        .call()
+        .await
+        .unwrap();
+
+    // then
+    let current_height = owner
+        .provider()
+        .latest_block_height()
+        .await
+        .expect("failed to fetch current block height");
+    let actual = ctx
+        .owner_instance()
+        .methods()
+        .next_roll_height()
+        .simulate(Execution::state_read_only())
+        .await
+        .unwrap()
+        .value;
+    let expected = Some(current_height + frequency);
+    assert_eq!(expected, actual);
+}

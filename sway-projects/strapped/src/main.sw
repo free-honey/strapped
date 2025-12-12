@@ -217,6 +217,9 @@ impl Strapped for Contract {
         let owed_for_roll = storage.payouts.read().calculate_payout(bets_for_roll, roll);
         let new_chips_owed_total = chips_owed_total + owed_for_roll;
         storage.chips_owed.write(new_chips_owed_total);
+        let frequency = storage.roll_frequency.read();
+        let next_height = height() + frequency;
+        storage.next_roll_block_height.write(Some(next_height));
         log_roll_event(
             current_game_id,
             new_roll_index,
@@ -224,6 +227,7 @@ impl Strapped for Contract {
             roll_total_chips,
             new_chips_owed_total,
             house_pot_total,
+            next_height,
         );
         match roll {
             Roll::Seven => {
@@ -283,10 +287,6 @@ impl Strapped for Contract {
                 }
             }
         }
-        // set next roll block height to 10 blocks in the future
-        let frequency = storage.roll_frequency.read();
-        let next_height = roll_height + frequency;
-        storage.next_roll_block_height.write(Some(next_height));
     }
 
     #[storage(read)]

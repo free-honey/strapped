@@ -115,6 +115,10 @@ struct Args {
     #[arg(long)]
     funding_amount: Option<u64>,
 
+    /// Blocks between rolls (sets the initial next-roll height offset)
+    #[arg(long)]
+    roll_frequency: Option<u32>,
+
     /// Destination address for withdrawal (defaults to this wallet)
     #[arg(long)]
     withdraw_to: Option<String>,
@@ -260,6 +264,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let roll_frequency = args.roll_frequency.ok_or_else(|| {
+        anyhow::anyhow!("--roll-frequency <blocks> is required when deploying")
+    })?;
+    if roll_frequency == 0 {
+        return Err(anyhow::anyhow!("--roll-frequency must be greater than 0"));
+    }
+
     let strap_path =
         choose_binary(&STRAPPED_BIN_CANDIDATES).context("locating strapped binary")?;
     let strap_hash = deployments::compute_bytecode_hash(strap_path)
@@ -315,7 +326,7 @@ async fn main() -> Result<()> {
         strapped_types::MyContract::new(strap_contract_id.clone(), wallet.clone());
     strap_instance
         .methods()
-        .initialize(Bits256(*vrf_contract_id), chip_asset_id, 1)
+        .initialize(Bits256(*vrf_contract_id), chip_asset_id, roll_frequency)
         .with_tx_policies(script_policies(safe_script_gas_limit))
         .call()
         .await
@@ -348,6 +359,7 @@ async fn main() -> Result<()> {
         vrf_contract_id: Some(vrf_contract_id.to_string()),
         vrf_bytecode_hash: Some(format!("0x{}", vrf_hash)),
         deployment_block_height: Some(strap_block_height),
+        roll_frequency: Some(roll_frequency),
     };
 
     store.append(record).context("recording deployment")?;

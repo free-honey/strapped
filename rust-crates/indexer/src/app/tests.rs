@@ -182,6 +182,7 @@ async fn run__roll_event__updates_snapshot() {
     let chips_owed_total = 25;
     let house_pot_total = 200;
     let roll_total_chips = 50;
+    let next_roll_height = 110;
     let roll_event = Event::roll_event(
         game_id,
         roll_index,
@@ -189,6 +190,7 @@ async fn run__roll_event__updates_snapshot() {
         roll_total_chips,
         chips_owed_total,
         house_pot_total,
+        next_roll_height,
     );
     let roll_height = 110;
 
@@ -206,6 +208,7 @@ async fn run__roll_event__updates_snapshot() {
         snap.chips_owed = chips_owed_total;
         snap.pot_size = house_pot_total;
         snap.current_block_height = roll_height;
+        snap.next_roll_height = Some(next_roll_height);
         snap
     };
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();

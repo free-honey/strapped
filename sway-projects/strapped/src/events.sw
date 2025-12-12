@@ -31,6 +31,7 @@ pub struct RollEvent {
     roll_total_chips: u64,
     chips_owed_total: u64,
     house_pot_total: u64,
+    next_roll_height: u32,
 }
 
 pub fn log_roll_event(
@@ -40,6 +41,7 @@ pub fn log_roll_event(
     roll_total_chips: u64,
     chips_owed_total: u64,
     house_pot_total: u64,
+    next_roll_height: u32,
 ) {
     let event = RollEvent {
         game_id,
@@ -48,6 +50,7 @@ pub fn log_roll_event(
         roll_total_chips,
         chips_owed_total,
         house_pot_total,
+        next_roll_height,
     };
     log(event);
 }

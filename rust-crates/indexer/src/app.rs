@@ -333,12 +333,6 @@ impl<
         }
     }
 
-    fn frequency(&self) -> Result<u32> {
-        self.roll_frequency.ok_or(anyhow!(
-            "Roll frequency not set... why hasn't the app be initialized?"
-        ))
-    }
-
     fn handle_initialized_event(
         &mut self,
         event: InitializedEvent,
@@ -364,10 +358,8 @@ impl<
         snapshot.rolls.push(event.rolled_value);
         snapshot.chips_owed = event.chips_owed_total;
         snapshot.pot_size = event.house_pot_total;
-        let frequency = self.frequency()?;
         self.refresh_height(&mut snapshot, height);
-        snapshot.next_roll_height =
-            snapshot.next_roll_height.map(|inner| inner + frequency);
+        snapshot.next_roll_height = Some(event.next_roll_height);
         self.snapshots.update_snapshot(&snapshot, height)
     }
 
@@ -428,6 +420,7 @@ impl<
         snapshot.game_id = game_id;
         snapshot.roll_frequency = self.roll_frequency;
         snapshot.first_roll_height = self.first_roll_height;
+        snapshot.next_roll_height = previous_snapshot.next_roll_height;
         snapshot.rewards = new_straps.clone();
         snapshot.modifier_shop = new_modifiers
             .into_iter()
