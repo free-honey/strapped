@@ -120,6 +120,53 @@ enum ClaimFocus {
     Modifiers,
 }
 
+fn has_user_bets(g: &PreviousGameSummary) -> bool {
+    g.cells
+        .iter()
+        .any(|c| c.chip_total > 0 || c.strap_total > 0)
+}
+
+fn roll_hit_after_bet(
+    target_roll: &strapped::Roll,
+    bet_roll_index: u32,
+    rolls: &[strapped::Roll],
+) -> bool {
+    rolls
+        .iter()
+        .enumerate()
+        .any(|(idx, r)| r == target_roll && bet_roll_index <= idx as u32)
+}
+
+fn has_claimable_bets(g: &PreviousGameSummary) -> bool {
+    if g.claimed || g.rolls.is_empty() {
+        return false;
+    }
+    for (roll, bets) in &g.bets_by_roll {
+        for (_bet, _amt, bet_roll_index) in bets {
+            if roll_hit_after_bet(roll, *bet_roll_index, &g.rolls) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn claimable_games(prev_games: &[PreviousGameSummary]) -> Vec<PreviousGameSummary> {
+    prev_games
+        .iter()
+        .filter(|g| has_claimable_bets(g))
+        .cloned()
+        .collect()
+}
+
+fn game_status_label(g: &PreviousGameSummary) -> &'static str {
+    if has_claimable_bets(g) {
+        "[unclaimed]"
+    } else {
+        "[nothing-to-claim]"
+    }
+}
+
 fn prune_selected(cs: &mut ClaimState, g: &PreviousGameSummary) {
     cs.selected
         .retain(|(rr, mm)| g.modifiers.iter().any(|(gr, gm, _)| gr == rr && gm == mm));
@@ -259,6 +306,18 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
             };
         }
         Mode::ClaimModal(cs) => {
+            let claimable = claimable_games(&state.prev_games);
+            if claimable.is_empty() {
+                cs.game_idx = 0;
+                cs.mod_idx = 0;
+                cs.selected.clear();
+                cs.focus = ClaimFocus::Games;
+            } else {
+                cs.game_idx = cs.game_idx.min(claimable.len() - 1);
+                if let Some(g) = claimable.get(cs.game_idx) {
+                    prune_selected(cs, g);
+                }
+            }
             return match k.code {
                 KeyCode::Esc => {
                     state.mode = Mode::Normal;
@@ -269,7 +328,7 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                     Some(UserEvent::Redraw)
                 }
                 KeyCode::Right | KeyCode::Char('l') => {
-                    if let Some(g) = state.prev_games.get(cs.game_idx)
+                    if let Some(g) = claimable.get(cs.game_idx)
                         && !g.modifiers.is_empty()
                     {
                         cs.focus = ClaimFocus::Modifiers;
@@ -282,7 +341,7 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                         ClaimFocus::Games => {
                             if cs.game_idx > 0 {
                                 cs.game_idx -= 1;
-                                if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                if let Some(g) = claimable.get(cs.game_idx) {
                                     prune_selected(cs, g);
                                 }
                             }
@@ -298,15 +357,15 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                 KeyCode::Down | KeyCode::Char('j') => {
                     match cs.focus {
                         ClaimFocus::Games => {
-                            if cs.game_idx + 1 < state.prev_games.len() {
+                            if cs.game_idx + 1 < claimable.len() {
                                 cs.game_idx += 1;
-                                if let Some(g) = state.prev_games.get(cs.game_idx) {
+                                if let Some(g) = claimable.get(cs.game_idx) {
                                     prune_selected(cs, g);
                                 }
                             }
                         }
                         ClaimFocus::Modifiers => {
-                            if let Some(g) = state.prev_games.get(cs.game_idx) {
+                            if let Some(g) = claimable.get(cs.game_idx) {
                                 if cs.mod_idx + 1 < g.modifiers.len() {
                                     cs.mod_idx += 1;
                                 }
@@ -317,12 +376,12 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                 }
                 KeyCode::Char(' ') => {
                     if cs.focus != ClaimFocus::Modifiers
-                        && let Some(g) = state.prev_games.get(cs.game_idx)
+                        && let Some(g) = claimable.get(cs.game_idx)
                         && !g.modifiers.is_empty()
                     {
                         cs.focus = ClaimFocus::Modifiers;
                     }
-                    if let Some(g) = state.prev_games.get(cs.game_idx)
+                    if let Some(g) = claimable.get(cs.game_idx)
                         && let Some((roll, modifier, _)) = g.modifiers.get(cs.mod_idx)
                     {
                         if let Some(pos) = cs
@@ -338,7 +397,7 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                     Some(UserEvent::Redraw)
                 }
                 KeyCode::Enter => {
-                    if let Some(game) = state.prev_games.get(cs.game_idx) {
+                    if let Some(game) = claimable.get(cs.game_idx) {
                         let enabled = cs.selected.clone();
                         state.mode = Mode::Normal;
                         Some(UserEvent::ConfirmClaim {
@@ -529,7 +588,8 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
         }
         KeyCode::Char('c') => {
             let mut cs = ClaimState::default();
-            if let Some(g) = state.prev_games.get(cs.game_idx) {
+            let claimable = claimable_games(&state.prev_games);
+            if let Some(g) = claimable.first() {
                 if !g.modifiers.is_empty() {
                     cs.selected = default_claim_selection(g);
                 }
@@ -701,16 +761,13 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
         prev_lines.push(Line::from("None"));
     } else {
         for g in &snap.previous_games {
-            let claimed = if g.claimed {
-                "[claimed]"
-            } else {
-                "[unclaimed]"
-            };
+            let status = game_status_label(g);
+            let has_bets = has_user_bets(g);
             // Rolls line
             if g.rolls.is_empty() {
                 prev_lines.push(Line::from(format!(
                     "Game {} {} | Rolls: None",
-                    g.game_id, claimed
+                    g.game_id, status
                 )));
             } else {
                 let mut items: Vec<String> = Vec::new();
@@ -734,33 +791,32 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
                 prev_lines.push(Line::from(format!(
                     "Game {} {} | Rolls: {}",
                     g.game_id,
-                    claimed,
+                    status,
                     items.join(" ")
                 )));
             }
-            // Bets list with indices
-            prev_lines.push(Line::from("  Bets:"));
-            let mut any_bets = false;
-            for (roll, bets) in &g.bets_by_roll {
-                for (bet, amt, idx) in bets {
-                    any_bets = true;
-                    match bet {
-                        strapped::Bet::Chip => prev_lines.push(Line::from(format!(
-                            "    {:?}: Chip x{} @{}",
-                            roll, amt, idx
-                        ))),
-                        strapped::Bet::Strap(s) => prev_lines.push(Line::from(format!(
-                            "    {:?}: {} x{} @{}",
-                            roll,
-                            render_reward_compact(s),
-                            amt,
-                            idx
-                        ))),
+            if has_bets {
+                // Bets list with indices
+                prev_lines.push(Line::from("  Bets:"));
+                for (roll, bets) in &g.bets_by_roll {
+                    for (bet, amt, idx) in bets {
+                        match bet {
+                            strapped::Bet::Chip => prev_lines.push(Line::from(format!(
+                                "    {:?}: Chip x{} @{}",
+                                roll, amt, idx
+                            ))),
+                            strapped::Bet::Strap(s) => {
+                                prev_lines.push(Line::from(format!(
+                                    "    {:?}: {} x{} @{}",
+                                    roll,
+                                    render_reward_compact(s),
+                                    amt,
+                                    idx
+                                )))
+                            }
+                        }
                     }
                 }
-            }
-            if !any_bets {
-                prev_lines.push(Line::from("    None"));
             }
         }
     }
@@ -899,35 +955,66 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                 .borders(Borders::ALL)
                 .title("Claim Rewards");
             let mut lines = Vec::new();
-            if snap.previous_games.is_empty() {
-                lines.push(Line::from("No previous games"));
+            let claimable = claimable_games(&snap.previous_games);
+            if claimable.is_empty() {
+                lines.push(Line::from("No claimable games"));
+                lines.push(Line::from("Esc=close"));
             } else {
                 // List all games with claimed status
                 lines.push(Line::from("Games:"));
-                for (i, g) in snap.previous_games.iter().enumerate() {
+                for (i, g) in claimable.iter().enumerate() {
                     let cur = if i == cs.game_idx { ">" } else { " " };
-                    let claimed = if g.claimed {
-                        "[claimed]"
-                    } else {
-                        "[unclaimed]"
-                    };
                     lines.push(Line::from(format!(
                         "{} Game {} {}",
-                        cur, g.game_id, claimed
+                        cur,
+                        g.game_id,
+                        game_status_label(g)
                     )));
                 }
                 // Details for selected game
-                let idx = cs.game_idx.min(snap.previous_games.len() - 1);
-                let g = &snap.previous_games[idx];
+                let idx = cs.game_idx.min(claimable.len() - 1);
+                let g = &claimable[idx];
                 lines.push(Line::from(""));
                 lines.push(Line::from(format!("Details for Game {}", g.game_id)));
+                // Rolls hit with modifier markers
+                if g.rolls.is_empty() {
+                    lines.push(Line::from("Rolls: None"));
+                } else {
+                    let mut items: Vec<String> = Vec::new();
+                    for (i, r) in g.rolls.iter().enumerate() {
+                        let mut emo = String::new();
+                        for (mr, mm, mi) in &g.modifiers {
+                            if mr == r && (*mi as usize) <= i {
+                                let e = modifier_emoji(mm);
+                                if !e.is_empty() {
+                                    emo.push_str(e);
+                                }
+                            }
+                        }
+                        items.push(if emo.is_empty() {
+                            format!("{:?}", r)
+                        } else {
+                            format!("{:?}{}", r, emo)
+                        });
+                    }
+                    lines.push(Line::from(format!("Rolls: {}", items.join(" "))));
+                }
                 lines.push(Line::from("Bets:"));
-                for cell in &g.cells {
-                    if cell.chip_total > 0 || cell.strap_total > 0 {
-                        lines.push(Line::from(format!(
-                            "  {:?}: chip {} strap {}",
-                            cell.roll, cell.chip_total, cell.strap_total
-                        )));
+                for (roll, bets) in &g.bets_by_roll {
+                    for (bet, amt, idx) in bets {
+                        match bet {
+                            strapped::Bet::Chip => lines.push(Line::from(format!(
+                                "  {:?}: Chip x{} @{}",
+                                roll, amt, idx
+                            ))),
+                            strapped::Bet::Strap(s) => lines.push(Line::from(format!(
+                                "  {:?}: {} x{} @{}",
+                                roll,
+                                render_reward_compact(s),
+                                amt,
+                                idx
+                            ))),
+                        }
                     }
                 }
                 lines.push(Line::from("Modifiers (space to toggle):"));

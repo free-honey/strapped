@@ -266,7 +266,22 @@ impl AppController {
         let current_block_height = overview.current_block_height;
         let next_roll_height = overview.next_roll_height;
         let current_game_id = overview.game_id;
-        let roll_history = overview.rolls.clone();
+        let mut roll_history = overview.rolls.clone();
+        if roll_history.is_empty() {
+            if let Some(prev_snapshot) = &self.last_snapshot {
+                if prev_snapshot.current_game_id == current_game_id
+                    && !prev_snapshot.roll_history.is_empty()
+                {
+                    roll_history = prev_snapshot.roll_history.clone();
+                }
+            }
+            if roll_history.is_empty()
+                && self.last_seen_game_id_alice == Some(current_game_id)
+                && !self.shared_last_roll_history.is_empty()
+            {
+                roll_history = self.shared_last_roll_history.clone();
+            }
+        }
         let strap_rewards = overview.rewards.clone();
         let modifier_triggers = overview.modifier_shop.clone();
         let active_modifiers = self.cached_active_modifiers.clone();
