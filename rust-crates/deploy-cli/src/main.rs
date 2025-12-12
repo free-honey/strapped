@@ -268,9 +268,7 @@ async fn main() -> Result<()> {
         anyhow::anyhow!("--roll-frequency <blocks> is required when deploying")
     })?;
     if roll_frequency == 0 {
-        return Err(anyhow::anyhow!(
-            "--roll-frequency must be greater than 0"
-        ));
+        return Err(anyhow::anyhow!("--roll-frequency must be greater than 0"));
     }
 
     let strap_path =
