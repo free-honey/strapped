@@ -126,21 +126,44 @@ fn has_user_bets(g: &PreviousGameSummary) -> bool {
         .any(|c| c.chip_total > 0 || c.strap_total > 0)
 }
 
+fn roll_hit_after_bet(
+    target_roll: &strapped::Roll,
+    bet_roll_index: u32,
+    rolls: &[strapped::Roll],
+) -> bool {
+    rolls
+        .iter()
+        .enumerate()
+        .any(|(idx, r)| r == target_roll && bet_roll_index <= idx as u32)
+}
+
+fn has_claimable_bets(g: &PreviousGameSummary) -> bool {
+    if g.claimed || g.rolls.is_empty() {
+        return false;
+    }
+    for (roll, bets) in &g.bets_by_roll {
+        for (_bet, _amt, bet_roll_index) in bets {
+            if roll_hit_after_bet(roll, *bet_roll_index, &g.rolls) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn claimable_games(prev_games: &[PreviousGameSummary]) -> Vec<PreviousGameSummary> {
     prev_games
         .iter()
-        .filter(|g| !g.claimed && has_user_bets(g))
+        .filter(|g| has_claimable_bets(g))
         .cloned()
         .collect()
 }
 
 fn game_status_label(g: &PreviousGameSummary) -> &'static str {
-    if !has_user_bets(g) {
-        "[no-bets]"
-    } else if g.claimed {
-        "[claimed]"
-    } else {
+    if has_claimable_bets(g) {
         "[unclaimed]"
+    } else {
+        "[nothing-to-claim]"
     }
 }
 
@@ -932,7 +955,7 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             let mut lines = Vec::new();
             let claimable = claimable_games(&snap.previous_games);
             if claimable.is_empty() {
-                lines.push(Line::from("No unclaimed games with bets"));
+                lines.push(Line::from("No claimable games"));
                 lines.push(Line::from("Esc=close"));
             } else {
                 // List all games with claimed status
