@@ -70,7 +70,7 @@ pub fn payout_denominator(cfg: &strapped_types::PayoutConfig, roll: &Roll) -> u6
 }
 
 const CHIP_ASSET_BYTES: [u8; 32] = [1u8; 32];
-const DEFAULT_ROLL_FREQUENCY: u32 = 10;
+pub const DEFAULT_ROLL_FREQUENCY: u32 = 10;
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000;
 
 fn fake_vrf_bin_path() -> std::path::PathBuf {

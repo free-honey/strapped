@@ -70,6 +70,8 @@ pub struct DeploymentRecord {
     pub vrf_bytecode_hash: Option<String>,
     #[serde(default)]
     pub deployment_block_height: Option<u64>,
+    #[serde(default)]
+    pub roll_frequency: Option<u32>,
 }
 
 impl DeploymentRecord {
@@ -239,6 +241,7 @@ pub fn record_deployment(
         vrf_contract_id: None,
         vrf_bytecode_hash: None,
         deployment_block_height: None,
+        roll_frequency: None,
     };
     store.append(record)
 }

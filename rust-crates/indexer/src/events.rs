@@ -164,6 +164,7 @@ pub struct RollEvent {
     pub roll_total_chips: u64,
     pub chips_owed_total: u64,
     pub house_pot_total: u64,
+    pub next_roll_height: u32,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +251,7 @@ impl Event {
         roll_total_chips: u64,
         chips_owed_total: u64,
         house_pot_total: u64,
+        next_roll_height: u32,
     ) -> Self {
         let inner = RollEvent {
             game_id,
@@ -258,6 +260,7 @@ impl Event {
             roll_total_chips,
             chips_owed_total,
             house_pot_total,
+            next_roll_height,
         };
         Event::ContractEvent(ContractEvent::Roll(inner))
     }
