@@ -805,13 +805,15 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
                                 "    {:?}: Chip x{} @{}",
                                 roll, amt, idx
                             ))),
-                            strapped::Bet::Strap(s) => prev_lines.push(Line::from(format!(
-                                "    {:?}: {} x{} @{}",
-                                roll,
-                                render_reward_compact(s),
-                                amt,
-                                idx
-                            ))),
+                            strapped::Bet::Strap(s) => {
+                                prev_lines.push(Line::from(format!(
+                                    "    {:?}: {} x{} @{}",
+                                    roll,
+                                    render_reward_compact(s),
+                                    amt,
+                                    idx
+                                )))
+                            }
                         }
                     }
                 }
