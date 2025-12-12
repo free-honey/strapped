@@ -333,12 +333,6 @@ impl<
         }
     }
 
-    fn frequency(&self) -> Result<u32> {
-        self.roll_frequency.ok_or(anyhow!(
-            "Roll frequency not set... why hasn't the app be initialized?"
-        ))
-    }
-
     fn handle_initialized_event(
         &mut self,
         event: InitializedEvent,
