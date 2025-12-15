@@ -36,6 +36,7 @@ pub struct OverviewData {
         strapped::Roll,
         strapped::Modifier,
         bool,
+        bool,
         u64,
     )>,
 }
@@ -208,7 +209,7 @@ struct OverviewSnapshotDto {
     total_chip_bets: u64,
     specific_bets: Vec<(u64, Vec<(StrapDto, u64)>)>,
     modifiers_active: Vec<Option<ModifierDto>>,
-    modifier_shop: Vec<(RollDto, RollDto, ModifierDto, bool, u64)>,
+    modifier_shop: Vec<ModifierShopDto>,
 }
 
 #[derive(Deserialize)]
@@ -230,6 +231,24 @@ struct AccountSnapshotDto {
     total_chip_won: u64,
     claimed_rewards: Option<(u64, Vec<(StrapDto, u64)>)>,
     per_roll_bets: Vec<AccountRollBetsDto>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ModifierShopDto {
+    WithPurchase((RollDto, RollDto, ModifierDto, bool, bool, u64)),
+    Legacy((RollDto, RollDto, ModifierDto, bool, u64)),
+}
+
+impl ModifierShopDto {
+    fn into_current(self) -> (RollDto, RollDto, ModifierDto, bool, bool, u64) {
+        match self {
+            ModifierShopDto::WithPurchase(tuple) => tuple,
+            ModifierShopDto::Legacy((trigger, target, modifier, triggered, price)) => {
+                (trigger, target, modifier, triggered, false, price)
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -356,12 +375,15 @@ impl From<LatestSnapshotDto> for OverviewData {
                 .snapshot
                 .modifier_shop
                 .into_iter()
-                .map(|(trigger, target, modifier, active, price)| {
+                .map(|entry| {
+                    let (trigger, target, modifier, triggered, purchased, price) =
+                        entry.into_current();
                     (
                         trigger.into(),
                         target.into(),
                         modifier.into(),
-                        active,
+                        triggered,
+                        purchased,
                         price,
                     )
                 })

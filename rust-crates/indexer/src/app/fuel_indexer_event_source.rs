@@ -239,11 +239,12 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             let new_modifiers = event
                 .new_modifiers
                 .into_iter()
-                .map(|(trigger_roll, modifier_roll, modifier)| {
+                .map(|(trigger_roll, modifier_roll, modifier, price)| {
                     (
                         map_roll(trigger_roll),
                         map_roll(modifier_roll),
                         map_modifier(modifier),
+                        price,
                     )
                 })
                 .collect::<Vec<_>>();

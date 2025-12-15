@@ -104,6 +104,7 @@ pub struct AppSnapshot {
         strapped::Roll,
         strapped::Modifier,
         bool,
+        bool,
         u64,
     )>,
     pub active_modifiers: Vec<(
@@ -443,7 +444,7 @@ impl AppController {
 
         let modifier_prices = modifier_triggers
             .iter()
-            .map(|(_, _, modifier, _, price)| (modifier.clone(), *price))
+            .map(|(_, _, modifier, _, _, price)| (modifier.clone(), *price))
             .collect();
 
         let snapshot = AppSnapshot {
@@ -1200,35 +1201,34 @@ impl AppController {
         Ok(())
     }
 
-    pub async fn purchase_triggered_modifier(&mut self, cost: u64) -> Result<()> {
-        // Find a triggered modifier that targets the selected roll
+    pub async fn purchase_triggered_modifier(
+        &mut self,
+        target: strapped::Roll,
+        modifier: strapped::Modifier,
+        snapshot_cost: u64,
+        snapshot_listed: u64,
+        snapshot_hint: u64,
+    ) -> Result<()> {
         let me = self.clients.alice.clone();
-        let triggers = me
-            .methods()
-            .modifier_triggers()
+        let amount = snapshot_cost;
+        let call = CallParameters::new(
+            amount,
+            self.clients.chip_asset_id,
+            self.clients.safe_script_gas_limit,
+        );
+        me.methods()
+            .purchase_modifier(target.clone(), modifier.clone())
+            .call_params(call)?
             .with_tx_policies(self.script_policies())
-            .simulate(Execution::realistic())
-            .await?
-            .value;
-        if let Some((_, target, modifier, _triggered)) = triggers
-            .into_iter()
-            .find(|(_, target, _, triggered)| *target == self.selected_roll && *triggered)
-        {
-            let call = CallParameters::new(
-                cost,
-                self.clients.chip_asset_id,
-                self.clients.safe_script_gas_limit,
-            );
-            me.methods()
-                .purchase_modifier(target.clone(), modifier.clone())
-                .call_params(call)?
-                .with_tx_policies(self.script_policies())
-                .call()
-                .await?;
-            self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
-        } else {
-            self.set_status("No triggered modifier for selected roll");
-        }
+            .call()
+            .await
+            .wrap_err_with(|| {
+                format!(
+                    "purchase_triggered failed (roll {:?}, modifier {:?}, sent {}, snapshot {}, listed {}, hint {})",
+                    target, modifier, amount, snapshot_cost, snapshot_listed, snapshot_hint
+                )
+            })?;
+        self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
         self.invalidate_cache();
         Ok(())
     }
@@ -1606,11 +1606,14 @@ impl AppController {
         &mut self,
         target: strapped::Roll,
         modifier: strapped::Modifier,
-        cost: u64,
+        snapshot_cost: u64,
+        snapshot_listed: u64,
+        snapshot_hint: u64,
     ) -> Result<()> {
         let me = self.clients.alice.clone();
+        let amount = snapshot_cost;
         let call = CallParameters::new(
-            cost,
+            amount,
             self.clients.chip_asset_id,
             self.clients.safe_script_gas_limit,
         );
@@ -1619,7 +1622,13 @@ impl AppController {
             .call_params(call)?
             .with_tx_policies(self.script_policies())
             .call()
-            .await?;
+            .await
+            .wrap_err_with(|| {
+                format!(
+                    "purchase_modifier_for failed (roll {:?}, modifier {:?}, sent {}, snapshot {}, listed {}, hint {})",
+                    target, modifier, amount, snapshot_cost, snapshot_listed, snapshot_hint
+                )
+            })?;
         self.set_status(format!("Purchased {:?} for {:?}", modifier, target));
         self.invalidate_cache();
         Ok(())
@@ -2326,12 +2335,15 @@ async fn run_loop(
                         let price_lookup = last_snapshot.as_ref().and_then(|snap| {
                             snap.modifier_triggers
                                 .iter()
-                                .find(|(_, target, _, on, _)| {
-                                    *target == controller.selected_roll && *on
+                                .find(|(_, target, _, triggered, purchased, _)| {
+                                    *target == controller.selected_roll
+                                        && *triggered
+                                        && !*purchased
                                 })
-                                .map(|(_, _, modifier, _, price)| {
-                                    price_for_modifier(&snap.modifier_prices, modifier)
-                                        .max(*price)
+                                .map(|(_, target, modifier, _, _, hint)| {
+                                    let listed = price_for_modifier(&snap.modifier_prices, modifier);
+                                    let cost = listed.max(*hint);
+                                    (cost, listed, *hint, target.clone(), modifier.clone())
                                 })
                         });
                         if let Some(snapshot) = last_snapshot.as_mut() {
@@ -2347,7 +2359,9 @@ async fn run_loop(
                                 "draw while submitting triggered modifier purchase failed",
                             )?;
                         }
-                        let Some(cost) = price_lookup else {
+                        let Some((cost, listed_price, price_hint, target, modifier)) =
+                            price_lookup
+                        else {
                             controller.push_errors(vec![
                                 "No triggered modifier for the selected roll".to_string(),
                             ]);
@@ -2358,9 +2372,20 @@ async fn run_loop(
                             continue;
                         };
                         controller
-                            .purchase_triggered_modifier(cost)
+                            .purchase_triggered_modifier(
+                                target.clone(),
+                                modifier.clone(),
+                                cost,
+                                listed_price,
+                                price_hint,
+                            )
                             .await
-                            .wrap_err("purchasing triggered modifier failed")?;
+                            .wrap_err_with(|| {
+                                format!(
+                                    "purchasing triggered modifier failed (roll {:?}, modifier {:?}, cost {}, listed {}, hint {})",
+                                    target, modifier, cost, listed_price, price_hint
+                                )
+                            })?;
                         request_snapshot = true;
                         refresh_modifiers_now = true;
                         refresh_chip_balance = true;
@@ -2539,13 +2564,44 @@ async fn run_loop(
                         continue;
                     }
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
-                        let cost = last_snapshot
+                        let already_purchased = last_snapshot.as_ref().map_or(false, |snap| {
+                            snap.modifier_triggers.iter().any(
+                                |(_, target, m, _, purchased, _)| {
+                                    *target == roll && *m == modifier && *purchased
+                                },
+                            )
+                        });
+                        if already_purchased {
+                            controller.push_errors(vec![format!(
+                                "{:?} for {:?} is already purchased",
+                                modifier, roll
+                            )]);
+                            if let Some(snapshot) = last_snapshot.as_mut() {
+                                ui::draw(ui_state, snapshot)
+                                    .wrap_err("draw after already-purchased modifier")?;
+                            }
+                            continue;
+                        }
+                        let (cost, listed_price, price_hint) = last_snapshot
                             .as_ref()
-                            .map(|snap| price_for_modifier(&snap.modifier_prices, &modifier))
-                            .unwrap_or_else(|| modifier_floor_price(&modifier));
+                            .and_then(|snap| {
+                                snap.modifier_triggers
+                                    .iter()
+                                    .find(|(_, target, m, _, _, _)| {
+                                        *target == roll && *m == modifier
+                                    })
+                                    .map(|(_, _, _, _, _, hint)| {
+                                        let listed = price_for_modifier(&snap.modifier_prices, &modifier);
+                                        (listed.max(*hint), listed, *hint)
+                                    })
+                            })
+                            .unwrap_or_else(|| {
+                                let listed = modifier_floor_price(&modifier);
+                                (listed, listed, listed)
+                            });
                         if let Some(snapshot) = last_snapshot.as_mut() {
                             let status_msg = format!(
-                                "Purchasing {:?} for {:?} ({cost} chips)...",
+                                "Purchasing {:?} for {:?} ({cost} chips, listed {listed_price}, hint {price_hint})...",
                                 modifier, roll
                             );
                             show_processing_status(
@@ -2557,9 +2613,20 @@ async fn run_loop(
                             )?;
                         }
                         controller
-                            .purchase_modifier_for(roll, modifier, cost)
+                            .purchase_modifier_for(
+                                roll.clone(),
+                                modifier.clone(),
+                                cost,
+                                listed_price,
+                                price_hint,
+                            )
                             .await
-                            .wrap_err("shop purchase failed")?;
+                            .wrap_err_with(|| {
+                                format!(
+                                    "shop purchase failed (roll {:?}, modifier {:?}, cost {}, listed {}, hint {})",
+                                    roll, modifier, cost, listed_price, price_hint
+                                )
+                            })?;
                         request_snapshot = true;
                         refresh_modifiers_now = true;
                         refresh_chip_balance = true;

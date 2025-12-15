@@ -25,7 +25,113 @@ pub struct OverviewSnapshot {
     pub(crate) total_chip_bets: u64,
     pub(crate) specific_bets: [(u64, Vec<(Strap, u64)>); 11],
     pub(crate) modifiers_active: [Option<Modifier>; 11],
-    pub(crate) modifier_shop: Vec<(Roll, Roll, Modifier, bool, u64)>,
+    pub(crate) modifier_shop: Vec<ModifierShopEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ModifierShopEntrySerde", into = "ModifierShopEntrySerde")]
+pub struct ModifierShopEntry {
+    pub trigger_roll: Roll,
+    pub modifier_roll: Roll,
+    pub modifier: Modifier,
+    #[serde(default)]
+    pub triggered: bool,
+    #[serde(default)]
+    pub purchased: bool,
+    pub price: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ModifierShopEntrySerde {
+    Current(
+        (
+            Roll,
+            Roll,
+            Modifier,
+            bool, // triggered
+            bool, // purchased
+            u64,
+        ),
+    ),
+    Legacy((Roll, Roll, Modifier, bool, u64)),
+}
+
+impl From<ModifierShopEntrySerde> for ModifierShopEntry {
+    fn from(value: ModifierShopEntrySerde) -> Self {
+        match value {
+            ModifierShopEntrySerde::Current((
+                trigger_roll,
+                modifier_roll,
+                modifier,
+                triggered,
+                purchased,
+                price,
+            )) => Self {
+                trigger_roll,
+                modifier_roll,
+                modifier,
+                triggered,
+                purchased,
+                price,
+            },
+            ModifierShopEntrySerde::Legacy((
+                trigger_roll,
+                modifier_roll,
+                modifier,
+                triggered,
+                price,
+            )) => Self {
+                trigger_roll,
+                modifier_roll,
+                modifier,
+                triggered,
+                purchased: false,
+                price,
+            },
+        }
+    }
+}
+
+impl From<ModifierShopEntry> for ModifierShopEntrySerde {
+    fn from(entry: ModifierShopEntry) -> Self {
+        ModifierShopEntrySerde::Current((
+            entry.trigger_roll,
+            entry.modifier_roll,
+            entry.modifier,
+            entry.triggered,
+            entry.purchased,
+            entry.price,
+        ))
+    }
+}
+
+impl From<(Roll, Roll, Modifier, bool, u64)> for ModifierShopEntry {
+    fn from(value: (Roll, Roll, Modifier, bool, u64)) -> Self {
+        let (trigger_roll, modifier_roll, modifier, triggered, price) = value;
+        Self {
+            trigger_roll,
+            modifier_roll,
+            modifier,
+            triggered,
+            purchased: false,
+            price,
+        }
+    }
+}
+
+impl From<(Roll, Roll, Modifier, bool, bool, u64)> for ModifierShopEntry {
+    fn from(value: (Roll, Roll, Modifier, bool, bool, u64)) -> Self {
+        let (trigger_roll, modifier_roll, modifier, triggered, purchased, price) = value;
+        Self {
+            trigger_roll,
+            modifier_roll,
+            modifier,
+            triggered,
+            purchased,
+            price,
+        }
+    }
 }
 
 impl OverviewSnapshot {

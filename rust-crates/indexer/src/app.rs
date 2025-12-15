@@ -38,6 +38,7 @@ use crate::{
         AccountSnapshot,
         ActiveModifier,
         HistoricalSnapshot,
+        ModifierShopEntry,
         OverviewSnapshot,
     },
 };
@@ -103,21 +104,6 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
     }
 }
 
-const ALL_MODIFIERS: [Modifier; 12] = [
-    Modifier::Nothing,
-    Modifier::Burnt,
-    Modifier::Lucky,
-    Modifier::Holy,
-    Modifier::Holey,
-    Modifier::Scotch,
-    Modifier::Soaked,
-    Modifier::Moldy,
-    Modifier::Starched,
-    Modifier::Evil,
-    Modifier::Groovy,
-    Modifier::Delicate,
-];
-
 fn modifier_floor_price(modifier: &Modifier) -> u64 {
     match modifier {
         Modifier::Nothing => 0,
@@ -165,7 +151,7 @@ where
                 let prices = snapshot
                     .modifier_shop
                     .iter()
-                    .map(|(_, _, modifier, _, price)| (modifier.clone(), *price))
+                    .map(|entry| (entry.modifier.clone(), entry.price))
                     .collect::<Vec<_>>();
                 (snapshot.roll_frequency, snapshot.first_roll_height, prices)
             })
@@ -436,9 +422,10 @@ impl<
         snapshot.modifiers_active[idx] = Some(event.modifier);
 
         for entry in &mut snapshot.modifier_shop {
-            let (_trigger_roll, modifier_roll, modifier, is_active, _price) = entry;
-            if *modifier_roll == event.modifier_roll && *modifier == event.modifier {
-                *is_active = true;
+            if entry.modifier_roll == event.modifier_roll
+                && entry.modifier == event.modifier
+            {
+                entry.triggered = true;
             }
         }
         let roll_index = event.roll_index;
@@ -475,17 +462,6 @@ impl<
             .snapshots
             .write_historical_snapshot(previous_snapshot.game_id, &historical);
 
-        // Update modifier prices based on previous game's activity
-        for modifier in ALL_MODIFIERS {
-            let entry = price_entry(&mut self.modifier_prices, modifier);
-            if self.modifier_purchased.iter().any(|m| *m == modifier) {
-                *entry = entry.saturating_mul(2);
-            } else if self.modifier_triggered.iter().any(|m| *m == modifier) {
-                let floor = modifier_floor_price(&modifier);
-                let halved = *entry / 2;
-                *entry = if halved < floor { floor } else { halved };
-            }
-        }
         // Reset per-game tracking
         self.modifier_triggered.clear();
         self.modifier_purchased.clear();
@@ -501,9 +477,17 @@ impl<
         snapshot.rewards = new_straps.clone();
         snapshot.modifier_shop = new_modifiers
             .into_iter()
-            .map(|(trigger_roll, modifier_roll, modifier)| {
-                let price = *price_entry(&mut self.modifier_prices, modifier);
-                (trigger_roll, modifier_roll, modifier, false, price)
+            .map(|(trigger_roll, modifier_roll, modifier, price)| {
+                let entry = price_entry(&mut self.modifier_prices, modifier.clone());
+                *entry = price;
+                ModifierShopEntry {
+                    trigger_roll,
+                    modifier_roll,
+                    modifier,
+                    triggered: false,
+                    purchased: false,
+                    price,
+                }
             })
             .collect();
         self.refresh_height(&mut snapshot, height);
@@ -670,11 +654,11 @@ impl<
         snapshot.modifiers_active[idx] = Some(modifier);
 
         for entry in &mut snapshot.modifier_shop {
-            let (_trigger_roll, modifier_roll, modifier, purchased, _price) = entry;
-            if *modifier_roll == event.expected_roll
-                && *modifier == event.expected_modifier
+            if entry.modifier_roll == event.expected_roll
+                && entry.modifier == event.expected_modifier
             {
-                *purchased = true;
+                entry.purchased = true;
+                entry.triggered = true;
             }
         }
         self.refresh_height(&mut snapshot, height);

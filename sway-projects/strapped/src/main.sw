@@ -277,12 +277,14 @@ impl Strapped for Contract {
                 storage.current_game_bets.remove(Roll::Eleven);
                 storage.current_game_bets.remove(Roll::Twelve);
                 let new_modifiers = modifier_triggers_for_roll(random_number);
-                for (_, _, modifier) in new_modifiers.iter() {
+                let mut new_modifiers_with_price: Vec<(Roll, Roll, Modifier, u64)> = Vec::new();
+                for (trigger_roll, modifier_roll, modifier) in new_modifiers.iter() {
                     let (price, _) = storage.modifier_prices
                         .get(modifier)
                         .try_read()
                         .unwrap_or((modifier_floor_price(modifier), false));
                     storage.modifier_prices.insert(modifier, (price, false));
+                    new_modifiers_with_price.push((trigger_roll, modifier_roll, modifier, price));
                 }
                 for (roll, strap, cost) in new_straps.iter() {
                     storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
@@ -308,7 +310,13 @@ impl Strapped for Contract {
                 }
                 let pot_size = storage.house_pot.read();
                 let chips_owed_total = storage.chips_owed.read();
-                log_new_game_event(new_game_id, new_straps, new_modifiers, pot_size, chips_owed_total);
+                log_new_game_event(
+                    new_game_id,
+                    new_straps,
+                    new_modifiers_with_price,
+                    pot_size,
+                    chips_owed_total,
+                );
             }
             _ => {
                 let modifier_triggers = storage.modifier_triggers.load_vec();

@@ -229,7 +229,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
             Strap::new(1, StrapKind::Hat, Modifier::Lucky),
             100,
         )],
-        modifier_shop: vec![(Roll::Two, Roll::Three, Modifier::Burnt, false, 10)],
+        modifier_shop: vec![(Roll::Two, Roll::Three, Modifier::Burnt, false, 10).into()],
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
@@ -248,7 +248,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
     );
 
     let next_game_id: u32 = 2;
-    let shop_modifier = (Roll::Seven, Roll::Four, Modifier::Groovy);
+    let shop_modifier = (Roll::Seven, Roll::Four, Modifier::Groovy, 100);
     let strap_reward = (
         Roll::Nine,
         Strap::new(2, StrapKind::Coat, Modifier::Nothing),
@@ -278,13 +278,16 @@ async fn run__new_game_event__resets_overview_snapshot() {
     let mut expected = OverviewSnapshot::default();
     expected.game_id = next_game_id;
     expected.rewards = vec![strap_reward];
-    expected.modifier_shop = vec![(
-        shop_modifier.0.clone(),
-        shop_modifier.1.clone(),
-        shop_modifier.2.clone(),
-        false,
-        100,
-    )];
+    expected.modifier_shop = vec![
+        (
+            shop_modifier.0,
+            shop_modifier.1,
+            shop_modifier.2,
+            false,
+            shop_modifier.3,
+        )
+            .into(),
+    ];
     expected.pot_size = new_pot_size;
     expected.chips_owed = new_chips_owed;
     expected.current_block_height = new_game_height;
@@ -382,7 +385,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
-        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30)],
+        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30).into()],
         rolls: vec![Roll::Two],
         ..OverviewSnapshot::default()
     };
@@ -451,7 +454,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
-        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30)],
+        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30).into()],
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
@@ -489,7 +492,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.modifiers_active[2] = Some(Modifier::Holy);
-    expected.modifier_shop[0].3 = true;
+    expected.modifier_shop[0].triggered = true;
     expected.current_block_height = event_height;
     assert_eq!(expected, actual);
 }
@@ -976,7 +979,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.modifier_shop =
-        vec![(Roll::Two, Roll::Four, Modifier::Holy, false, 30)];
+        vec![(Roll::Two, Roll::Four, Modifier::Holy, false, 30).into()];
 
     let snapshot_storage =
         InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 710);
@@ -1009,7 +1012,8 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
     expected.modifiers_active[2] = Some(Modifier::Holy);
-    expected.modifier_shop[0].3 = true;
+    expected.modifier_shop[0].triggered = true;
+    expected.modifier_shop[0].purchased = true;
     expected.current_block_height = 715;
     assert_eq!(expected, actual);
 }
