@@ -54,7 +54,7 @@ storage {
     modifier_triggers: StorageVec<(Roll, Roll, Modifier, bool)> = StorageVec {},
     /// Prices for each modifier
     /// 1. Price in chips
-    /// 2. Whether it was purchased this game
+    /// 2. Whether it was purchased this game (used to decide next game's price)
     /// If the modifier was purchased last time it was available, the price will double next time it is available
     modifier_prices: StorageMap<Modifier, (u64, bool)> = StorageMap {},
     // Active modifiers for the current game
@@ -231,6 +231,34 @@ impl Strapped for Contract {
         );
         match roll {
             Roll::Seven => {
+                let previous_modifiers = storage.modifier_triggers.load_vec();
+                let mut processed_modifiers: Vec<Modifier> = Vec::new();
+                for (_, _, modifier, triggered) in previous_modifiers.iter() {
+                    let mut already_handled = false;
+                    for handled in processed_modifiers.iter() {
+                        if handled == modifier {
+                            already_handled = true;
+                            break;
+                        }
+                    }
+                    if already_handled {
+                        continue;
+                    }
+                    let (price, purchased) = storage.modifier_prices
+                        .get(modifier)
+                        .try_read()
+                        .unwrap_or((modifier_floor_price(modifier), false));
+                    let mut updated_price = price;
+                    if purchased {
+                        updated_price = price * 2;
+                    } else if triggered {
+                        let floor = modifier_floor_price(modifier);
+                        let halved = price / 2;
+                        updated_price = if halved < floor { floor } else { halved };
+                    }
+                    storage.modifier_prices.insert(modifier, (updated_price, false));
+                    processed_modifiers.push(modifier);
+                }
                 let new_game_id = current_game_id + 1;
                 storage.current_game_id.write(new_game_id);
                 let new_straps = generate_straps(random_number);
@@ -249,6 +277,15 @@ impl Strapped for Contract {
                 storage.current_game_bets.remove(Roll::Eleven);
                 storage.current_game_bets.remove(Roll::Twelve);
                 let new_modifiers = modifier_triggers_for_roll(random_number);
+                let mut new_modifiers_with_price: Vec<(Roll, Roll, Modifier, u64)> = Vec::new();
+                for (trigger_roll, modifier_roll, modifier) in new_modifiers.iter() {
+                    let (price, _) = storage.modifier_prices
+                        .get(modifier)
+                        .try_read()
+                        .unwrap_or((modifier_floor_price(modifier), false));
+                    storage.modifier_prices.insert(modifier, (price, false));
+                    new_modifiers_with_price.push((trigger_roll, modifier_roll, modifier, price));
+                }
                 for (roll, strap, cost) in new_straps.iter() {
                     storage.strap_rewards.get(new_game_id).push((roll, strap, cost));
                 }
@@ -273,7 +310,13 @@ impl Strapped for Contract {
                 }
                 let pot_size = storage.house_pot.read();
                 let chips_owed_total = storage.chips_owed.read();
-                log_new_game_event(new_game_id, new_straps, new_modifiers, pot_size, chips_owed_total);
+                log_new_game_event(
+                    new_game_id,
+                    new_straps,
+                    new_modifiers_with_price,
+                    pot_size,
+                    chips_owed_total,
+                );
             }
             _ => {
                 let modifier_triggers = storage.modifier_triggers.load_vec();
@@ -640,11 +683,15 @@ impl Strapped for Contract {
             }
         };
         require(is_triggered, "Modifier not available for purchase");
-        let (price, _) = storage.modifier_prices.get(expected_modifier).try_read().unwrap_or((1, false));
+        let (price, _) = storage.modifier_prices
+            .get(expected_modifier)
+            .try_read()
+            .unwrap_or((modifier_floor_price(expected_modifier), false));
         let chip_asset_id = storage.chip_asset_id.read();
         require(msg_asset_id() == chip_asset_id, "Must purchase with chips");
         let amount = msg_amount();
         require(amount >= price, "Must send the correct amount of chips");
+        storage.modifier_prices.insert(expected_modifier, (price, true));
         let roll_index = storage.roll_index.read();
         let game_id = storage.current_game_id.read();
         storage.active_modifiers.get(game_id).push((expected_roll, expected_modifier, roll_index));
@@ -716,6 +763,23 @@ fn generate_straps(seed: u64) -> Vec<(Roll, Strap, u64)> {
         multiple = multiple * 2;
     }
     straps
+}
+
+fn modifier_floor_price(modifier: Modifier) -> u64 {
+    match modifier {
+        Modifier::Nothing => 0,
+        Modifier::Burnt => 10,
+        Modifier::Lucky => 20,
+        Modifier::Holy => 30,
+        Modifier::Holey => 40,
+        Modifier::Scotch => 50,
+        Modifier::Soaked => 60,
+        Modifier::Moldy => 70,
+        Modifier::Starched => 80,
+        Modifier::Evil => 90,
+        Modifier::Groovy => 100,
+        Modifier::Delicate => 110,
+    }
 }
 
 fn u64_to_strap(num: u64) -> Strap {

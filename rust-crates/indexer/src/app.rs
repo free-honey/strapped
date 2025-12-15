@@ -20,6 +20,7 @@ use crate::{
         Event,
         FundPotEvent,
         InitializedEvent,
+        Modifier,
         ModifierTriggeredEvent,
         NewGameEvent,
         PlaceChipBetEvent,
@@ -37,6 +38,7 @@ use crate::{
         AccountSnapshot,
         ActiveModifier,
         HistoricalSnapshot,
+        ModifierShopEntry,
         OverviewSnapshot,
     },
 };
@@ -72,6 +74,8 @@ pub struct App<Events, API, Snapshots, Metadata> {
     historical_modifiers: Vec<ActiveModifier>,
     roll_frequency: Option<u32>,
     first_roll_height: Option<u32>,
+    modifier_triggered: Vec<Modifier>,
+    modifier_purchased: Vec<Modifier>,
 }
 
 fn roll_to_index(roll: &Roll) -> usize {
@@ -124,6 +128,8 @@ where
             historical_modifiers: Vec::new(),
             roll_frequency,
             first_roll_height,
+            modifier_triggered: Vec::new(),
+            modifier_purchased: Vec::new(),
         }
     }
 
@@ -369,14 +375,18 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling ModifierTriggeredEvent at height {}", height);
+        if !self.modifier_triggered.contains(&event.modifier) {
+            self.modifier_triggered.push(event.modifier);
+        }
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         let idx = roll_to_index(&event.modifier_roll);
         snapshot.modifiers_active[idx] = Some(event.modifier);
 
         for entry in &mut snapshot.modifier_shop {
-            let (_trigger_roll, modifier_roll, modifier, is_active) = entry;
-            if *modifier_roll == event.modifier_roll && *modifier == event.modifier {
-                *is_active = true;
+            if entry.modifier_roll == event.modifier_roll
+                && entry.modifier == event.modifier
+            {
+                entry.triggered = true;
             }
         }
         let roll_index = event.roll_index;
@@ -413,6 +423,10 @@ impl<
             .snapshots
             .write_historical_snapshot(previous_snapshot.game_id, &historical);
 
+        // Reset per-game tracking
+        self.modifier_triggered.clear();
+        self.modifier_purchased.clear();
+
         let mut snapshot = OverviewSnapshot::default();
         snapshot.pot_size = pot_size;
         snapshot.chips_owed = chips_owed_total;
@@ -424,9 +438,16 @@ impl<
         snapshot.rewards = new_straps.clone();
         snapshot.modifier_shop = new_modifiers
             .into_iter()
-            .map(|(trigger_roll, modifier_roll, modifier)| {
-                (trigger_roll, modifier_roll, modifier, false)
-            })
+            .map(
+                |(trigger_roll, modifier_roll, modifier, price)| ModifierShopEntry {
+                    trigger_roll,
+                    modifier_roll,
+                    modifier,
+                    triggered: false,
+                    purchased: false,
+                    price,
+                },
+            )
             .collect();
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
@@ -582,17 +603,20 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling PurchaseModifierEvent at height {}", height);
+        if !self.modifier_purchased.contains(&event.expected_modifier) {
+            self.modifier_purchased.push(event.expected_modifier);
+        }
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         let modifier = event.expected_modifier;
         let idx = roll_to_index(&event.expected_roll);
         snapshot.modifiers_active[idx] = Some(modifier);
 
         for entry in &mut snapshot.modifier_shop {
-            let (_trigger_roll, modifier_roll, modifier, purchased) = entry;
-            if *modifier_roll == event.expected_roll
-                && *modifier == event.expected_modifier
+            if entry.modifier_roll == event.expected_roll
+                && entry.modifier == event.expected_modifier
             {
-                *purchased = true;
+                entry.purchased = true;
+                entry.triggered = true;
             }
         }
         self.refresh_height(&mut snapshot, height);

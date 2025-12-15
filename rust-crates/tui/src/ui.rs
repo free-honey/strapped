@@ -68,7 +68,14 @@ pub struct UiState {
     prev_games: Vec<PreviousGameSummary>,
     current_vrf: u64,
     terminal: Option<Terminal<CrosstermBackend<std::io::Stdout>>>,
-    shop_items: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
+    shop_items: Vec<(
+        strapped::Roll,
+        strapped::Roll,
+        strapped::Modifier,
+        bool,
+        bool,
+        u64,
+    )>,
     last_game_id: Option<u32>,
     owned_straps: Vec<(strapped::Strap, u64)>,
 }
@@ -460,10 +467,10 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                     Some(UserEvent::Redraw)
                 }
                 KeyCode::Enter => {
-                    if let Some((_from, roll, modifier, enabled)) =
+                    if let Some((_from, roll, modifier, triggered, purchased, _price)) =
                         state.shop_items.get(ss.idx).cloned()
                     {
-                        if enabled {
+                        if triggered && !purchased {
                             state.mode = Mode::Normal;
                             Some(UserEvent::ConfirmShopPurchase { roll, modifier })
                         } else {
@@ -733,22 +740,31 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
         shop_lines.push(Line::from("No modifiers available"));
     } else {
         // Show triggered first, then locked
-        for (from, to, modifier, on) in &state.shop_items {
-            let text = if *on {
-                format!("{:?} {}", to, modifier_emoji(modifier))
+        for (from, to, modifier, triggered, purchased, price) in &state.shop_items {
+            let text = if *purchased {
+                format!(
+                    "{:?} {} - purchased ({price} chips)",
+                    to,
+                    modifier_emoji(modifier)
+                )
+            } else if *triggered {
+                format!("{:?} {} - {price} chips", to, modifier_emoji(modifier))
             } else {
                 format!(
-                    "{:?} {} (Unlock by rolling {:?})",
+                    "{:?} {} (Unlock by rolling {:?}) - {price} chips",
                     to,
                     modifier_emoji(modifier),
                     from
                 )
             };
-            if *on {
-                shop_lines.push(Line::from(text));
+            let line = if *purchased {
+                Line::styled(text, Style::default().fg(Color::Green))
+            } else if *triggered {
+                Line::from(text)
             } else {
-                shop_lines.push(Line::styled(text, Style::default().fg(Color::DarkGray)));
-            }
+                Line::styled(text, Style::default().fg(Color::DarkGray))
+            };
+            shop_lines.push(line);
         }
     }
     let shop = Paragraph::new(shop_lines)
@@ -1060,34 +1076,50 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             let area = centered_rect(60, 60, f.area());
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title("Modifier Shop (price: 1 chip)");
+                .title("Modifier Shop");
             let mut lines = Vec::new();
             if state.shop_items.is_empty() {
                 lines.push(Line::from("No modifiers available"));
             } else {
-                for (i, (from, to, modifier, on)) in state.shop_items.iter().enumerate() {
+                for (i, (from, to, modifier, triggered, purchased, price)) in
+                    state.shop_items.iter().enumerate()
+                {
                     let cur = if i == ss.idx { ">" } else { " " };
-                    let text = if *on {
-                        format!("{} {:?} {}", cur, to, modifier_emoji(modifier))
+                    let text = if *purchased {
+                        format!(
+                            "{} {:?} {} - purchased ({price} chips)",
+                            cur,
+                            to,
+                            modifier_emoji(modifier)
+                        )
+                    } else if *triggered {
+                        format!(
+                            "{} {:?} {} - {price} chips",
+                            cur,
+                            to,
+                            modifier_emoji(modifier)
+                        )
                     } else {
                         format!(
-                            "{} {:?} {} (Unlock by rolling {:?})",
+                            "{} {:?} {} (Unlock by rolling {:?}) - {price} chips",
                             cur,
                             to,
                             modifier_emoji(modifier),
-                            from
+                            from,
                         )
                     };
-                    if *on {
-                        lines.push(Line::from(text));
+                    let line = if *purchased {
+                        Line::styled(text, Style::default().fg(Color::Green))
+                    } else if *triggered {
+                        Line::from(text)
                     } else {
-                        lines.push(Line::styled(
-                            text,
-                            Style::default().fg(Color::DarkGray),
-                        ));
-                    }
+                        Line::styled(text, Style::default().fg(Color::DarkGray))
+                    };
+                    lines.push(line);
                 }
-                lines.push(Line::from("Enter=buy Esc=close ↑/↓ move"));
+                lines.push(Line::from(
+                    "Enter=buy Esc=close ↑/↓ move (unlock first; purchased items are disabled)",
+                ));
             }
             f.render_widget(Clear, area);
             f.render_widget(block.clone(), area);

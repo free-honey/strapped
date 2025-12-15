@@ -480,3 +480,20 @@ pub fn u64_to_trigger_roll(num: u64) -> Roll {
         _ => Roll::Twelve,
     }
 }
+
+pub fn modifier_floor_price(modifier: &Modifier) -> u64 {
+    match modifier {
+        Modifier::Nothing => 0,
+        Modifier::Burnt => 10,
+        Modifier::Lucky => 20,
+        Modifier::Holy => 30,
+        Modifier::Holey => 40,
+        Modifier::Scotch => 50,
+        Modifier::Soaked => 60,
+        Modifier::Moldy => 70,
+        Modifier::Starched => 80,
+        Modifier::Evil => 90,
+        Modifier::Groovy => 100,
+        Modifier::Delicate => 110,
+    }
+}

@@ -152,7 +152,8 @@ async fn roll_dice__resets_active_modifiers_and_triggers() {
     ctx.advance_and_roll(vrf_number).await; // Two -> trigger Burnt modifier
 
     let chip_asset_id = ctx.chip_asset_id();
-    let call_params = CallParameters::new(1, chip_asset_id, 1_000_000);
+    let modifier_price = modifier_floor_price(&modifier);
+    let call_params = CallParameters::new(modifier_price, chip_asset_id, 1_000_000);
     ctx.alice_instance()
         .methods()
         .purchase_modifier(modifier_roll, modifier)

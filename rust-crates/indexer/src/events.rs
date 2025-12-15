@@ -171,7 +171,7 @@ pub struct RollEvent {
 pub struct NewGameEvent {
     pub game_id: u32,
     pub new_straps: Vec<(Roll, Strap, u64)>,
-    pub new_modifiers: Vec<(Roll, Roll, Modifier)>,
+    pub new_modifiers: Vec<(Roll, Roll, Modifier, u64)>,
     pub pot_size: u64,
     pub chips_owed_total: u64,
 }
@@ -268,7 +268,7 @@ impl Event {
     pub fn new_game_event(
         game_id: u32,
         new_straps: Vec<(Roll, Strap, u64)>,
-        new_modifiers: Vec<(Roll, Roll, Modifier)>,
+        new_modifiers: Vec<(Roll, Roll, Modifier, u64)>,
         pot_size: u64,
         chips_owed_total: u64,
     ) -> Self {
