@@ -241,7 +241,7 @@ impl AppController {
     }
 
     fn poll_interval(&self) -> Duration {
-        Duration::from_secs(1)
+        Duration::from_millis(500)
     }
 
     #[allow(dead_code)]
