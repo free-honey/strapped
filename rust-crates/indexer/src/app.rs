@@ -74,7 +74,6 @@ pub struct App<Events, API, Snapshots, Metadata> {
     historical_modifiers: Vec<ActiveModifier>,
     roll_frequency: Option<u32>,
     first_roll_height: Option<u32>,
-    modifier_prices: Vec<(Modifier, u64)>,
     modifier_triggered: Vec<Modifier>,
     modifier_purchased: Vec<Modifier>,
 }
@@ -104,35 +103,6 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
     }
 }
 
-fn modifier_floor_price(modifier: &Modifier) -> u64 {
-    match modifier {
-        Modifier::Nothing => 0,
-        Modifier::Burnt => 10,
-        Modifier::Lucky => 20,
-        Modifier::Holy => 30,
-        Modifier::Holey => 40,
-        Modifier::Scotch => 50,
-        Modifier::Soaked => 60,
-        Modifier::Moldy => 70,
-        Modifier::Starched => 80,
-        Modifier::Evil => 90,
-        Modifier::Groovy => 100,
-        Modifier::Delicate => 110,
-    }
-}
-
-fn price_entry<'a>(
-    prices: &'a mut Vec<(Modifier, u64)>,
-    modifier: Modifier,
-) -> &'a mut u64 {
-    if let Some(pos) = prices.iter().position(|(m, _)| *m == modifier) {
-        return &mut prices[pos].1;
-    }
-    prices.push((modifier, modifier_floor_price(&modifier)));
-    let pos = prices.len().saturating_sub(1);
-    &mut prices[pos].1
-}
-
 impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata>
 where
     Snapshots: SnapshotStorage,
@@ -144,18 +114,11 @@ where
         metadata: Metadata,
         contract_id: ContractId,
     ) -> Self {
-        let (roll_frequency, first_roll_height, modifier_prices) = snapshots
+        let (roll_frequency, first_roll_height) = snapshots
             .latest_snapshot()
             .ok()
-            .map(|(snapshot, _)| {
-                let prices = snapshot
-                    .modifier_shop
-                    .iter()
-                    .map(|entry| (entry.modifier.clone(), entry.price))
-                    .collect::<Vec<_>>();
-                (snapshot.roll_frequency, snapshot.first_roll_height, prices)
-            })
-            .unwrap_or((None, None, Vec::new()));
+            .map(|(snapshot, _)| (snapshot.roll_frequency, snapshot.first_roll_height))
+            .unwrap_or((None, None));
         Self {
             events,
             api,
@@ -165,7 +128,6 @@ where
             historical_modifiers: Vec::new(),
             roll_frequency,
             first_roll_height,
-            modifier_prices,
             modifier_triggered: Vec::new(),
             modifier_purchased: Vec::new(),
         }
@@ -413,7 +375,6 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling ModifierTriggeredEvent at height {}", height);
-        let _ = price_entry(&mut self.modifier_prices, event.modifier);
         if !self.modifier_triggered.contains(&event.modifier) {
             self.modifier_triggered.push(event.modifier);
         }
@@ -477,18 +438,16 @@ impl<
         snapshot.rewards = new_straps.clone();
         snapshot.modifier_shop = new_modifiers
             .into_iter()
-            .map(|(trigger_roll, modifier_roll, modifier, price)| {
-                let entry = price_entry(&mut self.modifier_prices, modifier.clone());
-                *entry = price;
-                ModifierShopEntry {
+            .map(
+                |(trigger_roll, modifier_roll, modifier, price)| ModifierShopEntry {
                     trigger_roll,
                     modifier_roll,
                     modifier,
                     triggered: false,
                     purchased: false,
                     price,
-                }
-            })
+                },
+            )
             .collect();
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
@@ -644,7 +603,6 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling PurchaseModifierEvent at height {}", height);
-        let _ = price_entry(&mut self.modifier_prices, event.expected_modifier);
         if !self.modifier_purchased.contains(&event.expected_modifier) {
             self.modifier_purchased.push(event.expected_modifier);
         }

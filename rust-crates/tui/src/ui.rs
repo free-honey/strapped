@@ -740,8 +740,7 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
         shop_lines.push(Line::from("No modifiers available"));
     } else {
         // Show triggered first, then locked
-        for (from, to, modifier, triggered, purchased, price_hint) in &state.shop_items {
-            let price = modifier_price(&snap.modifier_prices, modifier).max(*price_hint);
+        for (from, to, modifier, triggered, purchased, price) in &state.shop_items {
             let text = if *purchased {
                 format!(
                     "{:?} {} - purchased ({price} chips)",
@@ -1082,11 +1081,9 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             if state.shop_items.is_empty() {
                 lines.push(Line::from("No modifiers available"));
             } else {
-                for (i, (from, to, modifier, triggered, purchased, price_hint)) in
+                for (i, (from, to, modifier, triggered, purchased, price)) in
                     state.shop_items.iter().enumerate()
                 {
-                    let price =
-                        modifier_price(&snap.modifier_prices, modifier).max(*price_hint);
                     let cur = if i == ss.idx { ">" } else { " " };
                     let text = if *purchased {
                         format!(
@@ -1550,34 +1547,6 @@ fn modifier_order_value(modifier: &strapped::Modifier) -> u8 {
         strapped::Modifier::Groovy => 10,
         strapped::Modifier::Delicate => 11,
     }
-}
-
-fn modifier_floor_price(modifier: &strapped::Modifier) -> u64 {
-    match modifier {
-        strapped::Modifier::Nothing => 0,
-        strapped::Modifier::Burnt => 10,
-        strapped::Modifier::Lucky => 20,
-        strapped::Modifier::Holy => 30,
-        strapped::Modifier::Holey => 40,
-        strapped::Modifier::Scotch => 50,
-        strapped::Modifier::Soaked => 60,
-        strapped::Modifier::Moldy => 70,
-        strapped::Modifier::Starched => 80,
-        strapped::Modifier::Evil => 90,
-        strapped::Modifier::Groovy => 100,
-        strapped::Modifier::Delicate => 110,
-    }
-}
-
-fn modifier_price(
-    prices: &[(strapped::Modifier, u64)],
-    modifier: &strapped::Modifier,
-) -> u64 {
-    prices
-        .iter()
-        .find(|(m, _)| m == modifier)
-        .map(|(_, p)| *p)
-        .unwrap_or_else(|| modifier_floor_price(modifier))
 }
 
 // Mirror the contract's VRF-to-roll mapping (2d6 distribution)

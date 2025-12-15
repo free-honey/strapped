@@ -229,7 +229,9 @@ async fn run__new_game_event__resets_overview_snapshot() {
             Strap::new(1, StrapKind::Hat, Modifier::Lucky),
             100,
         )],
-        modifier_shop: vec![(Roll::Two, Roll::Three, Modifier::Burnt, false, 10).into()],
+        modifier_shop: vec![
+            (Roll::Two, Roll::Three, Modifier::Burnt, false, false, 10).into(),
+        ],
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
@@ -283,6 +285,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
             shop_modifier.0,
             shop_modifier.1,
             shop_modifier.2,
+            false,
             false,
             shop_modifier.3,
         )
@@ -385,7 +388,9 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
-        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30).into()],
+        modifier_shop: vec![
+            (Roll::Three, Roll::Four, Modifier::Holy, false, false, 30).into(),
+        ],
         rolls: vec![Roll::Two],
         ..OverviewSnapshot::default()
     };
@@ -454,7 +459,9 @@ async fn run__modifier_triggered_event__activates_modifier() {
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
-        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30).into()],
+        modifier_shop: vec![
+            (Roll::Three, Roll::Four, Modifier::Holy, false, false, 30).into(),
+        ],
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
@@ -979,7 +986,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.modifier_shop =
-        vec![(Roll::Two, Roll::Four, Modifier::Holy, false, 30).into()];
+        vec![(Roll::Two, Roll::Four, Modifier::Holy, false, false, 30).into()];
 
     let snapshot_storage =
         InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 710);

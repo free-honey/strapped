@@ -234,22 +234,7 @@ struct AccountSnapshotDto {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum ModifierShopDto {
-    WithPurchase((RollDto, RollDto, ModifierDto, bool, bool, u64)),
-    Legacy((RollDto, RollDto, ModifierDto, bool, u64)),
-}
-
-impl ModifierShopDto {
-    fn into_current(self) -> (RollDto, RollDto, ModifierDto, bool, bool, u64) {
-        match self {
-            ModifierShopDto::WithPurchase(tuple) => tuple,
-            ModifierShopDto::Legacy((trigger, target, modifier, triggered, price)) => {
-                (trigger, target, modifier, triggered, false, price)
-            }
-        }
-    }
-}
+struct ModifierShopDto(RollDto, RollDto, ModifierDto, bool, bool, u64);
 
 #[derive(Deserialize)]
 struct AccountRollBetsDto {
@@ -375,18 +360,25 @@ impl From<LatestSnapshotDto> for OverviewData {
                 .snapshot
                 .modifier_shop
                 .into_iter()
-                .map(|entry| {
-                    let (trigger, target, modifier, triggered, purchased, price) =
-                        entry.into_current();
-                    (
-                        trigger.into(),
-                        target.into(),
-                        modifier.into(),
+                .map(
+                    |ModifierShopDto(
+                        trigger,
+                        target,
+                        modifier,
                         triggered,
                         purchased,
                         price,
-                    )
-                })
+                    )| {
+                        (
+                            trigger.into(),
+                            target.into(),
+                            modifier.into(),
+                            triggered,
+                            purchased,
+                            price,
+                        )
+                    },
+                )
                 .collect(),
         };
         overview.current_block_height =
