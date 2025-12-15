@@ -759,18 +759,18 @@ fn generate_straps(seed: u64) -> Vec<(Roll, Strap, u64)> {
 
 fn modifier_floor_price(modifier: Modifier) -> u64 {
     match modifier {
-        Modifier::Nothing => 1,
-        Modifier::Burnt => 1,
-        Modifier::Lucky => 2,
-        Modifier::Holy => 3,
-        Modifier::Holey => 2,
-        Modifier::Scotch => 3,
-        Modifier::Soaked => 1,
-        Modifier::Moldy => 1,
-        Modifier::Starched => 2,
-        Modifier::Evil => 3,
-        Modifier::Groovy => 2,
-        Modifier::Delicate => 1,
+        Modifier::Nothing => 0,
+        Modifier::Burnt => 10,
+        Modifier::Lucky => 20,
+        Modifier::Holy => 30,
+        Modifier::Holey => 40,
+        Modifier::Scotch => 50,
+        Modifier::Soaked => 60,
+        Modifier::Moldy => 70,
+        Modifier::Starched => 80,
+        Modifier::Evil => 90,
+        Modifier::Groovy => 100,
+        Modifier::Delicate => 110,
     }
 }
 

@@ -629,11 +629,16 @@ mod _claim_rewards__includes_modifier_in_strap_level_up {
         {
             let vrf_number = roll_to_vrf_number(&trigger_roll);
             ctx.advance_and_roll(vrf_number).await; // trigger modifier
+            let modifier_price = modifier_floor_price(&modifier);
 
             ctx.alice_contract()
                 .methods()
                 .purchase_modifier(modifier_roll.clone(), modifier.clone())
-                .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
+                .call_params(CallParameters::new(
+                    modifier_price,
+                    ctx.chip_asset_id(),
+                    1_000_000,
+                ))
                 .unwrap()
                 .call()
                 .await
@@ -711,11 +716,16 @@ async fn claim_rewards__does_not_include_modifier_if_not_specified() {
             .clone();
     let vrf_number = roll_to_vrf_number(&trigger_roll);
     ctx.advance_and_roll(vrf_number).await; // trigger Burnt modifier
+    let modifier_price = modifier_floor_price(&modifier);
 
     ctx.alice_contract()
         .methods()
         .purchase_modifier(modifier_roll.clone(), modifier.clone())
-        .call_params(CallParameters::new(1, ctx.chip_asset_id(), 1_000_000))
+        .call_params(CallParameters::new(
+            modifier_price,
+            ctx.chip_asset_id(),
+            1_000_000,
+        ))
         .unwrap()
         .call()
         .await
