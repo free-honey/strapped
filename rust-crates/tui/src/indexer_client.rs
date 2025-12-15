@@ -31,7 +31,13 @@ pub struct OverviewData {
     pub current_block_height: u32,
     pub next_roll_height: Option<u32>,
     pub rewards: Vec<(strapped::Roll, strapped::Strap, u64)>,
-    pub modifier_shop: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
+    pub modifier_shop: Vec<(
+        strapped::Roll,
+        strapped::Roll,
+        strapped::Modifier,
+        bool,
+        u64,
+    )>,
 }
 
 #[allow(dead_code)]
@@ -202,7 +208,7 @@ struct OverviewSnapshotDto {
     total_chip_bets: u64,
     specific_bets: Vec<(u64, Vec<(StrapDto, u64)>)>,
     modifiers_active: Vec<Option<ModifierDto>>,
-    modifier_shop: Vec<(RollDto, RollDto, ModifierDto, bool)>,
+    modifier_shop: Vec<(RollDto, RollDto, ModifierDto, bool, u64)>,
 }
 
 #[derive(Deserialize)]
@@ -350,8 +356,14 @@ impl From<LatestSnapshotDto> for OverviewData {
                 .snapshot
                 .modifier_shop
                 .into_iter()
-                .map(|(trigger, target, modifier, active)| {
-                    (trigger.into(), target.into(), modifier.into(), active)
+                .map(|(trigger, target, modifier, active, price)| {
+                    (
+                        trigger.into(),
+                        target.into(),
+                        modifier.into(),
+                        active,
+                        price,
+                    )
                 })
                 .collect(),
         };

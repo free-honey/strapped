@@ -25,7 +25,7 @@ pub struct OverviewSnapshot {
     pub(crate) total_chip_bets: u64,
     pub(crate) specific_bets: [(u64, Vec<(Strap, u64)>); 11],
     pub(crate) modifiers_active: [Option<Modifier>; 11],
-    pub(crate) modifier_shop: Vec<(Roll, Roll, Modifier, bool)>,
+    pub(crate) modifier_shop: Vec<(Roll, Roll, Modifier, bool, u64)>,
 }
 
 impl OverviewSnapshot {

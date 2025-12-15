@@ -68,7 +68,13 @@ pub struct UiState {
     prev_games: Vec<PreviousGameSummary>,
     current_vrf: u64,
     terminal: Option<Terminal<CrosstermBackend<std::io::Stdout>>>,
-    shop_items: Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
+    shop_items: Vec<(
+        strapped::Roll,
+        strapped::Roll,
+        strapped::Modifier,
+        bool,
+        u64,
+    )>,
     last_game_id: Option<u32>,
     owned_straps: Vec<(strapped::Strap, u64)>,
 }
@@ -460,7 +466,7 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                     Some(UserEvent::Redraw)
                 }
                 KeyCode::Enter => {
-                    if let Some((_from, roll, modifier, enabled)) =
+                    if let Some((_from, roll, modifier, enabled, _price)) =
                         state.shop_items.get(ss.idx).cloned()
                     {
                         if enabled {
@@ -733,15 +739,17 @@ fn draw_lower(f: &mut Frame, state: &UiState, area: Rect, snap: &AppSnapshot) {
         shop_lines.push(Line::from("No modifiers available"));
     } else {
         // Show triggered first, then locked
-        for (from, to, modifier, on) in &state.shop_items {
+        for (from, to, modifier, on, price_hint) in &state.shop_items {
+            let price = modifier_price(&snap.modifier_prices, modifier).max(*price_hint);
             let text = if *on {
-                format!("{:?} {}", to, modifier_emoji(modifier))
+                format!("{:?} {} - {} chips", to, modifier_emoji(modifier), price)
             } else {
                 format!(
-                    "{:?} {} (Unlock by rolling {:?})",
+                    "{:?} {} (Unlock by rolling {:?}) - {} chips",
                     to,
                     modifier_emoji(modifier),
-                    from
+                    from,
+                    price
                 )
             };
             if *on {
@@ -1060,22 +1068,31 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
             let area = centered_rect(60, 60, f.area());
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title("Modifier Shop (price: 1 chip)");
+                .title("Modifier Shop");
             let mut lines = Vec::new();
             if state.shop_items.is_empty() {
                 lines.push(Line::from("No modifiers available"));
             } else {
-                for (i, (from, to, modifier, on)) in state.shop_items.iter().enumerate() {
+                for (i, (from, to, modifier, on, price)) in
+                    state.shop_items.iter().enumerate()
+                {
                     let cur = if i == ss.idx { ">" } else { " " };
                     let text = if *on {
-                        format!("{} {:?} {}", cur, to, modifier_emoji(modifier))
-                    } else {
                         format!(
-                            "{} {:?} {} (Unlock by rolling {:?})",
+                            "{} {:?} {} - {} chips",
                             cur,
                             to,
                             modifier_emoji(modifier),
-                            from
+                            price
+                        )
+                    } else {
+                        format!(
+                            "{} {:?} {} (Unlock by rolling {:?}) - {} chips",
+                            cur,
+                            to,
+                            modifier_emoji(modifier),
+                            from,
+                            price
                         )
                     };
                     if *on {
@@ -1515,6 +1532,34 @@ fn modifier_order_value(modifier: &strapped::Modifier) -> u8 {
         strapped::Modifier::Groovy => 10,
         strapped::Modifier::Delicate => 11,
     }
+}
+
+fn modifier_floor_price(modifier: &strapped::Modifier) -> u64 {
+    match modifier {
+        strapped::Modifier::Nothing => 0,
+        strapped::Modifier::Burnt => 10,
+        strapped::Modifier::Lucky => 20,
+        strapped::Modifier::Holy => 30,
+        strapped::Modifier::Holey => 40,
+        strapped::Modifier::Scotch => 50,
+        strapped::Modifier::Soaked => 60,
+        strapped::Modifier::Moldy => 70,
+        strapped::Modifier::Starched => 80,
+        strapped::Modifier::Evil => 90,
+        strapped::Modifier::Groovy => 100,
+        strapped::Modifier::Delicate => 110,
+    }
+}
+
+fn modifier_price(
+    prices: &[(strapped::Modifier, u64)],
+    modifier: &strapped::Modifier,
+) -> u64 {
+    prices
+        .iter()
+        .find(|(m, _)| m == modifier)
+        .map(|(_, p)| *p)
+        .unwrap_or_else(|| modifier_floor_price(modifier))
 }
 
 // Mirror the contract's VRF-to-roll mapping (2d6 distribution)

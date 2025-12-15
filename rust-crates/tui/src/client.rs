@@ -99,13 +99,19 @@ pub enum VrfClient {
 pub struct AppSnapshot {
     pub current_game_id: u32,
     pub roll_history: Vec<strapped::Roll>,
-    pub modifier_triggers:
-        Vec<(strapped::Roll, strapped::Roll, strapped::Modifier, bool)>,
+    pub modifier_triggers: Vec<(
+        strapped::Roll,
+        strapped::Roll,
+        strapped::Modifier,
+        bool,
+        u64,
+    )>,
     pub active_modifiers: Vec<(
         strapped::Roll,
         strapped::Modifier,
         u32, // roll_index
     )>,
+    pub modifier_prices: Vec<(strapped::Modifier, u64)>,
     pub owned_straps: Vec<(strapped::Strap, u64)>,
     pub pot_balance: u64,
     pub chips_owed: u64,
@@ -435,11 +441,17 @@ impl AppController {
             });
         }
 
+        let modifier_prices = modifier_triggers
+            .iter()
+            .map(|(_, _, modifier, _, price)| (modifier.clone(), *price))
+            .collect();
+
         let snapshot = AppSnapshot {
             current_game_id,
             roll_history,
             modifier_triggers,
             active_modifiers,
+            modifier_prices,
             owned_straps,
             pot_balance,
             chips_owed,
@@ -499,7 +511,11 @@ impl AppController {
 
         let start = current_game_id.saturating_sub(GAME_HISTORY_DEPTH as u32);
         for game_id in start..current_game_id {
-            let needs_game = !self.shared_prev_games.iter().any(|g| g.game_id == game_id);
+            let needs_game = if game_id + GAME_HISTORY_DEPTH as u32 <= current_game_id {
+                false
+            } else {
+                !self.shared_prev_games.iter().any(|g| g.game_id == game_id)
+            };
             let needs_modifiers = !self.active_modifiers_by_game.contains_key(&game_id);
             let needs_rewards = !self.strap_rewards_by_game.contains_key(&game_id);
 
@@ -953,9 +969,8 @@ impl AppController {
         if current_game_id == 0 {
             return Vec::new();
         }
-        let start = current_game_id.saturating_sub(GAME_HISTORY_DEPTH as u32);
         let mut missing = Vec::new();
-        for game_id in start..current_game_id {
+        for game_id in 0..current_game_id {
             let needs_game = !self.shared_prev_games.iter().any(|g| g.game_id == game_id);
             let needs_modifiers = !self.active_modifiers_by_game.contains_key(&game_id);
             let needs_rewards = !self.strap_rewards_by_game.contains_key(&game_id);
@@ -1611,6 +1626,34 @@ impl AppController {
     }
 }
 
+fn modifier_floor_price(modifier: &strapped::Modifier) -> u64 {
+    match modifier {
+        strapped::Modifier::Nothing => 0,
+        strapped::Modifier::Burnt => 10,
+        strapped::Modifier::Lucky => 20,
+        strapped::Modifier::Holy => 30,
+        strapped::Modifier::Holey => 40,
+        strapped::Modifier::Scotch => 50,
+        strapped::Modifier::Soaked => 60,
+        strapped::Modifier::Moldy => 70,
+        strapped::Modifier::Starched => 80,
+        strapped::Modifier::Evil => 90,
+        strapped::Modifier::Groovy => 100,
+        strapped::Modifier::Delicate => 110,
+    }
+}
+
+fn price_for_modifier(
+    prices: &[(strapped::Modifier, u64)],
+    modifier: &strapped::Modifier,
+) -> u64 {
+    prices
+        .iter()
+        .find(|(m, _)| m == modifier)
+        .map(|(_, p)| *p)
+        .unwrap_or_else(|| modifier_floor_price(modifier))
+}
+
 fn super_compact_strap(s: &strapped::Strap) -> String {
     let mod_emoji = match s.modifier {
         strapped::Modifier::Nothing => "",
@@ -2151,10 +2194,11 @@ async fn run_loop(
             maybe_event = snapshot_event_rx.recv() => {
                 match maybe_event {
                     Some(SnapshotWorkerEvent::Snapshot(bundle)) => {
+                        let SnapshotBundle { overview, account } = bundle;
                         let missing_history = controller
-                            .ingest_overview_snapshot(bundle.overview)
+                            .ingest_overview_snapshot(overview)
                             .wrap_err("applying overview snapshot failed")?;
-                        controller.ingest_account_snapshot(bundle.account);
+                        controller.ingest_account_snapshot(account);
                         if !missing_history.is_empty() {
                             let _ = snapshot_cmd_tx
                                 .send(SnapshotWorkerCommand::FetchHistory(missing_history));
@@ -2279,6 +2323,17 @@ async fn run_loop(
                         }
                     }
                     ui::UserEvent::Purchase => {
+                        let price_lookup = last_snapshot.as_ref().and_then(|snap| {
+                            snap.modifier_triggers
+                                .iter()
+                                .find(|(_, target, _, on, _)| {
+                                    *target == controller.selected_roll && *on
+                                })
+                                .map(|(_, _, modifier, _, price)| {
+                                    price_for_modifier(&snap.modifier_prices, modifier)
+                                        .max(*price)
+                                })
+                        });
                         if let Some(snapshot) = last_snapshot.as_mut() {
                             let status_msg = format!(
                                 "Purchasing triggered modifier for {:?}...",
@@ -2292,8 +2347,18 @@ async fn run_loop(
                                 "draw while submitting triggered modifier purchase failed",
                             )?;
                         }
+                        let Some(cost) = price_lookup else {
+                            controller.push_errors(vec![
+                                "No triggered modifier for the selected roll".to_string(),
+                            ]);
+                            if let Some(snapshot) = last_snapshot.as_mut() {
+                                ui::draw(ui_state, snapshot)
+                                    .wrap_err("draw after missing modifier failed")?;
+                            }
+                            continue;
+                        };
                         controller
-                            .purchase_triggered_modifier(1)
+                            .purchase_triggered_modifier(cost)
                             .await
                             .wrap_err("purchasing triggered modifier failed")?;
                         request_snapshot = true;
@@ -2474,9 +2539,13 @@ async fn run_loop(
                         continue;
                     }
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
+                        let cost = last_snapshot
+                            .as_ref()
+                            .map(|snap| price_for_modifier(&snap.modifier_prices, &modifier))
+                            .unwrap_or_else(|| modifier_floor_price(&modifier));
                         if let Some(snapshot) = last_snapshot.as_mut() {
                             let status_msg = format!(
-                                "Purchasing {:?} for {:?}...",
+                                "Purchasing {:?} for {:?} ({cost} chips)...",
                                 modifier, roll
                             );
                             show_processing_status(
@@ -2488,7 +2557,7 @@ async fn run_loop(
                             )?;
                         }
                         controller
-                            .purchase_modifier_for(roll, modifier, 1)
+                            .purchase_modifier_for(roll, modifier, cost)
                             .await
                             .wrap_err("shop purchase failed")?;
                         request_snapshot = true;

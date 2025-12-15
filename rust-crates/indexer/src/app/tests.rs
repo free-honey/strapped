@@ -229,7 +229,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
             Strap::new(1, StrapKind::Hat, Modifier::Lucky),
             100,
         )],
-        modifier_shop: vec![(Roll::Two, Roll::Three, Modifier::Burnt, false)],
+        modifier_shop: vec![(Roll::Two, Roll::Three, Modifier::Burnt, false, 10)],
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
@@ -283,6 +283,7 @@ async fn run__new_game_event__resets_overview_snapshot() {
         shop_modifier.1.clone(),
         shop_modifier.2.clone(),
         false,
+        100,
     )];
     expected.pot_size = new_pot_size;
     expected.chips_owed = new_chips_owed;
@@ -381,7 +382,7 @@ async fn run__new_game_event__captures_triggered_modifiers_in_history() {
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
-        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false)],
+        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30)],
         rolls: vec![Roll::Two],
         ..OverviewSnapshot::default()
     };
@@ -450,7 +451,7 @@ async fn run__modifier_triggered_event__activates_modifier() {
 
     let existing_snapshot = OverviewSnapshot {
         game_id: 5,
-        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false)],
+        modifier_shop: vec![(Roll::Three, Roll::Four, Modifier::Holy, false, 30)],
         ..OverviewSnapshot::default()
     };
     let snapshot_storage =
@@ -975,7 +976,7 @@ async fn run__purchase_modifier_event__marks_shop_entry() {
 
     let mut existing_snapshot = OverviewSnapshot::default();
     existing_snapshot.modifier_shop =
-        vec![(Roll::Two, Roll::Four, Modifier::Holy, false)];
+        vec![(Roll::Two, Roll::Four, Modifier::Holy, false, 30)];
 
     let snapshot_storage =
         InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 710);

@@ -20,6 +20,7 @@ use crate::{
         Event,
         FundPotEvent,
         InitializedEvent,
+        Modifier,
         ModifierTriggeredEvent,
         NewGameEvent,
         PlaceChipBetEvent,
@@ -72,6 +73,9 @@ pub struct App<Events, API, Snapshots, Metadata> {
     historical_modifiers: Vec<ActiveModifier>,
     roll_frequency: Option<u32>,
     first_roll_height: Option<u32>,
+    modifier_prices: Vec<(Modifier, u64)>,
+    modifier_triggered: Vec<Modifier>,
+    modifier_purchased: Vec<Modifier>,
 }
 
 fn roll_to_index(roll: &Roll) -> usize {
@@ -99,6 +103,50 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
     }
 }
 
+const ALL_MODIFIERS: [Modifier; 12] = [
+    Modifier::Nothing,
+    Modifier::Burnt,
+    Modifier::Lucky,
+    Modifier::Holy,
+    Modifier::Holey,
+    Modifier::Scotch,
+    Modifier::Soaked,
+    Modifier::Moldy,
+    Modifier::Starched,
+    Modifier::Evil,
+    Modifier::Groovy,
+    Modifier::Delicate,
+];
+
+fn modifier_floor_price(modifier: &Modifier) -> u64 {
+    match modifier {
+        Modifier::Nothing => 0,
+        Modifier::Burnt => 10,
+        Modifier::Lucky => 20,
+        Modifier::Holy => 30,
+        Modifier::Holey => 40,
+        Modifier::Scotch => 50,
+        Modifier::Soaked => 60,
+        Modifier::Moldy => 70,
+        Modifier::Starched => 80,
+        Modifier::Evil => 90,
+        Modifier::Groovy => 100,
+        Modifier::Delicate => 110,
+    }
+}
+
+fn price_entry<'a>(
+    prices: &'a mut Vec<(Modifier, u64)>,
+    modifier: Modifier,
+) -> &'a mut u64 {
+    if let Some(pos) = prices.iter().position(|(m, _)| *m == modifier) {
+        return &mut prices[pos].1;
+    }
+    prices.push((modifier, modifier_floor_price(&modifier)));
+    let pos = prices.len().saturating_sub(1);
+    &mut prices[pos].1
+}
+
 impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata>
 where
     Snapshots: SnapshotStorage,
@@ -110,11 +158,18 @@ where
         metadata: Metadata,
         contract_id: ContractId,
     ) -> Self {
-        let (roll_frequency, first_roll_height) = snapshots
+        let (roll_frequency, first_roll_height, modifier_prices) = snapshots
             .latest_snapshot()
             .ok()
-            .map(|(snapshot, _)| (snapshot.roll_frequency, snapshot.first_roll_height))
-            .unwrap_or((None, None));
+            .map(|(snapshot, _)| {
+                let prices = snapshot
+                    .modifier_shop
+                    .iter()
+                    .map(|(_, _, modifier, _, price)| (modifier.clone(), *price))
+                    .collect::<Vec<_>>();
+                (snapshot.roll_frequency, snapshot.first_roll_height, prices)
+            })
+            .unwrap_or((None, None, Vec::new()));
         Self {
             events,
             api,
@@ -124,6 +179,9 @@ where
             historical_modifiers: Vec::new(),
             roll_frequency,
             first_roll_height,
+            modifier_prices,
+            modifier_triggered: Vec::new(),
+            modifier_purchased: Vec::new(),
         }
     }
 
@@ -369,12 +427,16 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling ModifierTriggeredEvent at height {}", height);
+        let _ = price_entry(&mut self.modifier_prices, event.modifier);
+        if !self.modifier_triggered.contains(&event.modifier) {
+            self.modifier_triggered.push(event.modifier);
+        }
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         let idx = roll_to_index(&event.modifier_roll);
         snapshot.modifiers_active[idx] = Some(event.modifier);
 
         for entry in &mut snapshot.modifier_shop {
-            let (_trigger_roll, modifier_roll, modifier, is_active) = entry;
+            let (_trigger_roll, modifier_roll, modifier, is_active, _price) = entry;
             if *modifier_roll == event.modifier_roll && *modifier == event.modifier {
                 *is_active = true;
             }
@@ -413,6 +475,21 @@ impl<
             .snapshots
             .write_historical_snapshot(previous_snapshot.game_id, &historical);
 
+        // Update modifier prices based on previous game's activity
+        for modifier in ALL_MODIFIERS {
+            let entry = price_entry(&mut self.modifier_prices, modifier);
+            if self.modifier_purchased.iter().any(|m| *m == modifier) {
+                *entry = entry.saturating_mul(2);
+            } else if self.modifier_triggered.iter().any(|m| *m == modifier) {
+                let floor = modifier_floor_price(&modifier);
+                let halved = *entry / 2;
+                *entry = if halved < floor { floor } else { halved };
+            }
+        }
+        // Reset per-game tracking
+        self.modifier_triggered.clear();
+        self.modifier_purchased.clear();
+
         let mut snapshot = OverviewSnapshot::default();
         snapshot.pot_size = pot_size;
         snapshot.chips_owed = chips_owed_total;
@@ -425,7 +502,8 @@ impl<
         snapshot.modifier_shop = new_modifiers
             .into_iter()
             .map(|(trigger_roll, modifier_roll, modifier)| {
-                (trigger_roll, modifier_roll, modifier, false)
+                let price = *price_entry(&mut self.modifier_prices, modifier);
+                (trigger_roll, modifier_roll, modifier, false, price)
             })
             .collect();
         self.refresh_height(&mut snapshot, height);
@@ -582,13 +660,17 @@ impl<
         height: u32,
     ) -> Result<()> {
         tracing::info!("Handling PurchaseModifierEvent at height {}", height);
+        let _ = price_entry(&mut self.modifier_prices, event.expected_modifier);
+        if !self.modifier_purchased.contains(&event.expected_modifier) {
+            self.modifier_purchased.push(event.expected_modifier);
+        }
         let (mut snapshot, _) = self.snapshots.latest_snapshot()?;
         let modifier = event.expected_modifier;
         let idx = roll_to_index(&event.expected_roll);
         snapshot.modifiers_active[idx] = Some(modifier);
 
         for entry in &mut snapshot.modifier_shop {
-            let (_trigger_roll, modifier_roll, modifier, purchased) = entry;
+            let (_trigger_roll, modifier_roll, modifier, purchased, _price) = entry;
             if *modifier_roll == event.expected_roll
                 && *modifier == event.expected_modifier
             {
