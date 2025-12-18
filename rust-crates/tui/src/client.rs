@@ -193,8 +193,10 @@ pub struct AppController {
     last_seen_game_id_alice: Option<u32>,
     shared_last_roll_history: Vec<strapped::Roll>,
     shared_prev_games: Vec<SharedGame>,
+    #[allow(clippy::type_complexity)]
     alice_bets_hist: HashMap<u32, Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>>,
     alice_claimed: HashSet<u32>,
+    #[allow(clippy::type_complexity)]
     prev_alice_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
     strap_rewards_by_game: HashMap<u32, Vec<(strapped::Roll, strapped::Strap, u64)>>,
     active_modifiers_by_game:
@@ -212,7 +214,7 @@ impl AppController {
         initial_vrf: u64,
         indexer: Option<IndexerClient>,
     ) -> Self {
-        let alice_identity = Identity::Address(clients.alice.account().address().clone());
+        let alice_identity = Identity::Address(clients.alice.account().address());
 
         Self {
             clients,
@@ -274,12 +276,11 @@ impl AppController {
         let current_game_id = overview.game_id;
         let mut roll_history = overview.rolls.clone();
         if roll_history.is_empty() {
-            if let Some(prev_snapshot) = &self.last_snapshot {
-                if prev_snapshot.current_game_id == current_game_id
-                    && !prev_snapshot.roll_history.is_empty()
-                {
-                    roll_history = prev_snapshot.roll_history.clone();
-                }
+            if let Some(prev_snapshot) = &self.last_snapshot
+                && prev_snapshot.current_game_id == current_game_id
+                && !prev_snapshot.roll_history.is_empty()
+            {
+                roll_history = prev_snapshot.roll_history.clone();
             }
             if roll_history.is_empty()
                 && self.last_seen_game_id_alice == Some(current_game_id)
@@ -302,34 +303,34 @@ impl AppController {
             .or_insert_with(|| strap_rewards.clone());
 
         let last_seen_opt = self.last_seen_game_id_alice;
-        if let Some(prev) = last_seen_opt {
-            if current_game_id > prev {
-                let alice_bets_prev = self.prev_alice_bets.clone();
-                let mut completed_rolls = self.shared_last_roll_history.clone();
-                if !completed_rolls
-                    .last()
-                    .map(|r| matches!(r, strapped::Roll::Seven))
-                    .unwrap_or(false)
-                {
-                    completed_rolls.push(strapped::Roll::Seven);
-                }
-                let modifiers_for_prev = self
-                    .active_modifiers_by_game
-                    .get(&prev)
-                    .cloned()
-                    .unwrap_or_default();
-                self.upsert_shared_game(prev, completed_rolls, modifiers_for_prev);
-                self.alice_bets_hist.insert(prev, alice_bets_prev.clone());
-                if alice_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
-                    self.alice_claimed.insert(prev);
-                }
-                self.shared_prev_games
-                    .sort_by(|a, b| b.game_id.cmp(&a.game_id));
-                if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
-                    self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
-                }
-                self.last_seen_game_id_alice = Some(current_game_id);
+        if let Some(prev) = last_seen_opt
+            && current_game_id > prev
+        {
+            let alice_bets_prev = self.prev_alice_bets.clone();
+            let mut completed_rolls = self.shared_last_roll_history.clone();
+            if !completed_rolls
+                .last()
+                .map(|r| matches!(r, strapped::Roll::Seven))
+                .unwrap_or(false)
+            {
+                completed_rolls.push(strapped::Roll::Seven);
             }
+            let modifiers_for_prev = self
+                .active_modifiers_by_game
+                .get(&prev)
+                .cloned()
+                .unwrap_or_default();
+            self.upsert_shared_game(prev, completed_rolls, modifiers_for_prev);
+            self.alice_bets_hist.insert(prev, alice_bets_prev.clone());
+            if alice_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
+                self.alice_claimed.insert(prev);
+            }
+            self.shared_prev_games
+                .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+            if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
+                self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+            }
+            self.last_seen_game_id_alice = Some(current_game_id);
         }
         self.last_seen_game_id_alice = Some(current_game_id);
 
@@ -513,36 +514,35 @@ impl AppController {
             let needs_modifiers = !self.active_modifiers_by_game.contains_key(&game_id);
             let needs_rewards = !self.strap_rewards_by_game.contains_key(&game_id);
 
-            if needs_game || needs_modifiers || needs_rewards {
-                if let Some(hist) = client.historical_snapshot(game_id).await? {
-                    if needs_game && !hist.rolls.is_empty() {
-                        self.upsert_shared_game(
-                            game_id,
-                            hist.rolls.clone(),
-                            hist.modifiers.clone(),
-                        );
-                    }
-                    if needs_modifiers {
-                        self.active_modifiers_by_game
-                            .insert(game_id, hist.modifiers.clone());
-                    }
-                    if needs_rewards {
-                        self.strap_rewards_by_game
-                            .insert(game_id, hist.strap_rewards.clone());
-                    }
+            if (needs_game || needs_modifiers || needs_rewards)
+                && let Some(hist) = client.historical_snapshot(game_id).await?
+            {
+                if needs_game && !hist.rolls.is_empty() {
+                    self.upsert_shared_game(
+                        game_id,
+                        hist.rolls.clone(),
+                        hist.modifiers.clone(),
+                    );
+                }
+                if needs_modifiers {
+                    self.active_modifiers_by_game
+                        .insert(game_id, hist.modifiers.clone());
+                }
+                if needs_rewards {
+                    self.strap_rewards_by_game
+                        .insert(game_id, hist.strap_rewards.clone());
                 }
             }
 
-            if !self.alice_bets_hist.contains_key(&game_id) {
-                if let Some(account) = client
+            if !self.alice_bets_hist.contains_key(&game_id)
+                && let Some(account) = client
                     .historical_account_snapshot(&self.alice_identity, game_id)
                     .await?
-                {
-                    self.alice_bets_hist
-                        .insert(game_id, account.per_roll_bets.clone());
-                    if account.claimed_rewards.is_some() {
-                        self.alice_claimed.insert(game_id);
-                    }
+            {
+                self.alice_bets_hist
+                    .insert(game_id, account.per_roll_bets.clone());
+                if account.claimed_rewards.is_some() {
+                    self.alice_claimed.insert(game_id);
                 }
             }
         }
@@ -642,6 +642,7 @@ impl AppController {
         self.pending_bets = remaining;
     }
 
+    #[allow(clippy::type_complexity)]
     fn overlay_pending_bets(
         &self,
         current_game_id: u32,
@@ -677,12 +678,11 @@ impl AppController {
             return;
         };
         let mut unmatched = latest_bets;
-        if let Some(account) = &self.cached_account {
-            if let Some((_, known)) =
+        if let Some(account) = &self.cached_account
+            && let Some((_, known)) =
                 account.per_roll_bets.iter().find(|(r, _)| r == roll)
-            {
-                Self::remove_known_bets(&mut unmatched, known);
-            }
+        {
+            Self::remove_known_bets(&mut unmatched, known);
         }
 
         let pending_known: Vec<(strapped::Bet, u64, u32)> = self
@@ -841,8 +841,8 @@ impl AppController {
         tracing::info!("f");
         let mut compatible: Vec<_> = records
             .iter()
-            .cloned()
             .filter(|record| record.is_compatible_with_hash(&bytecode_hash))
+            .cloned()
             .collect();
 
         tracing::info!("g");
@@ -852,13 +852,9 @@ impl AppController {
         };
         let consensus_parameters = provider.consensus_parameters().await?;
         let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
-        let safe_script_gas_limit = std::cmp::max(
-            1,
-            std::cmp::min(
-                DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
-                max_gas_per_tx.saturating_sub(1),
-            ),
-        );
+        let safe_script_gas_limit = max_gas_per_tx
+            .saturating_sub(1)
+            .clamp(1, DEFAULT_SAFE_SCRIPT_GAS_LIMIT);
         tracing::info!(
             "Using safe script gas limit {} (max_gas_per_tx={})",
             safe_script_gas_limit,
@@ -889,8 +885,7 @@ impl AppController {
             })?;
 
         tracing::info!("j");
-        let user_instance =
-            strapped::MyContract::new(contract_id.clone(), user_wallet.clone());
+        let user_instance = strapped::MyContract::new(contract_id, user_wallet.clone());
 
         let chip_asset_id = if let Some(id_hex) = selected.chip_asset_id.as_ref() {
             AssetId::from_str(id_hex).map_err(|e| {
@@ -908,10 +903,10 @@ impl AppController {
             })?;
             (
                 Some(VrfClient::Pseudo(pseudo_vrf::PseudoVRFContract::new(
-                    vrf_bech32.clone(),
+                    vrf_bech32,
                     user_wallet.clone(),
                 ))),
-                ContractId::from(vrf_bech32),
+                vrf_bech32,
             )
         } else {
             let vrf_bits = user_instance
@@ -1442,10 +1437,7 @@ impl AppController {
             return Ok(());
         }
         {
-            let entry = self
-                .strap_rewards_by_game
-                .entry(game_id)
-                .or_insert_with(Vec::new);
+            let entry = self.strap_rewards_by_game.entry(game_id).or_default();
             for (roll, strap) in &upgraded_straps {
                 if !entry.iter().any(|(_, existing, _)| existing == strap) {
                     let cost = strap_cost(strap);
@@ -1978,18 +1970,18 @@ fn process_post_action(
         return;
     }
 
-    if new_len > prev_len || (new_len == prev_len && new_last != prev_last) {
-        if let Some(roll) = new_last {
-            let article = match roll {
-                strapped::Roll::Eight | strapped::Roll::Eleven => "an",
-                _ => "a",
-            };
-            let roll_name = format!("{:?}", roll);
-            let message = format!("Rolled {} {}", article, roll_name);
-            sync_status(controller, snapshot, message);
-            pending.take();
-            return;
-        }
+    if (new_len > prev_len || (new_len == prev_len && new_last != prev_last))
+        && let Some(roll) = new_last
+    {
+        let article = match roll {
+            strapped::Roll::Eight | strapped::Roll::Eleven => "an",
+            _ => "a",
+        };
+        let roll_name = format!("{:?}", roll);
+        let message = format!("Rolled {} {}", article, roll_name);
+        sync_status(controller, snapshot, message);
+        pending.take();
+        return;
     }
 
     if controller.status == "Rolling..." {
@@ -2033,6 +2025,7 @@ struct HistoryRecord {
     rolls: Vec<strapped::Roll>,
     modifiers: Vec<(strapped::Roll, strapped::Modifier, u32)>,
     strap_rewards: Vec<(strapped::Roll, strapped::Strap, u64)>,
+    #[allow(clippy::type_complexity)]
     per_roll_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
     claimed: bool,
 }
@@ -2159,7 +2152,7 @@ async fn run_loop(
         .indexer
         .clone()
         .ok_or(anyhow!("No indexer configured"))?;
-    let identity = controller.alice_identity.clone();
+    let identity = controller.alice_identity;
 
     let (snapshot_cmd_tx, snapshot_cmd_rx) = mpsc::unbounded_channel();
     let (snapshot_event_tx, mut snapshot_event_rx) = mpsc::unbounded_channel();
@@ -2537,7 +2530,7 @@ async fn run_loop(
                         continue;
                     }
                     ui::UserEvent::ConfirmShopPurchase { roll, modifier } => {
-                        let already_purchased = last_snapshot.as_ref().map_or(false, |snap| {
+                        let already_purchased = last_snapshot.as_ref().is_some_and(|snap| {
                             snap.modifier_triggers.iter().any(
                                 |(_, target, m, _, purchased, _)| {
                                     *target == roll && *m == modifier && *purchased

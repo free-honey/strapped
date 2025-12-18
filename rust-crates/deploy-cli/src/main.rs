@@ -171,13 +171,9 @@ async fn main() -> Result<()> {
         .context("fetching consensus parameters")?;
     let default_chip_asset = *consensus_parameters.base_asset_id();
     let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
-    let safe_script_gas_limit = std::cmp::max(
-        1,
-        std::cmp::min(
-            DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
-            max_gas_per_tx.saturating_sub(1),
-        ),
-    );
+    let safe_script_gas_limit = max_gas_per_tx
+        .saturating_sub(1)
+        .clamp(1, DEFAULT_SAFE_SCRIPT_GAS_LIMIT);
     let chip_asset_id = if let Some(arg) = args.chip_asset_id.as_deref() {
         parse_asset_id(arg)?
     } else {
@@ -186,7 +182,7 @@ async fn main() -> Result<()> {
             "No chip asset id specified, defaulting to the base asset id: 0x{}",
             encoded
         );
-        AssetId::from(default_chip_asset)
+        default_chip_asset
     };
 
     let store = DeploymentStore::new(env).context("opening deployment store")?;
@@ -213,7 +209,7 @@ async fn main() -> Result<()> {
         } else if let Some(stored) = record.chip_asset_id.as_deref() {
             parse_asset_id(stored)?
         } else {
-            AssetId::from(default_chip_asset)
+            default_chip_asset
         };
 
         if let Action::Balance = action {
@@ -239,14 +235,14 @@ async fn main() -> Result<()> {
             let to_identity = if let Some(raw) = args.withdraw_to.as_deref() {
                 parse_identity(raw)?
             } else {
-                Identity::Address(wallet.address().into())
+                Identity::Address(wallet.address())
             };
             let dest_display = args
                 .withdraw_to
                 .clone()
                 .unwrap_or_else(|| wallet.address().to_string());
             let strap_instance =
-                strapped_types::MyContract::new(contract_id.clone(), wallet.clone());
+                strapped_types::MyContract::new(contract_id, wallet.clone());
             strap_instance
                 .methods()
                 .request_house_withdrawal(amount, to_identity)
@@ -312,7 +308,7 @@ async fn main() -> Result<()> {
     .context("hashing VRF binary")?;
 
     let vrf_instance =
-        pseudo_vrf_types::PseudoVRFContract::new(vrf_contract_id.clone(), wallet.clone());
+        pseudo_vrf_types::PseudoVRFContract::new(vrf_contract_id, wallet.clone());
     let entropy = rand::rng().random();
     vrf_instance
         .methods()
@@ -323,7 +319,7 @@ async fn main() -> Result<()> {
         .context("setting initial VRF entropy")?;
 
     let strap_instance =
-        strapped_types::MyContract::new(strap_contract_id.clone(), wallet.clone());
+        strapped_types::MyContract::new(strap_contract_id, wallet.clone());
     strap_instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, roll_frequency)
@@ -415,7 +411,7 @@ fn parse_identity(raw: &str) -> Result<Identity> {
         .parse::<Address>()
         .or_else(|_| Address::from_str(raw))
         .map_err(|_| anyhow::anyhow!("unable to parse address/identity: {raw}"))?;
-    Ok(Identity::Address(addr.into()))
+    Ok(Identity::Address(addr))
 }
 
 fn latest_record(store: &DeploymentStore) -> Result<DeploymentRecord> {
