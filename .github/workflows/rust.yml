@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [ "master" ]
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: "Image tag to publish (in addition to the git SHA)"
-        required: false
-        default: "latest"
 
 env:
   CARGO_TERM_COLOR: always
@@ -96,46 +91,3 @@ jobs:
         run: export PATH="${HOME}/.fuelup/bin:${PATH}"
       - name: Run tests
         run: cargo nextest run --all-features
-
-  publish_indexer_image:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: [build, clippy, fmt, test]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Fuel toolchain
-        run: curl -sSf https://install.fuel.network | sh
-      - name: Add fuelup to PATH
-        run: echo "$HOME/.fuelup/bin" >> "$GITHUB_PATH"
-      - name: Install Forc components
-        run: fuelup toolchain install latest
-      - name: Add Forc to PATH
-        run: export PATH="${HOME}/.fuelup/bin:${PATH}"
-      - name: Build indexer
-        run: cargo build -p indexer --release
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build and publish image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.indexer
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/indexer:${{ inputs.image_tag }}
-            ghcr.io/${{ github.repository }}/indexer:${{ github.sha }}
