@@ -1,10 +1,12 @@
 name: publish-indexer-image
 
 on:
-  push:
-    branches:
-      - master
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to publish (in addition to the git SHA)"
+        required: false
+        default: "latest"
 
 permissions:
   contents: read
@@ -49,5 +51,5 @@ jobs:
           file: Dockerfile.indexer
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/indexer:latest
+            ghcr.io/${{ github.repository }}/indexer:${{ inputs.image_tag }}
             ghcr.io/${{ github.repository }}/indexer:${{ github.sha }}
