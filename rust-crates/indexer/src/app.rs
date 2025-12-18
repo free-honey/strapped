@@ -427,8 +427,10 @@ impl<
         self.modifier_triggered.clear();
         self.modifier_purchased.clear();
 
-        let mut snapshot = OverviewSnapshot::default();
-        snapshot.pot_size = pot_size;
+        let mut snapshot = OverviewSnapshot {
+            pot_size,
+            ..Default::default()
+        };
         snapshot.chips_owed = chips_owed_total;
         snapshot.total_chip_bets = 0;
         snapshot.game_id = game_id;

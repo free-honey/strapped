@@ -94,7 +94,7 @@ fn normalize_account_snapshot(snapshot: &mut AccountSnapshot) {
 pub struct ActixQueryApi {
     receiver: mpsc::Receiver<Query>,
     base_url: String,
-    server_handle: ServerHandle,
+    _server_handle: ServerHandle,
     server_thread: Option<JoinHandle<()>>,
 }
 
@@ -146,7 +146,7 @@ impl ActixQueryApi {
         Ok(Self {
             receiver,
             base_url,
-            server_handle,
+            _server_handle: server_handle,
             server_thread: Some(server_thread),
         })
     }
@@ -167,7 +167,6 @@ impl QueryAPI for ActixQueryApi {
 
 impl Drop for ActixQueryApi {
     fn drop(&mut self) {
-        let _ = self.server_handle.stop(true);
         if let Some(thread) = self.server_thread.take() {
             let _ = thread.join();
         }

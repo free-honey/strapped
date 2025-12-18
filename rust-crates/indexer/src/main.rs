@@ -193,10 +193,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     let execution_dir = current_dir().context("determine process working directory")?;
-    let database_dir = args.db_dir.unwrap_or("strapped_indexer_data")
-    let database_path = execution_dir
-        .join(database_dir)
-        .join(network_label);
+    let database_dir = args.db_dir.unwrap_or("strapped_indexer_data".into());
+    let database_path = execution_dir.join(database_dir).join(network_label);
     fs::create_dir_all(&database_path)?;
     let event_data_path = database_path.join("events");
     fs::create_dir_all(&event_data_path)?;

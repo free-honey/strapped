@@ -69,7 +69,7 @@ pub async fn get_contract_instance(
         .expect("failed to deploy strapped contract");
 
     let contract_id = res.contract_id;
-    let instance = strapped_types::MyContract::new(contract_id.clone(), wallet);
+    let instance = strapped_types::MyContract::new(contract_id, wallet);
 
     (instance, contract_id)
 }

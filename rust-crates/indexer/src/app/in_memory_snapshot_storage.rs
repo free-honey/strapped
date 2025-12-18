@@ -19,8 +19,15 @@ use std::{
 pub struct InMemorySnapshotStorage {
     latest_game_id: u32,
     snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
+    #[allow(clippy::type_complexity)]
     account_snapshots: Arc<Mutex<HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>>>,
     historical_snapshots: Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>,
+}
+
+impl Default for InMemorySnapshotStorage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InMemorySnapshotStorage {
@@ -46,6 +53,7 @@ impl InMemorySnapshotStorage {
         self.snapshot.clone()
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn account_snapshots(
         &self,
     ) -> Arc<Mutex<HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>>> {

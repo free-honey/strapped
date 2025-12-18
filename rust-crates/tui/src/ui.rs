@@ -372,10 +372,10 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                             }
                         }
                         ClaimFocus::Modifiers => {
-                            if let Some(g) = claimable.get(cs.game_idx) {
-                                if cs.mod_idx + 1 < g.modifiers.len() {
-                                    cs.mod_idx += 1;
-                                }
+                            if let Some(g) = claimable.get(cs.game_idx)
+                                && cs.mod_idx + 1 < g.modifiers.len()
+                            {
+                                cs.mod_idx += 1;
                             }
                         }
                     }
@@ -596,10 +596,10 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
         KeyCode::Char('c') => {
             let mut cs = ClaimState::default();
             let claimable = claimable_games(&state.prev_games);
-            if let Some(g) = claimable.first() {
-                if !g.modifiers.is_empty() {
-                    cs.selected = default_claim_selection(g);
-                }
+            if let Some(g) = claimable.first()
+                && !g.modifiers.is_empty()
+            {
+                cs.selected = default_claim_selection(g);
             }
             state.mode = Mode::ClaimModal(cs);
             Some(UserEvent::OpenClaimModal)
