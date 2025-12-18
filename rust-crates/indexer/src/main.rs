@@ -68,7 +68,7 @@ struct Args {
     tracing: bool,
 
     #[arg(long)]
-    snapshot_dir: Option<PathBuf>,
+    db_dir: Option<PathBuf>,
 
     #[arg(long)]
     local: bool,
@@ -193,20 +193,18 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     let execution_dir = current_dir().context("determine process working directory")?;
-    let data_root = execution_dir
-        .join("strapped_indexer_data")
+    let database_dir = args.db_dir.unwrap_or("strapped_indexer_data")
+    let database_path = execution_dir
+        .join(database_dir)
         .join(network_label);
-    fs::create_dir_all(&data_root)?;
-    let event_data_path = data_root.join("events");
+    fs::create_dir_all(&database_path)?;
+    let event_data_path = database_path.join("events");
     fs::create_dir_all(&event_data_path)?;
     tracing::info!(
         "Using persistent event directory: {}",
         event_data_path.display()
     );
-    let storage_path = match &args.snapshot_dir {
-        Some(path) => path.clone(),
-        None => data_root.join("snapshots"),
-    };
+    let storage_path = database_path.join("snapshots");
     fs::create_dir_all(&storage_path)?;
     tracing::info!("Using sled storage directory: {}", storage_path.display());
 
