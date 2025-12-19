@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PATH="${HOME}/.fuelup/bin:${PATH}"
 
 # Installs Fuel toolchain and builds Sway ABIs for Railway deployments.
 
