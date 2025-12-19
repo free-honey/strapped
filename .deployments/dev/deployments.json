@@ -1,15 +1,13 @@
-[
-  {
-    "deployed_at": "2025-12-15T18:39:45.522290+00:00",
-    "contract_id": "ed03617564f6d71679d56ec6fb04133cdb420e918ba0afe2a83fe2f8e50a60dc",
-    "bytecode_hash": "70731c9aae2fc82f295ce5d230457c53c351c80c4e35bedc488748c9c07a9620",
-    "network_url": "https://devnet.fuel.network",
-    "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-    "contract_salt": "0x894e7c9270ad72cd7b4153f9474bf5327f7c6a4c3c12cb268b2df19ac17b8dca",
-    "vrf_salt": "0x5ae35eb4a1b41a01f9119e64cec797ff7cb5fbbc285e66ec230625c276b43401",
-    "vrf_contract_id": "7bd721dc6a27c5e0b3d926d2dcd0b6210b3ed1bf85e803c77913b5b5cb6b1246",
-    "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
-    "deployment_block_height": 50181986,
-    "roll_frequency": 1
-  }
-]
+{
+  "deployed_at": "2025-12-19T22:51:42.999322+00:00",
+  "contract_id": "ce4d76297ba238583ff7af6a279dc1966afdcfb204309357ba8eec3e65eaa769",
+  "bytecode_hash": "70731c9aae2fc82f295ce5d230457c53c351c80c4e35bedc488748c9c07a9620",
+  "network_url": "https://devnet.fuel.network",
+  "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+  "contract_salt": "0xd3d9e22c211acbe377cd3ce23838073ad7c66b1435dffd524d003b10abc3a68f",
+  "vrf_salt": "0x9703b6a340f24d58088ac0a9aaa5c97974c1cfdbdd491ef606ece3af88794bac",
+  "vrf_contract_id": "b764b6fe2b1bbfef85877173259869342e514b87d591cedb212e338c9ce3af68",
+  "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
+  "deployment_block_height": 50542683,
+  "roll_frequency": 1
+}

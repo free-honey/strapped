@@ -833,17 +833,25 @@ impl AppController {
 
         tracing::info!("e");
         let store = deployment::DeploymentStore::new(env).map_err(|e| eyre!(e))?;
-        let records = store.load().map_err(|e| eyre!(e))?;
+        let record = store.load().map_err(|e| eyre!(e))?;
         let strap_binary = choose_binary(&STRAPPED_BIN_CANDIDATES)?;
         let bytecode_hash =
             deployment::compute_bytecode_hash(strap_binary).map_err(|e| eyre!(e))?;
 
         tracing::info!("f");
-        let mut compatible: Vec<_> = records
-            .iter()
-            .cloned()
-            .filter(|record| record.is_compatible_with_hash(&bytecode_hash))
-            .collect();
+        let selected = match record {
+            Some(record) if record.is_compatible_with_hash(&bytecode_hash) => record,
+            other => {
+                let summary = format_deployment_summary(
+                    env,
+                    &url,
+                    &store,
+                    other.as_ref(),
+                    &bytecode_hash,
+                )?;
+                return Err(eyre!(summary));
+            }
+        };
 
         tracing::info!("g");
         let initial_vrf = match vrf_mode {
@@ -865,19 +873,7 @@ impl AppController {
             max_gas_per_tx
         );
         tracing::info!("h");
-        if compatible.is_empty() {
-            let summary =
-                format_deployment_summary(env, &url, &store, &records, &bytecode_hash)?;
-            return Err(eyre!(summary));
-        }
-
         tracing::info!("i");
-
-        compatible.sort_by(|a, b| a.deployed_at.cmp(&b.deployed_at));
-        let selected = compatible
-            .last()
-            .expect("compatible deployments list should not be empty")
-            .clone();
 
         let trimmed_contract_id_string = &selected.contract_id.trim_start_matches("fuel");
         let contract_id =
@@ -1814,48 +1810,45 @@ fn format_deployment_summary(
     env: deployment::DeploymentEnv,
     url: &str,
     store: &deployment::DeploymentStore,
-    records: &[deployment::DeploymentRecord],
+    record: Option<&deployment::DeploymentRecord>,
     current_hash: &str,
 ) -> Result<String> {
     let mut message = format!(
-        "No compatible deployments recorded for {env} at {url}.\n\nRecorded deployments for {env}:",
+        "No compatible deployment recorded for {env} at {url}.\n\nRecorded deployment for {env}:",
     );
 
-    if records.is_empty() {
-        message.push_str("\n  (none recorded)");
+    if let Some(record) = record {
+        let compat = if record.is_compatible_with_hash(current_hash) {
+            " [compatible]"
+        } else {
+            ""
+        };
+        let asset_info = record.chip_asset_id.as_deref().unwrap_or("(unknown asset)");
+        let contract_salt = record.contract_salt.as_deref().unwrap_or("(unknown salt)");
+        let vrf_salt = record.vrf_salt.as_deref().unwrap_or("(unknown vrf salt)");
+        let vrf_contract = record
+            .vrf_contract_id
+            .as_deref()
+            .unwrap_or("(unknown vrf id)");
+        let vrf_hash = record
+            .vrf_bytecode_hash
+            .as_deref()
+            .unwrap_or("(unknown vrf hash)");
+        message.push_str(&format!(
+            "\n  {} - {} @ {} (hash {}){} asset {} contract_salt {} vrf_salt {} vrf_contract {} vrf_hash {}",
+            record.deployed_at,
+            record.contract_id,
+            record.network_url,
+            hash_preview(&record.bytecode_hash),
+            compat,
+            asset_info,
+            contract_salt,
+            vrf_salt,
+            vrf_contract,
+            vrf_hash,
+        ));
     } else {
-        for record in records {
-            let compat = if record.is_compatible_with_hash(current_hash) {
-                " [compatible]"
-            } else {
-                ""
-            };
-            let asset_info = record.chip_asset_id.as_deref().unwrap_or("(unknown asset)");
-            let contract_salt =
-                record.contract_salt.as_deref().unwrap_or("(unknown salt)");
-            let vrf_salt = record.vrf_salt.as_deref().unwrap_or("(unknown vrf salt)");
-            let vrf_contract = record
-                .vrf_contract_id
-                .as_deref()
-                .unwrap_or("(unknown vrf id)");
-            let vrf_hash = record
-                .vrf_bytecode_hash
-                .as_deref()
-                .unwrap_or("(unknown vrf hash)");
-            message.push_str(&format!(
-                "\n  {} - {} @ {} (hash {}){} asset {} contract_salt {} vrf_salt {} vrf_contract {} vrf_hash {}",
-                record.deployed_at,
-                record.contract_id,
-                record.network_url,
-                hash_preview(&record.bytecode_hash),
-                compat,
-                asset_info,
-                contract_salt,
-                vrf_salt,
-                vrf_contract,
-                vrf_hash,
-            ));
-        }
+        message.push_str("\n  (none recorded)");
     }
 
     message.push_str(&format!(

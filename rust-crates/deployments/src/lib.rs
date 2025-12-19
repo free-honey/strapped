@@ -1,6 +1,7 @@
 use anyhow::{
     Context,
     Result,
+    anyhow,
 };
 use chrono::Utc;
 use serde::{
@@ -95,14 +96,12 @@ impl DeploymentStore {
         &self.path
     }
 
-    pub fn load(&self) -> Result<Vec<DeploymentRecord>> {
-        read_records(&self.path)
+    pub fn load(&self) -> Result<Option<DeploymentRecord>> {
+        read_record(&self.path)
     }
 
-    pub fn append(&self, record: DeploymentRecord) -> Result<()> {
-        let mut records = self.load()?;
-        records.push(record);
-        write_records(&self.path, &records)
+    pub fn save(&self, record: DeploymentRecord) -> Result<()> {
+        write_record(&self.path, &record)
     }
 }
 
@@ -151,7 +150,7 @@ fn ensure_store(env: DeploymentEnv) -> Result<PathBuf> {
                 env, file_path
             )
         })?;
-        file.write_all(b"[]").with_context(|| {
+        file.write_all(b"").with_context(|| {
             format!("Failed to initialize deployment record file for {}", env)
         })?;
     }
@@ -159,20 +158,26 @@ fn ensure_store(env: DeploymentEnv) -> Result<PathBuf> {
     Ok(file_path)
 }
 
-fn read_records(path: impl AsRef<Path>) -> Result<Vec<DeploymentRecord>> {
+fn read_record(path: impl AsRef<Path>) -> Result<Option<DeploymentRecord>> {
     let data = fs::read(path.as_ref()).context("Failed to read deployment records")?;
-    if data.is_empty() {
-        return Ok(Vec::new());
+    if data.iter().all(u8::is_ascii_whitespace) || data.is_empty() {
+        return Ok(None);
     }
-    let records = serde_json::from_slice::<Vec<DeploymentRecord>>(&data)
-        .context("Failed to parse deployment records JSON")?;
-    Ok(records)
+    if let Ok(record) = serde_json::from_slice::<DeploymentRecord>(&data) {
+        return Ok(Some(record));
+    }
+    if let Ok(mut records) = serde_json::from_slice::<Vec<DeploymentRecord>>(&data) {
+        return Ok(records.pop());
+    }
+    Err(anyhow!(
+        "Failed to parse deployment record JSON; expected a single deployment object"
+    ))
 }
 
-fn write_records(path: impl AsRef<Path>, records: &[DeploymentRecord]) -> Result<()> {
-    let json = serde_json::to_vec_pretty(records)
-        .context("Failed to serialize deployment records")?;
-    fs::write(path.as_ref(), json).context("Failed to write deployment records")?;
+fn write_record(path: impl AsRef<Path>, record: &DeploymentRecord) -> Result<()> {
+    let json = serde_json::to_vec_pretty(record)
+        .context("Failed to serialize deployment record")?;
+    fs::write(path.as_ref(), json).context("Failed to write deployment record")?;
     Ok(())
 }
 
@@ -243,5 +248,5 @@ pub fn record_deployment(
         deployment_block_height: None,
         roll_frequency: None,
     };
-    store.append(record)
+    store.save(record)
 }

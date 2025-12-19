@@ -362,7 +362,7 @@ async fn main() -> Result<()> {
         roll_frequency: Some(roll_frequency),
     };
 
-    store.append(record).context("recording deployment")?;
+    store.save(record).context("recording deployment")?;
     println!("Deployment metadata written to {}", store.path().display());
     Ok(())
 }
@@ -419,8 +419,8 @@ fn parse_identity(raw: &str) -> Result<Identity> {
 }
 
 fn latest_record(store: &DeploymentStore) -> Result<DeploymentRecord> {
-    let mut records = store.load().context("loading deployment records")?;
-    records
-        .pop()
+    store
+        .load()
+        .context("loading deployment record")?
         .ok_or_else(|| anyhow::anyhow!("no deployments found for this environment"))
 }
