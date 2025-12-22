@@ -31,6 +31,9 @@
     ],
     "inputs": [
       {
+        "step": "install_forc"
+      },
+      {
         "step": "build"
       }
     ],
