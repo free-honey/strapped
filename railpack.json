@@ -9,7 +9,7 @@
     "build": {
       "inputs": [{ "step": "install_forc" }],
       "commands": [
-        "cargo xtask abi"
+        "cargo run -p xtask -- abi"
       ]
     }
   },
