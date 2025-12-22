@@ -17,7 +17,7 @@
         }
       ],
       "commands": [
-        "pwd && ls -la",
+        "pwd && ls -la ..",
         "cargo run -p xtask -- abi"
       ]
     }
