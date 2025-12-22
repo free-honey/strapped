@@ -2,6 +2,7 @@
   "$schema": "https://schema.railpack.com",
   "steps": {
     "install_forc": {
+      "inputs": [{ "local": true, "include": ["."] }],
       "commands": [
         "export PATH=${HOME}/.fuelup/bin:${PATH}; if ! command -v fuelup >/dev/null 2>&1; then curl -sSf https://install.fuel.network | sh; fi; fuelup toolchain install latest; fuelup default latest"
       ]
@@ -15,6 +16,7 @@
     }
   },
   "deploy": {
+    "inputs": [{ "step": "build" }],
     "startCommand": "cargo run -p indexer -- --graphql-url ${GRAPHQL_URL} --port ${PORT} --test --tracing"
   }
 }
