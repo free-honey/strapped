@@ -1,16 +1,21 @@
 {
   "$schema": "https://schema.railpack.com",
   "steps": {
+    "sanity": {
+      "commands": [
+        "ls -la"
+      ]
+    },
     "install_forc": {
       "commands": [
         "./railpack/install_forc.sh"
       ]
     },
     "build": {
-      "sanity": [
-        "ls -la"
-      ],
       "inputs": [
+        {
+          "step": "sanity"
+        },
         {
           "step": "install_forc"
         }
