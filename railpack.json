@@ -7,7 +7,6 @@
       ]
     },
     "build": {
-      "local": true,
       "include": [
         "."
       ],
@@ -17,13 +16,16 @@
         }
       ],
       "commands": [
+        {
+          "src": ".",
+          "dest": "."
+        },
         "pwd && ls -la ..",
         "cargo run -p xtask -- abi"
       ]
     }
   },
   "deploy": {
-    "local": true,
     "include": [
       "."
     ],
