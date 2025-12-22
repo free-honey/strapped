@@ -8,8 +8,14 @@
     },
     "build": {
       "local": true,
-      "include": ["."],
-      "inputs": [{ "step": "install_forc" }],
+      "include": [
+        "."
+      ],
+      "inputs": [
+        {
+          "step": "install_forc"
+        }
+      ],
       "commands": [
         "pwd && ls -la",
         "cargo run -p xtask -- abi"
@@ -17,7 +23,15 @@
     }
   },
   "deploy": {
-    "inputs": [{ "step": "build" }],
+    "local": true,
+    "include": [
+      "."
+    ],
+    "inputs": [
+      {
+        "step": "build"
+      }
+    ],
     "startCommand": "cargo run -p indexer -- --graphql-url ${GRAPHQL_URL} --port ${PORT} --test --tracing"
   }
 }
