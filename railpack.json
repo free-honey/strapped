@@ -3,7 +3,8 @@
   "steps": {
     "install_forc": {
       "commands": [
-        "export PATH=${HOME}/.fuelup/bin:${PATH}; if ! command -v fuelup >/dev/null 2>&1; then curl -sSf https://install.fuel.network | sh; fi; fuelup toolchain install latest; fuelup default latest"
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; if ! command -v fuelup >/dev/null 2>&1; then curl -sSf https://install.fuel.network | sh; fi; fuelup toolchain install latest; fuelup default latest",
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; forc --version"
       ]
     },
     "build": {
@@ -15,24 +16,19 @@
           "step": "install_forc"
         }
       ],
+      "path": "${HOME}/.fuelup/bin",
       "commands": [
         {
           "src": ".",
           "dest": "."
         },
-        "pwd && ls -la ..",
-        "cargo run -p xtask -- abi"
+        "pwd && ls -la",
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo run -p xtask -- abi"
       ]
     }
   },
   "deploy": {
-    "include": [
-      "."
-    ],
     "inputs": [
-      {
-        "step": "install_forc"
-      },
       {
         "step": "build"
       }
