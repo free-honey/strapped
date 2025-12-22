@@ -20,7 +20,8 @@
         },
         "pwd && ls -la",
         "apt-get update && apt-get install -y clang llvm-dev libclang-dev pkg-config",
-        "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo install --path rust-crates/indexer --locked --root /usr/local"
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo install --path rust-crates/indexer --locked",
+        "ls -la /root/.cargo/bin/"
       ]
     }
   },
@@ -30,6 +31,6 @@
         "step": "build"
       }
     ],
-    "startCommand": "${HOME}/root/.cargo/bin:${PATH} indexer -- --graphql-url ${GRAPHQL_URL} --port ${PORT} --test --tracing"
+    "startCommand": "/root/.cargo/bin/indexer -- --graphql-url ${GRAPHQL_URL} --port ${PORT} --test --tracing"
   }
 }
