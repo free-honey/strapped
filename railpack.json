@@ -2,11 +2,22 @@
   "$schema": "https://schema.railpack.com",
   "steps": {
     "install_forc": {
-      "commands": ["./railpack/install_forc.sh"]
+      "commands": [
+        "./railpack/install_forc.sh"
+      ]
     },
     "build": {
-      "inputs": [{ "step": "install_forc" }],
-      "commands": ["cargo xtask abi"]
+      "sanity": [
+        "ls -la"
+      ],
+      "inputs": [
+        {
+          "step": "install_forc"
+        }
+      ],
+      "commands": [
+        "cargo xtask abi"
+      ]
     }
   },
   "deploy": {
