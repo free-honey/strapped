@@ -27,16 +27,16 @@ use fuel_core_services::{
     ServiceRunner,
     stream::BoxStream,
 };
-use fuel_indexer::{
+use fuel_event_streams::{
     adapters::SimplerProcessorAdapter,
     fuel_events_manager,
     fuel_events_manager::{
         port::StorableEvent,
-        service::UnstableEvent,
+        service::TransactionEvents,
     },
     fuel_receipts_manager,
-    indexer::Task,
     processors::simple_processor::FnReceiptParser,
+    service::Task,
     try_parse_events,
 };
 use fuels::{
@@ -76,11 +76,11 @@ where
     _service: ServiceRunner<
         Task<
             SimplerProcessorAdapter<FnReceiptParser<Fn>>,
-            fuel_receipts_manager::rocksdb::Storage,
             fuel_events_manager::rocksdb::Storage,
+            fuel_receipts_manager::rocksdb::Storage,
         >,
     >,
-    stream: BoxStream<Result<UnstableEvent<Event>>>,
+    stream: BoxStream<Result<TransactionEvents<Event>>>,
 }
 
 impl StorableEvent for Event {}
@@ -90,19 +90,16 @@ where
     Fn: FnOnce(DecoderConfig, &Receipt) -> Option<Event> + Copy + Send + Sync + 'static,
 {
     async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
-        let unstable_event = self
+        let tx_event = self
             .stream
             .next()
             .await
             .ok_or(anyhow::anyhow!("no event"))?
             .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
-        match unstable_event {
-            UnstableEvent::Events((height, events)) => Ok((events, *height)),
-            UnstableEvent::Checkpoint(_checkpoint) => Ok((vec![], 0)),
-            UnstableEvent::Rollback(_) => {
-                todo!()
-            }
-        }
+        let TransactionEvents {
+            tx_pointer, events, ..
+        } = tx_event;
+        Ok((events, *tx_pointer.block_height()))
     }
 }
 
@@ -114,17 +111,20 @@ where
         handler: Fn,
         temp_dir: std::path::PathBuf,
         database_config: DatabaseConfig,
-        indexer_config: fuel_indexer::indexer::IndexerConfig,
+        indexer_config: fuel_event_streams::service::Config,
         starting_height: BlockHeight,
     ) -> Result<Self> {
-        let service = fuel_indexer::indexer::new_logs_indexer(
+        let service = fuel_event_streams::service::new_logs_streams(
             handler,
             temp_dir,
             database_config,
             indexer_config,
         )?;
         service.start_and_await().await?;
-        let stream = service.shared.events_starting_from(starting_height).await?;
+        let stream = service
+            .shared
+            .stable_events_starting_from(starting_height)
+            .await?;
         let new = Self {
             _service: service,
             stream,

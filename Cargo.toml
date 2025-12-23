@@ -22,7 +22,7 @@ tracing-subscriber = "0.3.20"
 
 # Fuel Crates
 fuels = "0.76.0"
-fuel-indexer = { git = "https://github.com/FuelLabs/fuel-rust-indexer", branch = "main" }
+fuel-event-streams = { git = "https://github.com/FuelLabs/fuel-rust-indexer", branch = "main" }
 
 # Local Crates
 generated_abi = { path = "rust-crates/generated_abi" }

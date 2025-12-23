@@ -17,7 +17,7 @@ use fuel_core::{
     },
     types::fuel_types::BlockHeight,
 };
-use fuel_indexer::indexer::IndexerConfig;
+use fuel_event_streams::service::Config;
 use fuels::types::ContractId;
 use indexer::app::{
     App,
@@ -264,7 +264,7 @@ async fn main() -> anyhow::Result<()> {
         max_fds: 512,
         columns_policy: ColumnsPolicy::Lazy,
     };
-    let indexer_config = IndexerConfig::new(start_block_height, args.graphql_url);
+    let indexer_config = Config::new(start_block_height, false, args.graphql_url);
     let events = FuelIndexerEventSource::new(
         parse_event_logs,
         event_data_path.clone(),

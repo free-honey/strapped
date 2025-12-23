@@ -12,7 +12,7 @@ anyhow = { workspace = true }
 clap = { version = "4.5.50", features = ["derive"] }
 fuels = { workspace = true }
 fuel-core = { version = "0.47.1" }
-fuel-indexer = { workspace = true, features = ["rocksdb"] }
+fuel-event-streams = { workspace = true, features = ["rocksdb"] }
 generated_abi = { workspace = true }
 deployments = { path = "../deployments" }
 tempdir = "0.3.7"
