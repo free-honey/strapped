@@ -42,7 +42,6 @@ use fuel_event_streams::{
 use fuels::{
     core::codec::DecoderConfig,
     prelude::{
-        AssetId,
         ContractId,
         Receipt,
     },
@@ -63,7 +62,6 @@ use generated_abi::strapped_types::{
     Strap as AbiStrap,
     StrapKind as AbiStrapKind,
 };
-use std::convert::TryFrom;
 use tokio_stream::StreamExt;
 
 #[cfg(test)]
@@ -208,7 +206,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
         InitializedEvent => |event| {
             let inner = Event::init_event(
                 ContractId::from(event.vrf_contract_id.0),
-                AssetId::from(event.chip_asset_id),
+                event.chip_asset_id,
                 event.roll_frequency,
                 event.first_height,
             );
@@ -216,8 +214,8 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
         },
         AbiRollEvent => |event| {
             tracing::info!("roll event: {:?}", event);
-            let game_id = u32::try_from(event.game_id).ok()?;
-            let roll_index = u32::try_from(event.roll_index).ok()?;
+            let game_id = event.game_id;
+            let roll_index = event.roll_index;
             let rolled_value = map_roll(event.rolled_value);
             Some(Event::roll_event(
                 game_id,
@@ -230,7 +228,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
             ))
         },
         AbiNewGameEvent => |event| {
-            let game_id = u32::try_from(event.game_id).ok()?;
+            let game_id = event.game_id;
             let new_straps = event
                 .new_straps
                 .into_iter()
@@ -259,8 +257,8 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
         },
         AbiModifierTriggeredEvent => |event| {
             let inner = ModifierTriggeredEvent {
-                game_id: u32::try_from(event.game_id).ok()?,
-                roll_index: u32::try_from(event.roll_index).ok()?,
+                game_id: event.game_id,
+                roll_index: event.roll_index,
                 trigger_roll: map_roll(event.trigger_roll),
                 modifier_roll: map_roll(event.modifier_roll),
                 modifier: map_modifier(event.modifier),
@@ -270,8 +268,8 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
         AbiPlaceChipBetEvent => |event| {
             tracing::info!("bet event: {:?}", event);
             let inner = PlaceChipBetEvent {
-                game_id: u32::try_from(event.game_id).ok()?,
-                bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,
+                game_id: event.game_id,
+                bet_roll_index: event.bet_roll_index,
                 player: map_identity(event.player),
                 roll: map_roll(event.roll),
                 amount: event.amount,
@@ -280,8 +278,8 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
         },
         AbiPlaceStrapBetEvent => |event| {
             let inner = PlaceStrapBetEvent {
-                game_id: u32::try_from(event.game_id).ok()?,
-                bet_roll_index: u32::try_from(event.bet_roll_index).ok()?,
+                game_id: event.game_id,
+                bet_roll_index: event.bet_roll_index,
                 player: map_identity(event.player),
                 roll: map_roll(event.roll),
                 strap: map_strap(event.strap),
@@ -301,7 +299,7 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
                 .map(|(strap, amount)| (map_strap(strap), amount))
                 .collect::<Vec<_>>();
             let inner = ClaimRewardsEvent {
-                game_id: u32::try_from(event.game_id).ok()?,
+                game_id: event.game_id,
                 player: map_identity(event.player),
                 enabled_modifiers,
                 total_chips_winnings: event.total_chips_winnings,

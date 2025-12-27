@@ -27,7 +27,5 @@ fuel-event-streams = { git = "https://github.com/FuelLabs/fuel-rust-indexer", br
 # Local Crates
 generated_abi = { path = "rust-crates/generated_abi" }
 
-[workspace.dev-dependencies]
-
 [patch.crates-io]
 fuels = { git = "https://github.com/FuelLabs/fuels-rs/", branch = "feature/log-id-expose" }

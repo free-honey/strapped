@@ -11,7 +11,6 @@ use fuels::types::{
 };
 use reqwest::StatusCode;
 use serde::Deserialize;
-use serde_json;
 use strapped_contract::strapped_types as strapped;
 
 #[derive(Clone)]

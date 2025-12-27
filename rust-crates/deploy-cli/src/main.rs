@@ -173,13 +173,9 @@ async fn main() -> Result<()> {
         .context("fetching consensus parameters")?;
     let default_chip_asset = *consensus_parameters.base_asset_id();
     let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
-    let safe_script_gas_limit = std::cmp::max(
-        1,
-        std::cmp::min(
-            DEFAULT_SAFE_SCRIPT_GAS_LIMIT,
-            max_gas_per_tx.saturating_sub(1),
-        ),
-    );
+    let safe_script_gas_limit = max_gas_per_tx
+        .saturating_sub(1)
+        .clamp(1, DEFAULT_SAFE_SCRIPT_GAS_LIMIT);
     let chip_asset_id = if let Some(arg) = args.chip_asset_id.as_deref() {
         parse_asset_id(arg)?
     } else {
