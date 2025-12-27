@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 tracing = { workspace = true }
-fuel-indexer = { workspace = true }
+fuel-event-streams = { workspace = true }
 
 [dev-dependencies]
 generated_abi = { path = "../rust-crates/generated_abi", features = ["test-helpers"] }

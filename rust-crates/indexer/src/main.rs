@@ -17,7 +17,7 @@ use fuel_core::{
     },
     types::fuel_types::BlockHeight,
 };
-use fuel_indexer::indexer::IndexerConfig;
+use fuel_event_streams::service::Config;
 use fuels::types::ContractId;
 use indexer::app::{
     App,
@@ -114,24 +114,24 @@ async fn main() -> anyhow::Result<()> {
     };
     let store =
         DeploymentStore::new(deployment_env).context("opening deployments store")?;
-    let records = store.load().context("loading deployments")?;
+    let stored_record = store.load().context("loading deployment")?;
     let user_contract_id = args
         .contract_id
         .as_ref()
         .map(|raw| parse_contract_id_str(raw).context("parsing --contract-id"))
         .transpose()?;
-    let selected_record = if let Some(ref cid) = user_contract_id {
-        records.iter().find(|record| {
-            parse_contract_id_str(&record.contract_id)
-                .map(|parsed| parsed == *cid)
-                .unwrap_or(false)
-        })
-    } else {
-        records
-            .iter()
-            .max_by(|a, b| a.deployed_at.cmp(&b.deployed_at))
+    let matches_cli_contract = |record: &deployments::DeploymentRecord,
+                                cid: &ContractId| {
+        parse_contract_id_str(&record.contract_id)
+            .map(|parsed| parsed == *cid)
+            .unwrap_or(false)
     };
-    let (contract_id, record_used) = match selected_record.cloned() {
+    let selected_record = match (&user_contract_id, stored_record.clone()) {
+        (Some(cid), Some(record)) if matches_cli_contract(&record, cid) => Some(record),
+        (None, record) => record,
+        _ => None,
+    };
+    let (contract_id, record_used) = match selected_record {
         Some(record) => {
             let contract_id =
                 parse_contract_id_str(&record.contract_id).with_context(|| {
@@ -192,15 +192,21 @@ async fn main() -> anyhow::Result<()> {
             start_height
         );
     }
+    let contract_dir_name = record_used
+        .as_ref()
+        .map(|record| record.contract_id.clone())
+        .unwrap_or_else(|| contract_id.to_string());
     let execution_dir = current_dir().context("determine process working directory")?;
     let data_root = execution_dir
         .join("strapped_indexer_data")
-        .join(network_label);
+        .join(network_label)
+        .join(&contract_dir_name);
     fs::create_dir_all(&data_root)?;
     let event_data_path = data_root.join("events");
     fs::create_dir_all(&event_data_path)?;
     tracing::info!(
-        "Using persistent event directory: {}",
+        "Using persistent event directory for {}: {}",
+        contract_dir_name,
         event_data_path.display()
     );
     let storage_path = match &args.snapshot_dir {
@@ -208,7 +214,11 @@ async fn main() -> anyhow::Result<()> {
         None => data_root.join("snapshots"),
     };
     fs::create_dir_all(&storage_path)?;
-    tracing::info!("Using sled storage directory: {}", storage_path.display());
+    tracing::info!(
+        "Using sled storage directory for {}: {}",
+        contract_dir_name,
+        storage_path.display()
+    );
 
     let (mut snapshots, metadata) = SledSnapshotStorage::open(&storage_path)?;
     let last_indexed_height = snapshots.latest_snapshot().map(|(_, height)| height).ok();
@@ -254,7 +264,7 @@ async fn main() -> anyhow::Result<()> {
         max_fds: 512,
         columns_policy: ColumnsPolicy::Lazy,
     };
-    let indexer_config = IndexerConfig::new(start_block_height, args.graphql_url);
+    let indexer_config = Config::new(start_block_height, false, args.graphql_url);
     let events = FuelIndexerEventSource::new(
         parse_event_logs,
         event_data_path.clone(),

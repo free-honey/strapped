@@ -427,28 +427,30 @@ impl<
         self.modifier_triggered.clear();
         self.modifier_purchased.clear();
 
-        let mut snapshot = OverviewSnapshot::default();
-        snapshot.pot_size = pot_size;
-        snapshot.chips_owed = chips_owed_total;
-        snapshot.total_chip_bets = 0;
-        snapshot.game_id = game_id;
-        snapshot.roll_frequency = self.roll_frequency;
-        snapshot.first_roll_height = self.first_roll_height;
-        snapshot.next_roll_height = previous_snapshot.next_roll_height;
-        snapshot.rewards = new_straps.clone();
-        snapshot.modifier_shop = new_modifiers
-            .into_iter()
-            .map(
-                |(trigger_roll, modifier_roll, modifier, price)| ModifierShopEntry {
-                    trigger_roll,
-                    modifier_roll,
-                    modifier,
-                    triggered: false,
-                    purchased: false,
-                    price,
-                },
-            )
-            .collect();
+        let mut snapshot = OverviewSnapshot {
+            pot_size,
+            chips_owed: chips_owed_total,
+            total_chip_bets: 0,
+            game_id,
+            roll_frequency: self.roll_frequency,
+            first_roll_height: self.first_roll_height,
+            next_roll_height: previous_snapshot.next_roll_height,
+            rewards: new_straps.clone(),
+            modifier_shop: new_modifiers
+                .into_iter()
+                .map(
+                    |(trigger_roll, modifier_roll, modifier, price)| ModifierShopEntry {
+                        trigger_roll,
+                        modifier_roll,
+                        modifier,
+                        triggered: false,
+                        purchased: false,
+                        price,
+                    },
+                )
+                .collect(),
+            ..Default::default()
+        };
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)?;
         for (_, strap, _) in new_straps {

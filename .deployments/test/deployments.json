@@ -1,1 +1,14 @@
-[]
+{
+  "deployed_at": "2025-12-27T17:25:01.862261+00:00",
+  "contract_id": "562f69631d948c80fd86070466ba1ae14ab481d6b5bb7f7928ccbdd030db6fb3",
+  "bytecode_hash": "05a57907132fb7d7d23928e63f2978d5562bed51086fcc53491de9eb036d44fb",
+  "network_url": "https://testnet.fuel.network",
+  "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+  "chip_asset_ticker": "ETH",
+  "contract_salt": "0x425b736018110a5211db98ba3c93c1026ce17c4a24dbf0a9abf33f17777da35d",
+  "vrf_salt": "0x5a79d2ed776248ce1c49c8214432bdf17a96047ac4134f7da09ed94b1f436a82",
+  "vrf_contract_id": "45e7acd86befa56bdbb5ddf955da4c46d537af7895b6b7bffcb24aec5e423eeb",
+  "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
+  "deployment_block_height": 50730690,
+  "roll_frequency": 1
+}

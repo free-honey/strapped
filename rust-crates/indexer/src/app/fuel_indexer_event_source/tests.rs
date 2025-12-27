@@ -58,8 +58,9 @@ async fn next_event_batch__can_get_init_event() {
 
     let (contract_instance, _contract_id) = get_contract_instance(wallet.clone()).await;
     let address = wallet.provider().url();
-    let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
+    let indexer_config = fuel_event_streams::service::Config::new(
         0u32.into(),
+        false,
         Url::parse(address).unwrap(),
     );
 
@@ -86,7 +87,6 @@ async fn next_event_batch__can_get_init_event() {
 
     // then
     let _should_be_empty_first_block = event_source.next_event_batch().await.unwrap();
-    let _checkpoint = event_source.next_event_batch().await.unwrap();
     let (events, _) = event_source.next_event_batch().await.unwrap();
     let actual = events.first().unwrap();
     let expected = Event::init_event(fake_vrf_contract_id.into(), chip_asset_id, 100, 2);
@@ -142,8 +142,9 @@ async fn next_event_batch__can_get_roll_event() {
     let vrf_instance = FakeVRFContract::new(vrf_contract_id.clone(), wallet.clone());
 
     let address = wallet.provider().url();
-    let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
+    let indexer_config = fuel_event_streams::service::Config::new(
         0u32.into(),
+        false,
         Url::parse(address).unwrap(),
     );
 
@@ -272,8 +273,9 @@ async fn next_event_batch__can_get_new_game_event() {
     let vrf_instance = FakeVRFContract::new(vrf_contract_id.clone(), wallet.clone());
 
     let address = wallet.provider().url();
-    let indexer_config = fuel_indexer::indexer::IndexerConfig::new(
+    let indexer_config = fuel_event_streams::service::Config::new(
         0u32.into(),
+        false,
         Url::parse(address).unwrap(),
     );
 

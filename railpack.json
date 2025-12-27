@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "install_forc": {
+      "commands": [
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; if ! command -v fuelup >/dev/null 2>&1; then curl -sSf https://install.fuel.network | sh; fi; fuelup toolchain install latest; fuelup default latest",
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; forc --version"
+      ]
+    },
+    "build": {
+      "inputs": [
+        {
+          "step": "install_forc"
+        }
+      ],
+      "commands": [
+        {
+          "src": ".",
+          "dest": "."
+        },
+        "pwd && ls -la",
+        "apt-get update && apt-get install -y clang llvm-dev libclang-dev pkg-config",
+        "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo build -p indexer --release",
+        "cp target/release/indexer ./indexer",
+      ]
+    }
+  },
+  "deploy": {
+    "inputs": [
+      {
+        "step": "build"
+      }
+    ],
+    "startCommand": "./indexer --test --graphql-url ${GRAPHQL_URL} --port ${PORT} --tracing"
+  }
+}

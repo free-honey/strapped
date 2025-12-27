@@ -61,6 +61,12 @@ pub struct Strap {
     pub modifier: Modifier,
 }
 
+pub struct PotStatus {
+    pub pot_size: u64,
+    pub chips_owed: u64,
+    pub available: u64,
+}
+
 impl Strap {
     pub fn new(level: u8, kind: StrapKind, modifier: Modifier) -> Strap {
         Strap {

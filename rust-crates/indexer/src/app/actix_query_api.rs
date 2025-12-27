@@ -167,7 +167,7 @@ impl QueryAPI for ActixQueryApi {
 
 impl Drop for ActixQueryApi {
     fn drop(&mut self) {
-        let _ = self.server_handle.stop(true);
+        drop(self.server_handle.stop(true));
         if let Some(thread) = self.server_thread.take() {
             let _ = thread.join();
         }
