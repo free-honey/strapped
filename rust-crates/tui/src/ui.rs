@@ -19,6 +19,7 @@ use crossterm::{
         enable_raw_mode,
     },
 };
+use hex;
 use ratatui::{
     prelude::*,
     widgets::*,
@@ -889,7 +890,17 @@ fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     // const DECIMAL_SPACES: u32 = 9;
     let chips_balance = snap.chip_balance;
     // let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
-    let mut text = format!("Chips: {} | Straps: {}", chips_balance, straps_line);
+    let chip_asset_hex = hex::encode::<[u8; 32]>(snap.chip_asset_id.into());
+    let chip_prefix_len = chip_asset_hex.len().min(4);
+    let chip_prefix = format!("0x{}...", &chip_asset_hex[..chip_prefix_len]);
+    let chip_label = match snap.chip_asset_ticker.as_deref() {
+        Some(ticker) => format!("{ticker} | {chip_prefix}"),
+        None => chip_prefix,
+    };
+    let mut text = format!(
+        "Chips ({chip_label}): {} | Straps: {}",
+        chips_balance, straps_line
+    );
     if has_more {
         text.push_str("... see more (press i)");
     }

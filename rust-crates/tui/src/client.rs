@@ -123,6 +123,8 @@ pub struct AppSnapshot {
     pub total_chip_bets: u64,
     pub available_bet_capacity: u64,
     pub chip_balance: u64,
+    pub chip_asset_id: AssetId,
+    pub chip_asset_ticker: Option<String>,
     pub selected_roll: strapped::Roll,
     pub vrf_number: u64,
     pub vrf_mode: VrfMode,
@@ -156,6 +158,7 @@ pub struct Clients {
     pub vrf_mode: VrfMode,
     pub contract_id: ContractId,
     pub chip_asset_id: AssetId,
+    pub chip_asset_ticker: Option<String>,
     pub safe_script_gas_limit: u64,
 }
 
@@ -455,6 +458,8 @@ impl AppController {
             total_chip_bets,
             available_bet_capacity,
             chip_balance,
+            chip_asset_id: self.clients.chip_asset_id,
+            chip_asset_ticker: self.clients.chip_asset_ticker.clone(),
             selected_roll: self.selected_roll.clone(),
             vrf_number: self.vrf_number,
             vrf_mode: self.clients.vrf_mode,
@@ -856,6 +861,7 @@ impl AppController {
             VrfMode::Pseudo => 0,
         };
         let consensus_parameters = provider.consensus_parameters().await?;
+        let base_asset_id = *consensus_parameters.base_asset_id();
         let max_gas_per_tx = consensus_parameters.tx_params().max_gas_per_tx();
         let safe_script_gas_limit = max_gas_per_tx
             .saturating_sub(1)
@@ -887,6 +893,13 @@ impl AppController {
         } else {
             panic!("Deployment record is missing chip asset id");
         };
+        let chip_asset_ticker = selected.chip_asset_ticker.clone().or_else(|| {
+            if chip_asset_id == base_asset_id {
+                Some("ETH".to_string())
+            } else {
+                None
+            }
+        });
 
         let (vrf_client, _vrf_contract_id) = if let Some(vrf_id) =
             selected.vrf_contract_id.as_ref()
@@ -928,6 +941,7 @@ impl AppController {
             vrf_mode,
             contract_id,
             chip_asset_id,
+            chip_asset_ticker,
             safe_script_gas_limit,
         };
 
@@ -1813,6 +1827,10 @@ fn format_deployment_summary(
             ""
         };
         let asset_info = record.chip_asset_id.as_deref().unwrap_or("(unknown asset)");
+        let asset_details = match record.chip_asset_ticker.as_deref() {
+            Some(ticker) => format!("{asset_info} ({ticker})"),
+            None => asset_info.to_string(),
+        };
         let contract_salt = record.contract_salt.as_deref().unwrap_or("(unknown salt)");
         let vrf_salt = record.vrf_salt.as_deref().unwrap_or("(unknown vrf salt)");
         let vrf_contract = record
@@ -1830,7 +1848,7 @@ fn format_deployment_summary(
             record.network_url,
             hash_preview(&record.bytecode_hash),
             compat,
-            asset_info,
+            asset_details,
             contract_salt,
             vrf_salt,
             vrf_contract,

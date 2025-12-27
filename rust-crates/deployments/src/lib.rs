@@ -62,6 +62,8 @@ pub struct DeploymentRecord {
     #[serde(default)]
     pub chip_asset_id: Option<String>,
     #[serde(default)]
+    pub chip_asset_ticker: Option<String>,
+    #[serde(default)]
     pub contract_salt: Option<String>,
     #[serde(default)]
     pub vrf_salt: Option<String>,
@@ -233,6 +235,7 @@ pub fn record_deployment(
     bytecode_hash: impl AsRef<str>,
     network_url: impl AsRef<str>,
     chip_asset_id: Option<impl AsRef<str>>,
+    chip_asset_ticker: Option<impl AsRef<str>>,
 ) -> Result<()> {
     let store = DeploymentStore::new(env)?;
     let record = DeploymentRecord {
@@ -241,6 +244,7 @@ pub fn record_deployment(
         bytecode_hash: bytecode_hash.as_ref().to_string(),
         network_url: network_url.as_ref().to_string(),
         chip_asset_id: chip_asset_id.map(|id| id.as_ref().to_string()),
+        chip_asset_ticker: chip_asset_ticker.map(|ticker| ticker.as_ref().to_string()),
         contract_salt: None,
         vrf_salt: None,
         vrf_contract_id: None,

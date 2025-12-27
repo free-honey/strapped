@@ -111,6 +111,10 @@ struct Args {
     #[arg(long)]
     chip_asset_id: Option<String>,
 
+    /// Optional ticker for the chip asset
+    #[arg(long)]
+    chip_asset_ticker: Option<String>,
+
     /// Amount of chips to fund the strapped contract with (deploy and fund actions)
     #[arg(long)]
     funding_amount: Option<u64>,
@@ -186,6 +190,13 @@ async fn main() -> Result<()> {
         );
         default_chip_asset
     };
+    let chip_asset_ticker = args.chip_asset_ticker.clone().or_else(|| {
+        if chip_asset_id == default_chip_asset {
+            Some("ETH".to_string())
+        } else {
+            None
+        }
+    });
 
     let store = DeploymentStore::new(env).context("opening deployment store")?;
 
@@ -467,6 +478,7 @@ async fn main() -> Result<()> {
             "0x{}",
             hex::encode::<[u8; 32]>(chip_asset_id.into())
         )),
+        chip_asset_ticker: chip_asset_ticker.clone(),
         contract_salt: Some(format!("0x{}", hex::encode(strap_salt))),
         vrf_salt: Some(format!("0x{}", hex::encode(vrf_salt))),
         vrf_contract_id: Some(vrf_contract_id.to_string()),
