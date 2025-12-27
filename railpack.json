@@ -22,7 +22,6 @@
         "apt-get update && apt-get install -y clang llvm-dev libclang-dev pkg-config",
         "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo build -p indexer --release",
         "cp target/release/indexer ./indexer",
-        "cp -r .deployments/ ./.deployments"
       ]
     }
   },

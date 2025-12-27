@@ -111,7 +111,7 @@ struct Args {
     #[arg(long)]
     chip_asset_id: Option<String>,
 
-    /// Amount of chips to fund the strapped contract with (deploy only)
+    /// Amount of chips to fund the strapped contract with (deploy and fund actions)
     #[arg(long)]
     funding_amount: Option<u64>,
 
@@ -133,6 +133,8 @@ enum Action {
     Deploy,
     Balance,
     Withdraw,
+    Pot,
+    Fund,
 }
 
 #[tokio::main]
@@ -186,7 +188,7 @@ async fn main() -> Result<()> {
             "No chip asset id specified, defaulting to the base asset id: 0x{}",
             encoded
         );
-        AssetId::from(default_chip_asset)
+        default_chip_asset
     };
 
     let store = DeploymentStore::new(env).context("opening deployment store")?;
@@ -200,9 +202,13 @@ async fn main() -> Result<()> {
             })?;
             Action::Withdraw
         }
+        Action::Pot => Action::Pot,
+        Action::Fund => Action::Fund,
     };
 
-    if matches!(action, Action::Balance | Action::Withdraw) {
+    let deployment = if matches!(action, Action::Deploy) {
+        None
+    } else {
         let record = latest_record(&store)?;
         let contract_id: ContractId = record
             .contract_id
@@ -213,40 +219,122 @@ async fn main() -> Result<()> {
         } else if let Some(stored) = record.chip_asset_id.as_deref() {
             parse_asset_id(stored)?
         } else {
-            AssetId::from(default_chip_asset)
+            default_chip_asset
         };
+        Some((contract_id, chip_asset_id))
+    };
 
-        if let Action::Balance = action {
+    match action {
+        Action::Balance => {
+            let (contract_id, chip_asset_id) = deployment.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("no deployments found for this environment")
+            })?;
             let balance = wallet
-                .get_asset_balance(&chip_asset_id)
+                .get_asset_balance(chip_asset_id)
                 .await
                 .context("fetching wallet balance")?;
+            let contract_balance = provider
+                .get_contract_asset_balance(contract_id, chip_asset_id)
+                .await
+                .context("fetching contract balance")?;
+            let strap_instance =
+                strapped_types::MyContract::new(*contract_id, wallet.clone());
+            let pot_status = strap_instance
+                .methods()
+                .pot_status()
+                .call()
+                .await
+                .map(|res| res.value)
+                .map_err(|e| {
+                    println!(
+                        "Warning: pot status unavailable ({}); contract may need redeploying with latest binary",
+                        e
+                    );
+                    e
+                })
+                .ok();
+            let owed = pot_status.as_ref().map(|p| p.chips_owed).unwrap_or(0);
+            let available = contract_balance.saturating_sub(owed);
             println!("Wallet '{}'", args.wallet);
             println!(
                 "  Chip balance (asset {}): {}",
-                hex::encode::<[u8; 32]>(chip_asset_id.into()),
+                hex::encode::<[u8; 32]>((*chip_asset_id).into()),
                 balance
             );
+            println!("Contract '{}'", contract_id);
+            if let Some(pot) = pot_status {
+                println!("  Recorded pot size: {}", pot.pot_size);
+            } else {
+                println!("  Recorded pot size: unavailable");
+            }
             println!(
-                "  Pot size: not available (contract lacks a pot getter; fetch via indexer)"
+                "  Contract balance (asset {}): {}",
+                hex::encode::<[u8; 32]>((*chip_asset_id).into()),
+                contract_balance
             );
+            println!("  Chips owed: {}", owed);
+            println!("  Available (balance - owed): {}", available);
+            return Ok(());
         }
-
-        if let Action::Withdraw = action {
+        Action::Pot => {
+            let (contract_id, chip_asset_id) = deployment.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("no deployments found for this environment")
+            })?;
+            let strap_instance =
+                strapped_types::MyContract::new(*contract_id, wallet.clone());
+            let pot_status = strap_instance
+                .methods()
+                .pot_status()
+                .call()
+                .await
+                .map(|res| res.value)
+                .map_err(|e| {
+                    println!(
+                        "Warning: pot status unavailable ({}); contract may need redeploying with latest binary",
+                        e
+                    );
+                    e
+                })
+                .ok();
+            let contract_balance = provider
+                .get_contract_asset_balance(contract_id, chip_asset_id)
+                .await
+                .context("fetching contract balance")?;
+            let owed = pot_status.as_ref().map(|p| p.chips_owed).unwrap_or(0);
+            let available = contract_balance.saturating_sub(owed);
+            println!("Contract '{}'", contract_id);
+            if let Some(pot) = pot_status {
+                println!("  Recorded pot size: {}", pot.pot_size);
+            } else {
+                println!("  Recorded pot size: unavailable");
+            }
+            println!(
+                "  Contract balance (asset {}): {}",
+                hex::encode::<[u8; 32]>((*chip_asset_id).into()),
+                contract_balance
+            );
+            println!("  Chips owed: {}", owed);
+            println!("  Available (balance - owed): {}", available);
+            return Ok(());
+        }
+        Action::Withdraw => {
+            let (contract_id, _chip_asset_id) = deployment.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("no deployments found for this environment")
+            })?;
             let amount = args
                 .withdraw
                 .expect("withdraw amount required for withdraw action");
             let to_identity = if let Some(raw) = args.withdraw_to.as_deref() {
                 parse_identity(raw)?
             } else {
-                Identity::Address(wallet.address().into())
+                Identity::Address(wallet.address())
             };
             let dest_display = args
                 .withdraw_to
                 .clone()
                 .unwrap_or_else(|| wallet.address().to_string());
             let strap_instance =
-                strapped_types::MyContract::new(contract_id.clone(), wallet.clone());
+                strapped_types::MyContract::new(*contract_id, wallet.clone());
             strap_instance
                 .methods()
                 .request_house_withdrawal(amount, to_identity)
@@ -259,9 +347,38 @@ async fn main() -> Result<()> {
                 "Requested withdrawal of {} chips to {} for contract {}",
                 amount, dest_display, contract_id
             );
+            return Ok(());
         }
-
-        return Ok(());
+        Action::Fund => {
+            let (contract_id, chip_asset_id) = deployment.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("no deployments found for this environment")
+            })?;
+            let amount = args.funding_amount.unwrap_or(FUNDING_AMOUNT);
+            if amount == 0 {
+                anyhow::bail!("--funding-amount must be greater than 0");
+            }
+            let strap_instance =
+                strapped_types::MyContract::new(*contract_id, wallet.clone());
+            let fund_call =
+                CallParameters::new(amount, *chip_asset_id, safe_script_gas_limit);
+            strap_instance
+                .methods()
+                .fund()
+                .with_tx_policies(script_policies(safe_script_gas_limit))
+                .with_variable_output_policy(VariableOutputPolicy::EstimateMinimum)
+                .call_params(fund_call)?
+                .call()
+                .await
+                .context("funding strapped contract")?;
+            println!(
+                "Funded contract {} with {} of asset {}",
+                contract_id,
+                amount,
+                hex::encode::<[u8; 32]>((*chip_asset_id).into())
+            );
+            return Ok(());
+        }
+        Action::Deploy => {}
     }
 
     let roll_frequency = args.roll_frequency.ok_or_else(|| {
@@ -312,7 +429,7 @@ async fn main() -> Result<()> {
     .context("hashing VRF binary")?;
 
     let vrf_instance =
-        pseudo_vrf_types::PseudoVRFContract::new(vrf_contract_id.clone(), wallet.clone());
+        pseudo_vrf_types::PseudoVRFContract::new(vrf_contract_id, wallet.clone());
     let entropy = rand::rng().random();
     vrf_instance
         .methods()
@@ -323,7 +440,7 @@ async fn main() -> Result<()> {
         .context("setting initial VRF entropy")?;
 
     let strap_instance =
-        strapped_types::MyContract::new(strap_contract_id.clone(), wallet.clone());
+        strapped_types::MyContract::new(strap_contract_id, wallet.clone());
     strap_instance
         .methods()
         .initialize(Bits256(*vrf_contract_id), chip_asset_id, roll_frequency)
@@ -415,7 +532,7 @@ fn parse_identity(raw: &str) -> Result<Identity> {
         .parse::<Address>()
         .or_else(|_| Address::from_str(raw))
         .map_err(|_| anyhow::anyhow!("unable to parse address/identity: {raw}"))?;
-    Ok(Identity::Address(addr.into()))
+    Ok(Identity::Address(addr))
 }
 
 fn latest_record(store: &DeploymentStore) -> Result<DeploymentRecord> {
