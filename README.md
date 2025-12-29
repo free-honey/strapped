@@ -2,9 +2,8 @@
 
 #### massively-multiplayer online strip-craps game 😈
 
-<img width="1728" height="1078" alt="image" src="https://github.com/user-attachments/assets/81e7d83a-5404-4aa6-a8e4-385de586ce05" />
+<img width="1728" height="1077" alt="image" src="https://github.com/user-attachments/assets/7545a9a1-a212-4810-b94c-225b0ab6af6c" />
 
-# TUI
 
 ## Requirements
 
@@ -30,9 +29,10 @@ if not, please follow instructions here: https://docs.fuel.network/guides/instal
 1. Clone the repo
     - `git clone git@github.com:free-honey/strapped.git`
 1. Run the TUI (new terminal, ideally fullscreen)
-   -
-   `cargo run -p tui -- --testnet --wallet alice --indexer-url https://strapped-indexer-test-net-production.up.railway.app`
-    - Enter your wallet password when prompted.
+   ```
+   cargo run -p tui -- --testnet --wallet alice --indexer-url https://strapped-indexer-test-net-production.up.railway.app
+   ```
+   - Enter your wallet password when prompted.
 1. Play!
     - Move between the 11 rolls, place bets with `b`, manually roll with `r` to progress (until someone else is
       playing), claim rewards with `c`, bet clothing with `t`, and open the shop with `s` for modifiers. A roll of *
