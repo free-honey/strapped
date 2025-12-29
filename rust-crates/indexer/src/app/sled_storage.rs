@@ -191,7 +191,7 @@ impl SledSnapshotStorage {
         let key = record.height.to_be_bytes();
         let bytes = Self::serialize_record(record, "overview snapshot record")?;
         self.overview_tree
-            .insert(key.to_vec(), bytes)
+            .insert(key, bytes)
             .context("persist overview snapshot")?;
         self.overview_tree
             .flush()
@@ -345,7 +345,7 @@ impl SnapshotStorage for SledSnapshotStorage {
         let key = game_id.to_be_bytes();
         let bytes = Self::serialize_record(snapshot, "historical snapshot record")?;
         self.historical_tree
-            .insert(key.to_vec(), bytes)
+            .insert(key, bytes)
             .context("persist historical snapshot")?;
         self.historical_tree
             .flush()

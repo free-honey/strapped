@@ -1,15 +1,14 @@
-[
-  {
-    "deployed_at": "2025-12-15T18:39:45.522290+00:00",
-    "contract_id": "ed03617564f6d71679d56ec6fb04133cdb420e918ba0afe2a83fe2f8e50a60dc",
-    "bytecode_hash": "70731c9aae2fc82f295ce5d230457c53c351c80c4e35bedc488748c9c07a9620",
-    "network_url": "https://devnet.fuel.network",
-    "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-    "contract_salt": "0x894e7c9270ad72cd7b4153f9474bf5327f7c6a4c3c12cb268b2df19ac17b8dca",
-    "vrf_salt": "0x5ae35eb4a1b41a01f9119e64cec797ff7cb5fbbc285e66ec230625c276b43401",
-    "vrf_contract_id": "7bd721dc6a27c5e0b3d926d2dcd0b6210b3ed1bf85e803c77913b5b5cb6b1246",
-    "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
-    "deployment_block_height": 50181986,
-    "roll_frequency": 1
-  }
-]
+{
+  "deployed_at": "2025-12-27T17:21:16.284708+00:00",
+  "contract_id": "8f17b2bd6e26ae2fb6cabe8a69a5d9ff6275eb7036365f1d756dcaef1fdcb372",
+  "bytecode_hash": "05a57907132fb7d7d23928e63f2978d5562bed51086fcc53491de9eb036d44fb",
+  "network_url": "https://devnet.fuel.network",
+  "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+  "chip_asset_ticker": "Gwei",
+  "contract_salt": "0x834613e184fa72b298f77ec04b46dff35747dbaad24a9737e42ab0780556a7ed",
+  "vrf_salt": "0x615b5019e6273d66fddf2ff224890fe908cb4dfb7908857e1e038ca7ed8e157e",
+  "vrf_contract_id": "1a76644594a9a019dc8de9cd9e730d2e6d03352014862300430973f21ac0858f",
+  "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
+  "deployment_block_height": 51214056,
+  "roll_frequency": 1
+}

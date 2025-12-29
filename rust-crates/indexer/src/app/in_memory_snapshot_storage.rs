@@ -15,12 +15,17 @@ use std::{
     },
 };
 
+type AccountSnapshotMap = HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>;
+type SharedAccountSnapshots = Arc<Mutex<AccountSnapshotMap>>;
+type SharedHistoricalSnapshots = Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>;
+type SharedOverviewSnapshot = Arc<Mutex<Option<(OverviewSnapshot, u32)>>>;
+
 #[derive(Clone)]
 pub struct InMemorySnapshotStorage {
     latest_game_id: u32,
-    snapshot: Arc<Mutex<Option<(OverviewSnapshot, u32)>>>,
-    account_snapshots: Arc<Mutex<HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>>>,
-    historical_snapshots: Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>,
+    snapshot: SharedOverviewSnapshot,
+    account_snapshots: SharedAccountSnapshots,
+    historical_snapshots: SharedHistoricalSnapshots,
 }
 
 impl InMemorySnapshotStorage {
@@ -42,22 +47,26 @@ impl InMemorySnapshotStorage {
         }
     }
 
-    pub fn snapshot(&self) -> Arc<Mutex<Option<(OverviewSnapshot, u32)>>> {
+    pub fn snapshot(&self) -> SharedOverviewSnapshot {
         self.snapshot.clone()
     }
 
-    pub fn account_snapshots(
-        &self,
-    ) -> Arc<Mutex<HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>>> {
+    pub fn account_snapshots(&self) -> SharedAccountSnapshots {
         self.account_snapshots.clone()
     }
 
-    pub fn historical_snapshots(&self) -> Arc<Mutex<HashMap<u32, HistoricalSnapshot>>> {
+    pub fn historical_snapshots(&self) -> SharedHistoricalSnapshots {
         self.historical_snapshots.clone()
     }
 
     pub fn identity_key(account: &Identity) -> String {
         format!("{:?}", account)
+    }
+}
+
+impl Default for InMemorySnapshotStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

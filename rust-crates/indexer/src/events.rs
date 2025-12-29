@@ -237,7 +237,7 @@ impl Event {
     ) -> Self {
         let inner = InitializedEvent {
             vrf_contract_id,
-            chip_asset_id: chip_asset_id.into(),
+            chip_asset_id,
             roll_frequency,
             first_height,
         };

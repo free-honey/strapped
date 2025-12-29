@@ -11,7 +11,6 @@ use fuels::types::{
 };
 use reqwest::StatusCode;
 use serde::Deserialize;
-use serde_json;
 use strapped_contract::strapped_types as strapped;
 
 #[derive(Clone)]
@@ -44,6 +43,7 @@ pub struct OverviewData {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AccountData {
+    #[allow(clippy::type_complexity)]
     pub per_roll_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
     pub strap_totals: Vec<(strapped::Strap, u64)>,
     pub total_chip_bet: u64,

@@ -131,6 +131,10 @@ abi Strapped {
     #[storage(read, write), payable]
     fn fund();
 
+    /// Get current pot and owed chip totals
+    #[storage(read)]
+    fn pot_status() -> PotStatus;
+
     /// Get the straps to be rewarded for the current game
     #[storage(read)]
     fn strap_rewards() -> Vec<(Roll, Strap, u64)>;
@@ -639,12 +643,25 @@ impl Strapped for Contract {
         storage.house_pot.write(storage.house_pot.read() + amount);
         let funder = match msg_sender() {
             Ok(id) => id,
-            Err(_) => {
-                require(false, "fund calls require a known sender");
-                return;
-            }
+            Err(_) => Identity::ContractId(ContractId::this()),
         };
         log_fund_pot_event(amount, funder);
+    }
+
+    #[storage(read)]
+    fn pot_status() -> PotStatus {
+        let pot_size = storage.house_pot.read();
+        let chips_owed = storage.chips_owed.read();
+        let available = if pot_size > chips_owed {
+            pot_size - chips_owed
+        } else {
+            0
+        };
+        PotStatus {
+            pot_size,
+            chips_owed,
+            available,
+        }
     }
 
     #[storage(read)]

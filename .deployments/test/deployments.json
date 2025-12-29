@@ -1,1 +1,14 @@
-[]
+{
+  "deployed_at": "2025-12-29T16:37:17.776611+00:00",
+  "contract_id": "47e9addce9ae453f15cef03016d4734036510c82ba9c044a22e95252eeb7ca0f",
+  "bytecode_hash": "05a57907132fb7d7d23928e63f2978d5562bed51086fcc53491de9eb036d44fb",
+  "network_url": "https://testnet.fuel.network",
+  "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
+  "chip_asset_ticker": "Gwei",
+  "contract_salt": "0xda5c6eb1a2a30341e8f7915eb74a698084a26d915232c68db89cfc7259f3f122",
+  "vrf_salt": "0x21e01ae0b0cceefb15e734a23f81b470118c006fa3ade1f88496647ccc050e72",
+  "vrf_contract_id": "6fc5a3c27596a84be70e58fcc69440405e231ce08a0343ef7c8b619baebdd053",
+  "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
+  "deployment_block_height": 50900627,
+  "roll_frequency": 1
+}

@@ -102,7 +102,7 @@ impl ActixQueryApi {
     pub async fn new(port: Option<u16>) -> Result<Self> {
         let (sender, receiver) = mpsc::channel(16);
 
-        let listener = TcpListener::bind(("127.0.0.1", port.unwrap_or(0)))
+        let listener = TcpListener::bind(("0.0.0.0", port.unwrap_or(0)))
             .context("failed to bind HTTP listener for query API")?;
         let address = listener
             .local_addr()
@@ -167,7 +167,7 @@ impl QueryAPI for ActixQueryApi {
 
 impl Drop for ActixQueryApi {
     fn drop(&mut self) {
-        let _ = self.server_handle.stop(true);
+        drop(self.server_handle.stop(true));
         if let Some(thread) = self.server_thread.take() {
             let _ = thread.join();
         }
