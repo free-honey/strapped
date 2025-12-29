@@ -895,7 +895,7 @@ impl AppController {
         };
         let chip_asset_ticker = selected.chip_asset_ticker.clone().or_else(|| {
             if chip_asset_id == base_asset_id {
-                Some("ETH".to_string())
+                Some("Gwei".to_string())
             } else {
                 None
             }
