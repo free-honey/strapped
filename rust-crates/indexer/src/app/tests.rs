@@ -216,6 +216,42 @@ async fn run__roll_event__updates_snapshot() {
 }
 
 #[tokio::test]
+async fn run__empty_event_batch__updates_block_height() {
+    // given
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
+    let existing_snapshot = OverviewSnapshot {
+        game_id: 7,
+        current_block_height: 5,
+        pot_size: 10,
+        ..OverviewSnapshot::default()
+    };
+    let snapshot_storage =
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 5);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = InMemoryMetadataStorage::default();
+    let query_api = PendingQueryApi;
+    let mut app = App::new(
+        event_source,
+        query_api,
+        snapshot_storage,
+        metadata_storage,
+        zero_contract_id(),
+    );
+
+    // when
+    event_sender.send((Vec::new(), 10)).await.unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let (actual, height) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.current_block_height = 10;
+    assert_eq!(height, 10);
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
 async fn run__new_game_event__resets_overview_snapshot() {
     // given
     let (event_source, event_sender) = FakeEventSource::new_with_sender();
