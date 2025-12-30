@@ -78,6 +78,7 @@ const STRAPPED_BIN_CANDIDATES: [&str; 1] =
 // const STRAPPED_BIN_CANDIDATES: [&str; 1] =
 //     ["./sway-projects/strapped/out/debug/strapped.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
+const DEFAULT_BASE_ASSET_TICKER: &str = "ETH";
 const MAX_OWED_PERCENTAGE: u64 = 5;
 const GAME_HISTORY_DEPTH: usize = 10;
 
@@ -122,6 +123,9 @@ pub struct AppSnapshot {
     pub chips_owed: u64,
     pub total_chip_bets: u64,
     pub available_bet_capacity: u64,
+    pub base_asset_balance: u64,
+    pub base_asset_id: AssetId,
+    pub base_asset_ticker: Option<String>,
     pub chip_balance: u64,
     pub chip_asset_id: AssetId,
     pub chip_asset_ticker: Option<String>,
@@ -157,6 +161,8 @@ pub struct Clients {
     pub vrf: Option<VrfClient>,
     pub vrf_mode: VrfMode,
     pub contract_id: ContractId,
+    pub base_asset_id: AssetId,
+    pub base_asset_ticker: Option<String>,
     pub chip_asset_id: AssetId,
     pub chip_asset_ticker: Option<String>,
     pub safe_script_gas_limit: u64,
@@ -196,6 +202,7 @@ pub struct AppController {
     cached_active_modifiers_time: Option<Instant>,
     known_straps: Vec<(AssetId, strapped::Strap)>,
     cached_owned_straps: Vec<(strapped::Strap, u64)>,
+    cached_base_balance: Option<u64>,
     cached_chip_balance: Option<u64>,
     alice_identity: Identity,
     last_seen_game_id_alice: Option<u32>,
@@ -236,6 +243,7 @@ impl AppController {
             cached_active_modifiers_time: None,
             known_straps: Vec::new(),
             cached_owned_straps: Vec::new(),
+            cached_base_balance: None,
             cached_chip_balance: None,
             alice_identity,
             last_seen_game_id_alice: None,
@@ -389,6 +397,7 @@ impl AppController {
         }
 
         let owned_straps = self.cached_owned_straps.clone();
+        let base_asset_balance = self.cached_base_balance.unwrap_or_default();
         let chip_balance = self.cached_chip_balance.unwrap_or_default();
         let pot_balance = overview.pot_size;
         let chips_owed = overview.chips_owed;
@@ -457,6 +466,9 @@ impl AppController {
             chips_owed,
             total_chip_bets,
             available_bet_capacity,
+            base_asset_balance,
+            base_asset_id: self.clients.base_asset_id,
+            base_asset_ticker: self.clients.base_asset_ticker.clone(),
             chip_balance,
             chip_asset_id: self.clients.chip_asset_id,
             chip_asset_ticker: self.clients.chip_asset_ticker.clone(),
@@ -866,6 +878,7 @@ impl AppController {
         let safe_script_gas_limit = max_gas_per_tx
             .saturating_sub(1)
             .clamp(1, DEFAULT_SAFE_SCRIPT_GAS_LIMIT);
+        let base_asset_ticker = Some(DEFAULT_BASE_ASSET_TICKER.to_string());
         tracing::info!(
             "Using safe script gas limit {} (max_gas_per_tx={})",
             safe_script_gas_limit,
@@ -940,6 +953,8 @@ impl AppController {
             vrf: vrf_client,
             vrf_mode,
             contract_id,
+            base_asset_id,
+            base_asset_ticker,
             chip_asset_id,
             chip_asset_ticker,
             safe_script_gas_limit,
@@ -1025,6 +1040,23 @@ impl AppController {
         Ok(())
     }
 
+    async fn refresh_base_balance(&mut self) -> Result<()> {
+        let base_balance_raw = self
+            .clients
+            .alice
+            .account()
+            .get_asset_balance(&self.clients.base_asset_id)
+            .await
+            .wrap_err("fetching wallet base asset balance failed")?;
+        let base_balance = u64::try_from(base_balance_raw)
+            .map_err(|_| eyre!("base asset balance exceeds u64 range"))?;
+        self.cached_base_balance = Some(base_balance);
+        if self.clients.base_asset_id == self.clients.chip_asset_id {
+            self.cached_chip_balance = Some(base_balance);
+        }
+        Ok(())
+    }
+
     async fn refresh_active_modifiers_now(&mut self) -> Result<()> {
         let safe_limit = self.clients.safe_script_gas_limit;
         let me_for_active = self.clients.alice.clone();
@@ -1084,6 +1116,14 @@ impl AppController {
             let chip_balance = u64::try_from(amount)
                 .map_err(|_| eyre!("chip balance exceeds u64 range"))?;
             self.cached_chip_balance = Some(chip_balance);
+        }
+        if let Some(amount) = asset_balances.get(&self.clients.base_asset_id).copied() {
+            let base_balance = u64::try_from(amount)
+                .map_err(|_| eyre!("base asset balance exceeds u64 range"))?;
+            self.cached_base_balance = Some(base_balance);
+            if self.clients.base_asset_id == self.clients.chip_asset_id {
+                self.cached_chip_balance = Some(base_balance);
+            }
         }
 
         let mut strap_info: HashMap<AssetId, strapped::Strap> = HashMap::new();
@@ -2244,6 +2284,7 @@ async fn run_loop(
                 let mut request_snapshot = false;
                 let mut refresh_modifiers_now = false;
                 let mut refresh_strap_inventory = false;
+                let mut refresh_base_balance = false;
                 let mut refresh_chip_balance = false;
                 match ev {
                     ui::UserEvent::Quit => {
@@ -2293,6 +2334,7 @@ async fn run_loop(
                         match controller.place_chip_bet(amount).await {
                             Ok(_) => {
                                 request_snapshot = true;
+                                refresh_base_balance = true;
                                 refresh_chip_balance = true;
                             }
                             Err(e) => {
@@ -2361,6 +2403,7 @@ async fn run_loop(
                             })?;
                         request_snapshot = true;
                         refresh_modifiers_now = true;
+                        refresh_base_balance = true;
                         refresh_chip_balance = true;
                     }
                     ui::UserEvent::ConfirmStrapBet { strap, amount } => {
@@ -2381,6 +2424,7 @@ async fn run_loop(
                         match controller.place_strap_bet(strap, amount).await {
                             Ok(_) => {
                                 request_snapshot = true;
+                                refresh_base_balance = true;
                                 refresh_strap_inventory = true;
                             }
                             Err(e) => {
@@ -2413,6 +2457,7 @@ async fn run_loop(
                             }
                             controller.roll().await.wrap_err("roll failed")?;
                             request_snapshot = true;
+                            refresh_base_balance = true;
                             refresh_modifiers_now = true;
                             pending_post_action = Some(PostAction::Roll {
                                 prev_len,
@@ -2599,6 +2644,7 @@ async fn run_loop(
                             })?;
                         request_snapshot = true;
                         refresh_modifiers_now = true;
+                        refresh_base_balance = true;
                         refresh_chip_balance = true;
                     }
                 }
@@ -2625,21 +2671,36 @@ async fn run_loop(
                     ui::draw(ui_state, &snapshot)
                         .wrap_err("draw after strap inventory update failed")?;
                     last_snapshot = Some(snapshot);
-                } else if refresh_chip_balance {
-                    controller
-                        .refresh_chip_balance()
-                        .await
-                        .wrap_err("chip balance refresh failed")?;
+                }
+
+                let chip_needs_refresh = refresh_chip_balance
+                    && controller.clients.chip_asset_id
+                        != controller.clients.base_asset_id;
+                if (refresh_base_balance || chip_needs_refresh)
+                    && !refresh_strap_inventory
+                {
+                    if refresh_base_balance {
+                        controller
+                            .refresh_base_balance()
+                            .await
+                            .wrap_err("base asset balance refresh failed")?;
+                    }
+                    if chip_needs_refresh {
+                        controller
+                            .refresh_chip_balance()
+                            .await
+                            .wrap_err("chip balance refresh failed")?;
+                    }
                     let mut snapshot = controller
                         .build_snapshot()
-                        .wrap_err("snapshot refresh after chip balance update failed")?;
+                        .wrap_err("snapshot refresh after balance update failed")?;
                     process_post_action(
                         &mut controller,
                         &mut snapshot,
                         &mut pending_post_action,
                     );
                     ui::draw(ui_state, &snapshot)
-                        .wrap_err("draw after chip balance update failed")?;
+                        .wrap_err("draw after balance update failed")?;
                     last_snapshot = Some(snapshot);
                 }
                 if request_snapshot {

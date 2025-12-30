@@ -19,7 +19,7 @@ use crossterm::{
         enable_raw_mode,
     },
 };
-use hex;
+use fuels::types::AssetId;
 use ratatui::{
     prelude::*,
     widgets::*,
@@ -887,19 +887,23 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 fn draw_wallet_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     let (straps_line, has_more) = format_owned_strap_summary(&snap.owned_straps);
 
-    // const DECIMAL_SPACES: u32 = 9;
     let chips_balance = snap.chip_balance;
-    // let format_chips_balance = chips_balance_formated(chips_balance, DECIMAL_SPACES);
-    let chip_asset_hex = hex::encode::<[u8; 32]>(snap.chip_asset_id.into());
-    let chip_prefix_len = chip_asset_hex.len().min(4);
-    let chip_prefix = format!("0x{}...", &chip_asset_hex[..chip_prefix_len]);
-    let chip_label = match snap.chip_asset_ticker.as_deref() {
-        Some(ticker) => format!("{ticker} | {chip_prefix}"),
-        None => chip_prefix,
+    let base_balance = snap.base_asset_balance;
+    let asset_label = |asset_id: &AssetId, ticker: &Option<String>| {
+        let asset_hex = hex::encode::<[u8; 32]>((*asset_id).into());
+        let prefix_len = asset_hex.len().min(4);
+        let prefix = format!("0x{}...", &asset_hex[..prefix_len]);
+        match ticker.as_deref() {
+            Some(ticker) => format!("{ticker} | {prefix}"),
+            None => prefix,
+        }
     };
+    let chip_label = asset_label(&snap.chip_asset_id, &snap.chip_asset_ticker);
+    let base_label = asset_label(&snap.base_asset_id, &snap.base_asset_ticker);
+    let base_display = format_units(base_balance, 9);
+
     let mut text = format!(
-        "Chips ({chip_label}): {} | Straps: {}",
-        chips_balance, straps_line
+        "Balance ({base_label}): {base_display} | Chips ({chip_label}): {chips_balance} | Straps: {straps_line}"
     );
     if has_more {
         text.push_str("... see more (press i)");
@@ -946,6 +950,20 @@ fn draw_overview_panel(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         .block(Block::default().borders(Borders::ALL).title("Game"))
         .wrap(Wrap { trim: false });
     f.render_widget(widget, area);
+}
+
+fn format_units(amount: u64, decimals: u32) -> String {
+    let factor = 10u128.saturating_pow(decimals);
+    let whole = (amount as u128) / factor;
+    let fractional = (amount as u128) % factor;
+    if fractional == 0 {
+        whole.to_string()
+    } else {
+        let trimmed = format!("{:0width$}", fractional, width = decimals as usize)
+            .trim_end_matches('0')
+            .to_string();
+        format!("{whole}.{trimmed}")
+    }
 }
 
 // fn chips_balance_formated(chips_balance: u64, decimal_places: u32) -> String {
