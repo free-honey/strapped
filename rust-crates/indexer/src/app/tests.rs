@@ -53,9 +53,9 @@ impl FakeEventSource {
 }
 
 impl EventSource for FakeEventSource {
-    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
+    async fn next_event_batch(&mut self) -> Result<Option<(Vec<Event>, u32)>> {
         match self.recv.recv().await {
-            Some((events, height)) => Ok((events, height)),
+            Some((events, height)) => Ok(Some((events, height))),
             None => Err(anyhow::anyhow!("No more events")),
         }
     }
@@ -64,7 +64,7 @@ impl EventSource for FakeEventSource {
 pub struct PendingEventSource;
 
 impl EventSource for PendingEventSource {
-    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
+    async fn next_event_batch(&mut self) -> Result<Option<(Vec<Event>, u32)>> {
         pending().await
     }
 }
