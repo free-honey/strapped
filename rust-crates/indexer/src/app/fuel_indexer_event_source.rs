@@ -32,8 +32,12 @@ use fuel_event_streams::{
     fuel_events_manager,
     fuel_events_manager::{
         port::StorableEvent,
-        service::TransactionEvents,
+        service::{
+            TransactionEvents,
+            UnstableEvent,
+        },
     },
+    fuel_indexer_types::events::CheckpointEvent,
     fuel_receipts_manager,
     processors::simple_processor::FnReceiptParser,
     service::Task,
@@ -78,7 +82,7 @@ where
             fuel_receipts_manager::rocksdb::Storage,
         >,
     >,
-    stream: BoxStream<Result<TransactionEvents<Event>>>,
+    stream: BoxStream<Result<UnstableEvent<Event>>>,
 }
 
 impl StorableEvent for Event {}
@@ -87,17 +91,22 @@ impl<Fn> EventSource for FuelIndexerEventSource<Fn>
 where
     Fn: FnOnce(DecoderConfig, &Receipt) -> Option<Event> + Copy + Send + Sync + 'static,
 {
-    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
-        let tx_event = self
+    async fn next_event_batch(&mut self) -> Result<Option<(Vec<Event>, u32)>> {
+        let unstable_event = self
             .stream
             .next()
             .await
             .ok_or(anyhow::anyhow!("no event"))?
             .map_err(|e| anyhow!("failed retrieving next events: {e:?}"))?;
-        let TransactionEvents {
-            tx_pointer, events, ..
-        } = tx_event;
-        Ok((events, *tx_pointer.block_height()))
+        match unstable_event {
+            UnstableEvent::Transaction(TransactionEvents {
+                tx_pointer, events, ..
+            }) => Ok(Some((events, *tx_pointer.block_height()))),
+            UnstableEvent::Checkpoint(CheckpointEvent { block_height, .. }) => {
+                Ok(Some((vec![], block_height.into())))
+            }
+            UnstableEvent::Rollback(_) => Ok(None),
+        }
     }
 }
 
@@ -121,7 +130,7 @@ where
         service.start_and_await().await?;
         let stream = service
             .shared
-            .stable_events_starting_from(starting_height)
+            .unstable_events_starting_from(starting_height)
             .await?;
         let new = Self {
             _service: service,

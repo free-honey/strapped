@@ -1,14 +1,14 @@
 {
-  "deployed_at": "2025-12-27T17:21:16.284708+00:00",
-  "contract_id": "8f17b2bd6e26ae2fb6cabe8a69a5d9ff6275eb7036365f1d756dcaef1fdcb372",
+  "deployed_at": "2025-12-30T17:50:01.615492+00:00",
+  "contract_id": "ae86d12b7f532d5eb052217b9d2c0162190b662084b30c756b0f416a1ea14772",
   "bytecode_hash": "05a57907132fb7d7d23928e63f2978d5562bed51086fcc53491de9eb036d44fb",
   "network_url": "https://devnet.fuel.network",
   "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-  "chip_asset_ticker": "Gwei",
-  "contract_salt": "0x834613e184fa72b298f77ec04b46dff35747dbaad24a9737e42ab0780556a7ed",
-  "vrf_salt": "0x615b5019e6273d66fddf2ff224890fe908cb4dfb7908857e1e038ca7ed8e157e",
-  "vrf_contract_id": "1a76644594a9a019dc8de9cd9e730d2e6d03352014862300430973f21ac0858f",
+  "chip_asset_ticker": "ETH",
+  "contract_salt": "0xef725bc6dc34dc8a857d78731c4aabde6e270273aaa0865f1b4259b4c6ee61d4",
+  "vrf_salt": "0x30ba48ccd4ef6fa9fe5c717cdd00d27c9a7573e0d76631d46ff28350845ea5bb",
+  "vrf_contract_id": "a0e13f70523a681a4442f711c5e5f0936b52c26d31355f530f0d486c55861864",
   "vrf_bytecode_hash": "0xbe972b271315284f8d311552bdc52cbd1af2ef027df542a2acee608c08c2398c",
-  "deployment_block_height": 51214056,
+  "deployment_block_height": 51474074,
   "roll_frequency": 1
 }

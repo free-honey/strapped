@@ -171,6 +171,17 @@ where
             entry.bets.push(placement);
         }
     }
+
+    fn bump_height_if_newer(&mut self, height: u32) -> Result<()> {
+        let Ok((mut snapshot, current_height)) = self.snapshots.latest_snapshot() else {
+            return Ok(());
+        };
+        if height <= current_height {
+            return Ok(());
+        }
+        self.refresh_height(&mut snapshot, height);
+        self.snapshots.update_snapshot(&snapshot, height)
+    }
 }
 
 pub fn init_tracing() {
@@ -198,10 +209,14 @@ impl<
         tokio::select! {
             batch = self.events.next_event_batch() => {
                 match batch {
-                    Ok((events, height)) => {
+                    Ok(Some((events, height))) => {
                         for event in events {
                             self.handle_event(event, height)?;
                         }
+                        self.bump_height_if_newer(height)?;
+                        Ok(RunState::Continue)
+                    }
+                    Ok(None) => {
                         Ok(RunState::Continue)
                     }
                     Err(e) => {

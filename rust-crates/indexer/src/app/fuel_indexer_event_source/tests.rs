@@ -87,7 +87,8 @@ async fn next_event_batch__can_get_init_event() {
 
     // then
     let _should_be_empty_first_block = event_source.next_event_batch().await.unwrap();
-    let (events, _) = event_source.next_event_batch().await.unwrap();
+    let _ = event_source.next_event_batch().await.unwrap();
+    let (events, _) = event_source.next_event_batch().await.unwrap().unwrap();
     let actual = events.first().unwrap();
     let expected = Event::init_event(fake_vrf_contract_id.into(), chip_asset_id, 100, 2);
 
@@ -205,7 +206,7 @@ async fn next_event_batch__can_get_roll_event() {
     // then
     let mut actual_event = None;
     for _ in 0..10 {
-        let (events, _) = event_source.next_event_batch().await.unwrap();
+        let (events, _) = event_source.next_event_batch().await.unwrap().unwrap();
         if let Some(event) = events
             .into_iter()
             .find(|event| matches!(event, Event::ContractEvent(ContractEvent::Roll(_))))
@@ -335,7 +336,7 @@ async fn next_event_batch__can_get_new_game_event() {
 
     let mut actual_new_game = None;
     for _ in 0..10 {
-        let (events, _) = event_source.next_event_batch().await.unwrap();
+        let (events, _) = event_source.next_event_batch().await.unwrap().unwrap();
         for event in events {
             if let Event::ContractEvent(ContractEvent::NewGame(inner)) = event {
                 actual_new_game = Some(inner);

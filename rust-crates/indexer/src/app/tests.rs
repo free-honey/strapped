@@ -53,9 +53,9 @@ impl FakeEventSource {
 }
 
 impl EventSource for FakeEventSource {
-    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
+    async fn next_event_batch(&mut self) -> Result<Option<(Vec<Event>, u32)>> {
         match self.recv.recv().await {
-            Some((events, height)) => Ok((events, height)),
+            Some((events, height)) => Ok(Some((events, height))),
             None => Err(anyhow::anyhow!("No more events")),
         }
     }
@@ -64,7 +64,7 @@ impl EventSource for FakeEventSource {
 pub struct PendingEventSource;
 
 impl EventSource for PendingEventSource {
-    async fn next_event_batch(&mut self) -> Result<(Vec<Event>, u32)> {
+    async fn next_event_batch(&mut self) -> Result<Option<(Vec<Event>, u32)>> {
         pending().await
     }
 }
@@ -212,6 +212,42 @@ async fn run__roll_event__updates_snapshot() {
         snap
     };
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
+    assert_eq!(expected, actual);
+}
+
+#[tokio::test]
+async fn run__empty_event_batch__updates_block_height() {
+    // given
+    let (event_source, event_sender) = FakeEventSource::new_with_sender();
+    let existing_snapshot = OverviewSnapshot {
+        game_id: 7,
+        current_block_height: 5,
+        pot_size: 10,
+        ..OverviewSnapshot::default()
+    };
+    let snapshot_storage =
+        InMemorySnapshotStorage::new_with_snapshot(existing_snapshot.clone(), 5);
+    let snapshot_copy = snapshot_storage.snapshot();
+
+    let metadata_storage = InMemoryMetadataStorage::default();
+    let query_api = PendingQueryApi;
+    let mut app = App::new(
+        event_source,
+        query_api,
+        snapshot_storage,
+        metadata_storage,
+        zero_contract_id(),
+    );
+
+    // when
+    event_sender.send((Vec::new(), 10)).await.unwrap();
+    app.run(pending()).await.unwrap();
+
+    // then
+    let (actual, height) = snapshot_copy.lock().unwrap().clone().unwrap();
+    let mut expected = existing_snapshot;
+    expected.current_block_height = 10;
+    assert_eq!(height, 10);
     assert_eq!(expected, actual);
 }
 

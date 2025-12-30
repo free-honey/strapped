@@ -4,5 +4,7 @@ use crate::{
 };
 
 pub trait EventSource {
-    fn next_event_batch(&mut self) -> impl Future<Output = Result<(Vec<Event>, u32)>>;
+    fn next_event_batch(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<(Vec<Event>, u32)>>>;
 }
