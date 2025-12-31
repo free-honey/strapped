@@ -966,21 +966,6 @@ fn format_units(amount: u64, decimals: u32) -> String {
     }
 }
 
-// fn chips_balance_formated(chips_balance: u64, decimal_places: u32) -> String {
-//     let one_unit = 10i64.saturating_pow(decimal_places) as u64;
-//     let whole = chips_balance / one_unit;
-//     let fractional = chips_balance % one_unit;
-//     if fractional == 0 {
-//         format!("{}", whole)
-//     } else {
-//         format!(
-//             "{}.{}",
-//             whole,
-//             format!("{:09}", fractional).trim_end_matches('0')
-//         )
-//     }
-// }
-
 fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
     match &state.mode {
         Mode::BetModal(bs) => {
