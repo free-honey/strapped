@@ -78,6 +78,9 @@ struct Args {
 
     #[arg(long)]
     test: bool,
+
+    #[arg(long)]
+    block_request_concurrency: Option<usize>,
 }
 
 async fn handle_interupt() {
@@ -264,7 +267,11 @@ async fn main() -> anyhow::Result<()> {
         max_fds: 512,
         columns_policy: ColumnsPolicy::Lazy,
     };
-    let indexer_config = Config::new(start_block_height, false, args.graphql_url);
+    let mut indexer_config = Config::new(start_block_height, false, args.graphql_url);
+    if let Some(concurrency) = args.block_request_concurrency {
+        indexer_config.blocks_request_concurrency = concurrency;
+    }
+
     let events = FuelIndexerEventSource::new(
         parse_event_logs,
         event_data_path.clone(),

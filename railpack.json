@@ -21,7 +21,7 @@
         "pwd && ls -la",
         "apt-get update && apt-get install -y clang llvm-dev libclang-dev pkg-config",
         "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo build -p indexer --release",
-        "cp target/release/indexer ./indexer",
+        "cp target/release/indexer ./indexer"
       ]
     }
   },
@@ -31,6 +31,6 @@
         "step": "build"
       }
     ],
-    "startCommand": "./indexer --test --graphql-url ${GRAPHQL_URL} --port ${PORT} --tracing"
+    "startCommand": "./indexer --test --graphql-url ${GRAPHQL_URL} --port ${PORT} --tracing --block-request-concurrency 10"
   }
 }
