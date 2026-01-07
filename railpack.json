@@ -1,5 +1,11 @@
 {
   "$schema": "https://schema.railpack.com",
+  "caches": {
+    "cargo-target": {
+      "directory": "target",
+      "type": "locked"
+    }
+  },
   "steps": {
     "install_forc": {
       "commands": [
@@ -11,7 +17,18 @@
       "inputs": [
         {
           "step": "install_forc"
+        },
+        {
+          "local": true,
+          "include": [
+            "rust-crates/indexer/**",
+            "rust-crates/indexer/Cargo.toml",
+            "Cargo.lock"
+          ]
         }
+      ],
+      "caches": [
+        "cargo-target"
       ],
       "commands": [
         {
@@ -28,7 +45,10 @@
   "deploy": {
     "inputs": [
       {
-        "step": "build"
+        "step": "build",
+        "include": [
+          "indexer"
+        ]
       }
     ],
     "startCommand": "./indexer --test --graphql-url ${GRAPHQL_URL} --port ${PORT} --tracing --block-request-concurrency 10"
