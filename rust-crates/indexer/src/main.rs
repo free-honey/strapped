@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| contract_id.to_string());
     let execution_dir = current_dir().context("determine process working directory")?;
     let data_root = execution_dir
-        .join("strapped_indexer_data")
+        .join("strapped_indexer_db")
         .join(network_label)
         .join(&contract_dir_name);
     fs::create_dir_all(&data_root)?;
