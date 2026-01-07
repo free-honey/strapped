@@ -21,7 +21,7 @@
         {
           "local": true,
           "include": [
-            "rust-crates/indexer/**",
+            "rust-crates/indexer",
             "rust-crates/indexer/Cargo.toml",
             "Cargo.lock"
           ]
