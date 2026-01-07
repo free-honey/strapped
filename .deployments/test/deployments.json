@@ -4,7 +4,7 @@
   "bytecode_hash": "05a57907132fb7d7d23928e63f2978d5562bed51086fcc53491de9eb036d44fb",
   "network_url": "https://testnet.fuel.network",
   "chip_asset_id": "0xf8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07",
-  "chip_asset_ticker": "ETH",
+  "chip_asset_ticker": "Gwei",
   "contract_salt": "0xdb7465b2bb4d073f0d1ff6e72c5f5d266183fcacc8888d0b69b24f1dc694cb7b",
   "vrf_salt": "0x0b10a518f5d8405c4231368b367a2fb10f1e8e3965b4fa7814f66816a826519a",
   "vrf_contract_id": "460357f327f6d2abc0e686020303eace6084143d9b2871c79c04793e14db3ab0",

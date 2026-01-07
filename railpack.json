@@ -1,6 +1,14 @@
 {
   "$schema": "https://schema.railpack.com",
   "caches": {
+    "cargo-registry": {
+      "directory": "~/.cargo/registry",
+      "type": "locked"
+    },
+    "cargo-git": {
+      "directory": "~/.cargo/git",
+      "type": "locked"
+    },
     "cargo-target": {
       "directory": "target",
       "type": "locked"
@@ -29,6 +37,8 @@
         }
       ],
       "caches": [
+        "cargo-registry",
+        "cargo-git",
         "cargo-target"
       ],
       "commands": [

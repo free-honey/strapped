@@ -66,6 +66,7 @@ const STRAPPED_BIN_CANDIDATES: [&str; 1] =
     ["./sway-projects/strapped/out/release/strapped.bin"];
 const VRF_BIN_CANDIDATES: [&str; 1] =
     ["./sway-projects/pseudo-vrf-contract/out/release/pseudo-vrf-contract.bin"];
+const DEFAULT_CHIP_ASSET_TICKER: &str = "Gwei";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -192,7 +193,7 @@ async fn main() -> Result<()> {
     };
     let chip_asset_ticker = args.chip_asset_ticker.clone().or_else(|| {
         if chip_asset_id == default_chip_asset {
-            Some("ETH".to_string())
+            Some(DEFAULT_CHIP_ASSET_TICKER.to_string())
         } else {
             None
         }
