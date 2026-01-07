@@ -79,6 +79,7 @@ const STRAPPED_BIN_CANDIDATES: [&str; 1] =
 //     ["./sway-projects/strapped/out/debug/strapped.bin"];
 const DEFAULT_SAFE_SCRIPT_GAS_LIMIT: u64 = 29_000_000;
 const DEFAULT_BASE_ASSET_TICKER: &str = "ETH";
+const DEFAULT_CHIP_ASSET_TICKER: &str = "Gwei";
 const MAX_OWED_PERCENTAGE: u64 = 5;
 const GAME_HISTORY_DEPTH: usize = 10;
 
@@ -908,7 +909,7 @@ impl AppController {
         };
         let chip_asset_ticker = selected.chip_asset_ticker.clone().or_else(|| {
             if chip_asset_id == base_asset_id {
-                Some("Gwei".to_string())
+                Some(DEFAULT_CHIP_ASSET_TICKER.to_string())
             } else {
                 None
             }

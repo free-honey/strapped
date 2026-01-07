@@ -226,9 +226,13 @@ impl<
             }
             query = self.api.query() => {
                 match query {
-                    Ok(inner) => {
+                    Ok(Some(inner)) => {
                         self.handle_query(inner)?;
                         Ok(RunState::Continue)
+                    }
+                    Ok(None) => {
+                        tracing::info!("Query server closed, exiting");
+                        Ok(RunState::Exit)
                     }
                     Err(e) => Err(e),
                 }

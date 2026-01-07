@@ -1,5 +1,19 @@
 {
   "$schema": "https://schema.railpack.com",
+  "caches": {
+    "cargo-registry": {
+      "directory": "~/.cargo/registry",
+      "type": "locked"
+    },
+    "cargo-git": {
+      "directory": "~/.cargo/git",
+      "type": "locked"
+    },
+    "cargo-target": {
+      "directory": "target",
+      "type": "locked"
+    }
+  },
   "steps": {
     "install_forc": {
       "commands": [
@@ -11,7 +25,21 @@
       "inputs": [
         {
           "step": "install_forc"
+        },
+        {
+          "local": true,
+          "include": [
+            "Cargo.toml",
+            "rust-crates/indexer",
+            "rust-crates/indexer/Cargo.toml",
+            "Cargo.lock"
+          ]
         }
+      ],
+      "caches": [
+        "cargo-registry",
+        "cargo-git",
+        "cargo-target"
       ],
       "commands": [
         {
@@ -21,16 +49,20 @@
         "pwd && ls -la",
         "apt-get update && apt-get install -y clang llvm-dev libclang-dev pkg-config",
         "export PATH=${HOME}/.fuelup/bin:${PATH}; cargo build -p indexer --release",
-        "cp target/release/indexer ./indexer"
+        "mkdir -p bin",
+        "cp target/release/indexer ./bin/indexer"
       ]
     }
   },
   "deploy": {
     "inputs": [
       {
-        "step": "build"
+        "step": "build",
+        "include": [
+          "bin/indexer"
+        ]
       }
     ],
-    "startCommand": "./indexer --test --graphql-url ${GRAPHQL_URL} --port ${PORT} --tracing --block-request-concurrency 10"
+    "startCommand": "./bin/indexer --test --graphql-url ${GRAPHQL_URL} --port ${PORT} --tracing --block-request-concurrency 10"
   }
 }

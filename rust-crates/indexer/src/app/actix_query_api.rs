@@ -157,11 +157,8 @@ impl ActixQueryApi {
 }
 
 impl QueryAPI for ActixQueryApi {
-    async fn query(&mut self) -> Result<Query> {
-        self.receiver
-            .recv()
-            .await
-            .ok_or_else(|| anyhow!("query server closed"))
+    async fn query(&mut self) -> Result<Option<Query>> {
+        Ok(self.receiver.recv().await)
     }
 }
 
@@ -339,7 +336,7 @@ mod tests {
         });
 
         // when
-        let query = api.query().await.unwrap();
+        let query = api.query().await.unwrap().expect("expected query");
         if let Query::LatestSnapshot(sender) = query {
             sender
                 .send((OverviewSnapshot::new(), expected_height))
@@ -382,7 +379,7 @@ mod tests {
         });
 
         // when
-        let query = api.query().await.unwrap();
+        let query = api.query().await.unwrap().expect("expected query");
 
         if let Query::LatestAccountSnapshot(inner) = query {
             tracing::info!("Got query: {inner:?}");
@@ -428,7 +425,7 @@ mod tests {
         });
 
         // when
-        let query = api.query().await.unwrap();
+        let query = api.query().await.unwrap().expect("expected query");
 
         if let Query::HistoricalAccountSnapshot(inner) = query {
             let HistoricalAccountSnapshotQuery {
@@ -476,7 +473,7 @@ mod tests {
         });
 
         // when
-        let query = api.query().await.unwrap();
+        let query = api.query().await.unwrap().expect("expected query");
 
         if let Query::HistoricalSnapshot(inner) = query {
             let HistoricalSnapshotQuery { game_id, sender } = inner;
@@ -513,7 +510,7 @@ mod tests {
         });
 
         // when
-        let query = api.query().await.unwrap();
+        let query = api.query().await.unwrap().expect("expected query");
         if let Query::AllKnownStraps(sender) = query {
             sender.send(expected.clone()).unwrap();
         } else {
