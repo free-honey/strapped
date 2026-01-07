@@ -85,18 +85,15 @@ impl FakeQueryApi {
 }
 
 impl QueryAPI for FakeQueryApi {
-    async fn query(&mut self) -> crate::Result<Query> {
-        self.receiver
-            .recv()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No query received"))
+    async fn query(&mut self) -> crate::Result<Option<Query>> {
+        Ok(self.receiver.recv().await)
     }
 }
 
 pub struct PendingQueryApi;
 
 impl QueryAPI for PendingQueryApi {
-    async fn query(&mut self) -> Result<Query> {
+    async fn query(&mut self) -> Result<Option<Query>> {
         pending().await
     }
 }

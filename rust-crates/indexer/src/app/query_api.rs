@@ -14,7 +14,9 @@ use std::future::Future;
 use tokio::sync::oneshot;
 
 pub trait QueryAPI {
-    fn query(&mut self) -> impl Future<Output = crate::Result<Query>>;
+    /// Returns the next query if the API is still running.
+    /// Ok(None) indicates the server has shut down and no more queries will arrive.
+    fn query(&mut self) -> impl Future<Output = crate::Result<Option<Query>>>;
 }
 
 #[derive(Debug)]
