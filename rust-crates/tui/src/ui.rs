@@ -1217,14 +1217,12 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                     .collect();
                 assets.sort_by(|(a, _), (b, _)| {
                     a.level.cmp(&b.level).then_with(|| {
-                        modifier_order_value(&a.modifier).cmp(&modifier_order_value(&b.modifier))
+                        modifier_order_value(&a.modifier)
+                            .cmp(&modifier_order_value(&b.modifier))
                     })
                 });
                 lines.push(Line::from(""));
-                lines.push(Line::from(format!(
-                    "Asset IDs for {:?}:",
-                    selected_kind
-                )));
+                lines.push(Line::from(format!("Asset IDs for {:?}:", selected_kind)));
                 if assets.is_empty() {
                     lines.push(Line::from("  None"));
                 } else {
