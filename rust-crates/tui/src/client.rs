@@ -120,6 +120,7 @@ pub struct AppSnapshot {
         u32, // roll_index
     )>,
     pub owned_straps: Vec<(strapped::Strap, u64)>,
+    pub known_straps: Vec<(AssetId, strapped::Strap)>,
     pub pot_balance: u64,
     pub chips_owed: u64,
     pub total_chip_bets: u64,
@@ -463,6 +464,7 @@ impl AppController {
             modifier_triggers,
             active_modifiers,
             owned_straps,
+            known_straps: self.known_straps.clone(),
             pot_balance,
             chips_owed,
             total_chip_bets,
