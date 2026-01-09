@@ -1208,6 +1208,32 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                     };
                     lines.push(line);
                 }
+                let selected_kind = rows[selected_idx].kind.clone();
+                let mut assets: Vec<(strapped::Strap, AssetId)> = snap
+                    .known_straps
+                    .iter()
+                    .filter(|(_, strap)| strap.kind == selected_kind)
+                    .map(|(asset_id, strap)| (strap.clone(), *asset_id))
+                    .collect();
+                assets.sort_by(|(a, _), (b, _)| {
+                    a.level.cmp(&b.level).then_with(|| {
+                        modifier_order_value(&a.modifier)
+                            .cmp(&modifier_order_value(&b.modifier))
+                    })
+                });
+                lines.push(Line::from(""));
+                lines.push(Line::from(format!("Asset IDs for {:?}:", selected_kind)));
+                if assets.is_empty() {
+                    lines.push(Line::from("  None"));
+                } else {
+                    for (strap, asset_id) in assets {
+                        lines.push(Line::from(format!(
+                            "  {}: {}",
+                            strap_asset_label(&strap),
+                            asset_id_hex(&asset_id)
+                        )));
+                    }
+                }
                 lines.push(Line::from(""));
                 lines.push(Line::from(
                     "Esc=close ↑/↓ move (rows include strap kinds you do not own yet)",
@@ -1415,6 +1441,23 @@ fn render_reward_compact(s: &strapped::Strap) -> String {
     } else {
         format!("{}{}{}", mod_emoji, kind_emoji, s.level)
     }
+}
+
+fn strap_asset_label(s: &strapped::Strap) -> String {
+    if s.modifier == strapped::Modifier::Nothing {
+        format!("lvl{}", s.level)
+    } else {
+        let modifier = modifier_emoji(&s.modifier);
+        if modifier.is_empty() {
+            format!("lvl{}", s.level)
+        } else {
+            format!("lvl{} {}", s.level, modifier)
+        }
+    }
+}
+
+fn asset_id_hex(asset_id: &AssetId) -> String {
+    format!("0x{}", hex::encode::<[u8; 32]>((*asset_id).into()))
 }
 
 #[derive(Clone, Debug)]
