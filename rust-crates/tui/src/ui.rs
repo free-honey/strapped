@@ -101,6 +101,7 @@ enum Mode {
     #[default]
     Normal,
     BetModal(BetState),
+    TableBetsModal(TableBetsState),
     ClaimModal(ClaimState),
     VrfModal(VrfState),
     ShopModal(ShopState),
@@ -113,6 +114,9 @@ enum Mode {
 struct BetState {
     amount: u64,
 }
+
+#[derive(Clone, Debug, Default)]
+struct TableBetsState;
 
 #[derive(Clone, Debug, Default)]
 struct ClaimState {
@@ -309,6 +313,15 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
                 KeyCode::Char(c) if c.is_ascii_digit() => {
                     let d = c.to_digit(10).unwrap() as u64;
                     bs.amount = bs.amount.saturating_mul(10).saturating_add(d);
+                    Some(UserEvent::Redraw)
+                }
+                _ => None,
+            };
+        }
+        Mode::TableBetsModal(_) => {
+            return match k.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    state.mode = Mode::Normal;
                     Some(UserEvent::Redraw)
                 }
                 _ => None,
@@ -575,6 +588,10 @@ pub fn interpret_event(state: &mut UiState, event: Event) -> Option<UserEvent> {
             state.mode = Mode::BetModal(BetState::default());
             Some(UserEvent::OpenBetModal)
         }
+        KeyCode::Char('B') => {
+            state.mode = Mode::TableBetsModal(TableBetsState::default());
+            Some(UserEvent::Redraw)
+        }
         KeyCode::Char('t') => {
             state.mode = Mode::StrapBet(StrapBetState::default());
             Some(UserEvent::OpenStrapBet)
@@ -677,7 +694,7 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
                     )));
             }
         }
-        lines.push(Line::from("Bets:"));
+        lines.push(Line::from(""));
         lines.push(Line::from("You:"));
         lines.extend(format_my_bet_lines(
             cell.chip_total,
@@ -685,6 +702,7 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
             chip_label,
         ));
         if !cell.table_bets.is_empty() {
+            lines.push(Line::from(""));
             lines.push(Line::from("Table:"));
             for entry in &cell.table_bets {
                 for line in format_table_bet_lines(entry, chip_label) {
@@ -893,7 +911,7 @@ fn draw_bottom(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
 
     // Help
     let help = Paragraph::new(
-        "←/→ select | b chip bet | t strap bet | i straps | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
+        "←/→ select | b chip bet | t strap bet | B table bets | i straps | s shop | / VRF | m purchase | r roll | c claim | q/Esc quit",
     )
     .block(Block::default().borders(Borders::ALL).title("Help"));
     f.render_widget(help, chunks[1]);
@@ -990,6 +1008,51 @@ fn draw_modals(f: &mut Frame, state: &UiState, snap: &AppSnapshot) {
                 "Amount: {}\nEnter=confirm Esc=cancel +/- or digits to edit",
                 bs.amount
             ));
+            f.render_widget(Clear, area);
+            f.render_widget(block.clone(), area);
+            f.render_widget(p, block.inner(area));
+        }
+        Mode::TableBetsModal(_) => {
+            let area = centered_rect(70, 70, f.area());
+            let title = format!("Bets for {:?}", snap.selected_roll);
+            let block = Block::default().borders(Borders::ALL).title(title);
+            let chip_label = snap.chip_asset_ticker.as_deref().unwrap_or("chips");
+            let mut lines = Vec::new();
+            if let Some(cell) = snap
+                .cells
+                .iter()
+                .find(|cell| cell.roll == snap.selected_roll)
+            {
+                lines.push(Line::from("You:"));
+                lines.extend(format_bet_detail_lines(
+                    cell.chip_total,
+                    &cell.straps,
+                    chip_label,
+                    "  ",
+                ));
+                lines.push(Line::from(""));
+                lines.push(Line::from("Table:"));
+                if cell.table_bets.is_empty() {
+                    lines.push(Line::from("  none"));
+                } else {
+                    for entry in &cell.table_bets {
+                        lines.push(Line::from(entry.identity.clone()));
+                        lines.extend(format_bet_detail_lines(
+                            entry.chip_total,
+                            &entry.straps,
+                            chip_label,
+                            "  ",
+                        ));
+                        lines.push(Line::from(""));
+                    }
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from("Esc=close"));
+            } else {
+                lines.push(Line::from("No data for selected roll"));
+                lines.push(Line::from("Esc=close"));
+            }
+            let p = Paragraph::new(lines);
             f.render_widget(Clear, area);
             f.render_widget(block.clone(), area);
             f.render_widget(p, block.inner(area));
@@ -1420,32 +1483,6 @@ fn modifier_emoji(m: &strapped::Modifier) -> &'static str {
     }
 }
 
-fn level_style(level: u8) -> Style {
-    match level {
-        1 => Style::default().fg(Color::White),
-        2 => Style::default().fg(Color::Green),
-        3 => Style::default().fg(Color::Yellow),
-        4 => Style::default().fg(Color::Blue),
-        5 => Style::default().fg(Color::Magenta),
-        _ => Style::default().fg(Color::Cyan),
-    }
-}
-
-fn render_strap_compact(s: &strapped::Strap) -> String {
-    let mod_emoji = modifier_emoji(&s.modifier);
-    let kind_emoji = strap_emoji(&s.kind);
-    if s.modifier == strapped::Modifier::Nothing {
-        format!("lvl{} {}", s.level, kind_emoji)
-    } else {
-        format!("lvl{} {} {}", s.level, mod_emoji, kind_emoji)
-    }
-}
-
-fn render_strap_line(s: &strapped::Strap, amount: u64) -> Line<'static> {
-    let text = render_strap_compact(s);
-    Line::styled(format!("{}x{}", text, amount), level_style(s.level))
-}
-
 // Very tight reward format to reduce truncation: [modifier][kind][level]
 // e.g., "🍄👕1" or "👕1" if no modifier
 fn render_reward_compact(s: &strapped::Strap) -> String {
@@ -1476,6 +1513,31 @@ fn format_my_bet_lines(
     }
     if lines.is_empty() {
         lines.push(Line::from("none"));
+    }
+    lines
+}
+
+fn format_bet_detail_lines(
+    chip_total: u64,
+    straps: &[(strapped::Strap, u64)],
+    chip_label: &str,
+    indent: &str,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if chip_total > 0 {
+        lines.push(Line::from(format!(
+            "{indent}{chip_total} {chip_label}"
+        )));
+    }
+    for (strap, amount) in straps {
+        lines.push(Line::from(format!(
+            "{indent}{} x{}",
+            render_reward_compact(strap),
+            amount
+        )));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(format!("{indent}none")));
     }
     lines
 }

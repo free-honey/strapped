@@ -392,7 +392,7 @@ impl AppController {
                         return None;
                     }
                     Some(OtherPlayerBets {
-                        label: short_identity_label(&entry.identity),
+                        identity: identity_string(&entry.identity),
                         chip_total,
                         straps,
                     })
@@ -1783,18 +1783,9 @@ fn split_bets(bets: &[(strapped::Bet, u64, u32)]) -> (u64, Vec<(strapped::Strap,
     (chip_total, straps)
 }
 
-fn short_identity_label(identity: &Identity) -> String {
+fn identity_string(identity: &Identity) -> String {
     match identity {
-        Identity::Address(address) => {
-            let full = address.to_string();
-            if full.len() <= 12 {
-                full
-            } else {
-                let prefix = &full[..6];
-                let suffix = &full[full.len() - 4..];
-                format!("{prefix}..{suffix}")
-            }
-        }
+        Identity::Address(address) => address.to_string(),
         other => format!("{other:?}"),
     }
 }
@@ -1830,7 +1821,7 @@ pub struct RewardInfo {
 
 #[derive(Clone, Debug)]
 pub struct OtherPlayerBets {
-    pub label: String,
+    pub identity: String,
     pub chip_total: u64,
     pub straps: Vec<(strapped::Strap, u64)>,
 }
