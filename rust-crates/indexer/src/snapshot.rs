@@ -26,6 +26,8 @@ pub struct OverviewSnapshot {
     pub(crate) specific_bets: [(u64, Vec<(Strap, u64)>); 11],
     pub(crate) modifiers_active: [Option<Modifier>; 11],
     pub(crate) modifier_shop: Vec<ModifierShopEntry>,
+    #[serde(default)]
+    pub(crate) table_bets: Vec<TableAccountBets>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +115,7 @@ impl Default for OverviewSnapshot {
             specific_bets: total_bets,
             modifiers_active: [None; 11],
             modifier_shop: Vec::new(),
+            table_bets: Vec::new(),
         }
     }
 }
@@ -134,6 +137,12 @@ pub struct AccountBetPlacement {
 pub struct AccountRollBets {
     pub roll: Roll,
     pub bets: Vec<AccountBetPlacement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableAccountBets {
+    pub identity: Identity,
+    pub per_roll_bets: Vec<AccountRollBets>,
 }
 
 pub const ALL_ROLLS: [Roll; 11] = [

@@ -562,10 +562,11 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     );
 
     let amount_1 = 175;
+    let player = Identity::Address(Address::from([0u8; 32]));
     let chip_event_1 = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 0,
-        player: Identity::Address(Address::from([0u8; 32])),
+        player: player.clone(),
         roll: Roll::Six,
         amount: amount_1,
     });
@@ -574,7 +575,7 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     let chip_event_2 = ContractEvent::PlaceChipBet(PlaceChipBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 0,
-        player: Identity::Address(Address::from([0u8; 32])),
+        player: player.clone(),
         roll: Roll::Eight,
         amount: amount_2,
     });
@@ -599,6 +600,33 @@ async fn run__place_chip_bet_event__updates_pot_and_totals() {
     expected.specific_bets[6].0 = amount_2;
     expected.total_chip_bets = amount_1 + amount_2;
     expected.current_block_height = 305;
+    let mut account_snapshot = crate::snapshot::AccountSnapshot::default();
+    if let Some(entry) = account_snapshot
+        .per_roll_bets
+        .iter_mut()
+        .find(|entry| entry.roll == Roll::Six)
+    {
+        entry.bets.push(crate::snapshot::AccountBetPlacement {
+            bet_roll_index: 0,
+            amount: amount_1,
+            kind: crate::snapshot::AccountBetKind::Chip,
+        });
+    }
+    if let Some(entry) = account_snapshot
+        .per_roll_bets
+        .iter_mut()
+        .find(|entry| entry.roll == Roll::Eight)
+    {
+        entry.bets.push(crate::snapshot::AccountBetPlacement {
+            bet_roll_index: 0,
+            amount: amount_2,
+            kind: crate::snapshot::AccountBetKind::Chip,
+        });
+    }
+    expected.table_bets = vec![crate::snapshot::TableAccountBets {
+        identity: player,
+        per_roll_bets: account_snapshot.per_roll_bets,
+    }];
     assert_eq!(expected, actual);
 }
 
@@ -687,7 +715,7 @@ async fn run__place_strap_bet_event__records_strap_bet() {
     let strap_event = ContractEvent::PlaceStrapBet(PlaceStrapBetEvent {
         game_id: existing_snapshot.game_id,
         bet_roll_index: 3,
-        player,
+        player: player.clone(),
         roll: Roll::Five,
         strap: strap.clone(),
         amount: 2,
@@ -701,8 +729,24 @@ async fn run__place_strap_bet_event__records_strap_bet() {
 
     let (actual, _) = snapshot_copy.lock().unwrap().clone().unwrap();
     let mut expected = existing_snapshot;
-    expected.specific_bets[3].1.push((strap, 2));
+    expected.specific_bets[3].1.push((strap.clone(), 2));
     expected.current_block_height = 415;
+    let mut account_snapshot = crate::snapshot::AccountSnapshot::default();
+    if let Some(entry) = account_snapshot
+        .per_roll_bets
+        .iter_mut()
+        .find(|entry| entry.roll == Roll::Five)
+    {
+        entry.bets.push(crate::snapshot::AccountBetPlacement {
+            bet_roll_index: 3,
+            amount: 2,
+            kind: crate::snapshot::AccountBetKind::Strap(strap.clone()),
+        });
+    }
+    expected.table_bets = vec![crate::snapshot::TableAccountBets {
+        identity: player,
+        per_roll_bets: account_snapshot.per_roll_bets,
+    }];
     assert_eq!(expected, actual);
 }
 
@@ -1093,6 +1137,7 @@ fn arb_snapshot() -> OverviewSnapshot {
         ],
         modifiers_active: [None; 11],
         modifier_shop: vec![],
+        table_bets: Vec::new(),
     }
 }
 #[tokio::test]

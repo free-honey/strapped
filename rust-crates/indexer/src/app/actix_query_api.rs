@@ -24,10 +24,7 @@ use actix_web::{
     },
     web,
 };
-use anyhow::{
-    Context,
-    anyhow,
-};
+use anyhow::Context;
 use fuels::types::{
     Address,
     AssetId,
