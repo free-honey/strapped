@@ -678,20 +678,21 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         let mut lines = Vec::new();
         lines.push(Line::from("Rewards:"));
         if cell.rewards.is_empty() {
-            lines.push(Line::from("  None"));
+            lines.push(Line::from(" None"));
         } else {
             for reward in &cell.rewards {
                 let qty = if reward.count > 1 {
-                    format!(" x{}", reward.count)
+                    format!("{}x", reward.count)
                 } else {
                     String::new()
                 };
                 lines.push(Line::from(format!(
-                    " ${} {}{}",
+                    "{}{}/{}{}",
+                    qty,
+                    strap_emoji(&reward.strap.kind),
                     reward.cost,
-                    render_reward_compact(&reward.strap),
-                    qty
-                    )));
+                    chip_label,
+                )));
             }
         }
         lines.push(Line::from(""));
