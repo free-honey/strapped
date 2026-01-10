@@ -62,7 +62,10 @@ use strapped_contract::{
     vrf_types as fake_vrf,
 };
 use tokio::{
-    sync::mpsc,
+    sync::{
+        mpsc,
+        oneshot,
+    },
     time,
 };
 use tracing::{
@@ -2083,7 +2086,6 @@ struct HistoryRecord {
 enum SnapshotWorkerCommand {
     FetchNow,
     FetchHistory(Vec<u32>),
-    Shutdown,
 }
 
 enum SnapshotWorkerEvent {
@@ -2096,6 +2098,7 @@ async fn snapshot_worker(
     indexer: IndexerClient,
     identity: Identity,
     mut cmd_rx: mpsc::UnboundedReceiver<SnapshotWorkerCommand>,
+    mut shutdown_rx: oneshot::Receiver<()>,
     snapshot_tx: mpsc::UnboundedSender<SnapshotWorkerEvent>,
 ) -> Result<()> {
     async fn fetch_snapshot(
@@ -2122,20 +2125,28 @@ async fn snapshot_worker(
         indexer: &IndexerClient,
         identity: &Identity,
         game_ids: Vec<u32>,
+        shutdown_rx: &mut oneshot::Receiver<()>,
         snapshot_tx: &mpsc::UnboundedSender<SnapshotWorkerEvent>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if game_ids.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let mut records = Vec::new();
         for game_id in game_ids {
-            let Some(hist) = indexer.historical_snapshot(game_id).await? else {
+            let hist = tokio::select! {
+                biased;
+                _ = &mut *shutdown_rx => return Ok(true),
+                hist = indexer.historical_snapshot(game_id) => hist?,
+            };
+            let Some(hist) = hist else {
                 continue;
             };
-            let account = indexer
-                .historical_account_snapshot(identity, game_id)
-                .await?
-                .unwrap_or_else(AccountData::empty);
+            let account = tokio::select! {
+                biased;
+                _ = &mut *shutdown_rx => return Ok(true),
+                account = indexer.historical_account_snapshot(identity, game_id) => account?,
+            }
+            .unwrap_or_else(AccountData::empty);
             records.push(HistoryRecord {
                 game_id,
                 rolls: hist.rolls,
@@ -2150,7 +2161,7 @@ async fn snapshot_worker(
                 .send(SnapshotWorkerEvent::History(records))
                 .map_err(|_| eyre!("snapshot receiver dropped"))?;
         }
-        Ok(())
+        Ok(false)
     }
 
     let mut ticker = time::interval(poll_interval);
@@ -2158,6 +2169,8 @@ async fn snapshot_worker(
 
     loop {
         tokio::select! {
+            biased;
+            _ = &mut shutdown_rx => break,
             _ = ticker.tick() => {
                 if let Err(err) = fetch_snapshot(&indexer, &identity, &snapshot_tx).await {
                     warn!(?err, "snapshot fetch failed");
@@ -2174,13 +2187,20 @@ async fn snapshot_worker(
                         }
                     }
                     SnapshotWorkerCommand::FetchHistory(ids) => {
-                        if let Err(err) =
-                            fetch_history(&indexer, &identity, ids, &snapshot_tx).await
+                        match fetch_history(
+                            &indexer,
+                            &identity,
+                            ids,
+                            &mut shutdown_rx,
+                            &snapshot_tx,
+                        )
+                        .await
                         {
-                            warn!(?err, "historical snapshot fetch failed");
+                            Ok(true) => break,
+                            Ok(false) => {}
+                            Err(err) => warn!(?err, "historical snapshot fetch failed"),
                         }
                     }
-                    SnapshotWorkerCommand::Shutdown => break,
                 }
             }
         }
@@ -2206,11 +2226,14 @@ async fn run_loop(
 
     let (snapshot_cmd_tx, snapshot_cmd_rx) = mpsc::unbounded_channel();
     let (snapshot_event_tx, mut snapshot_event_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let mut shutdown_tx = Some(shutdown_tx);
     let snapshot_handle = tokio::spawn(snapshot_worker(
         poll_interval,
         indexer,
         identity,
         snapshot_cmd_rx,
+        shutdown_rx,
         snapshot_event_tx,
     ));
     let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::FetchNow);
@@ -2218,6 +2241,12 @@ async fn run_loop(
     let mut pending_post_action: Option<PostAction> = None;
     let mut last_snapshot: Option<AppSnapshot> = None;
     let mut snapshot_worker_closed = false;
+
+    let signal_shutdown = |shutdown_tx: &mut Option<oneshot::Sender<()>>| {
+        if let Some(tx) = shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    };
 
     loop {
         tokio::select! {
@@ -2269,7 +2298,7 @@ async fn run_loop(
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::Shutdown);
+                signal_shutdown(&mut shutdown_tx);
                 break;
             }
             raw_ev = ui::next_raw_event(input_events) => {
@@ -2279,7 +2308,7 @@ async fn run_loop(
                 };
                 if last_snapshot.is_none() {
                     if matches!(ev, ui::UserEvent::Quit) {
-                        let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::Shutdown);
+                        signal_shutdown(&mut shutdown_tx);
                         break;
                     }
                     continue;
@@ -2291,7 +2320,7 @@ async fn run_loop(
                 let mut refresh_chip_balance = false;
                 match ev {
                     ui::UserEvent::Quit => {
-                        let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::Shutdown);
+                        signal_shutdown(&mut shutdown_tx);
                         break;
                     }
                     ui::UserEvent::NextRoll => {
@@ -2713,7 +2742,7 @@ async fn run_loop(
         }
     }
 
-    let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::Shutdown);
+    signal_shutdown(&mut shutdown_tx);
     match snapshot_handle.await {
         Ok(Ok(())) => {
             if snapshot_worker_closed {
