@@ -658,21 +658,7 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         let c = i as u16;
         let rect = Rect::new(area.x + c * col_w, area.y, col_w, area.height);
         let selected = cell.roll == snap.selected_roll;
-        let mut lines = vec![Line::from(format!("Chips: {}", cell.chip_total))];
-        lines.push(Line::from("Straps:"));
-        for (strap, amt) in &cell.straps {
-            lines.push(render_strap_line(strap, *amt));
-        }
-        if !cell.table_bets.is_empty() {
-            lines.push(Line::from("Table Bets:"));
-            for entry in &cell.table_bets {
-                lines.push(Line::styled(
-                    format_table_bet_line(entry, chip_label),
-                    Style::default().add_modifier(Modifier::DIM),
-                ));
-            }
-        }
-        // Rewards list
+        let mut lines = Vec::new();
         lines.push(Line::from("Rewards:"));
         if cell.rewards.is_empty() {
             lines.push(Line::from("  None"));
@@ -688,7 +674,25 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
                     reward.cost,
                     render_reward_compact(&reward.strap),
                     qty
-                )));
+                    )));
+            }
+        }
+        lines.push(Line::from("Bets:"));
+        lines.push(Line::from("You:"));
+        lines.extend(format_my_bet_lines(
+            cell.chip_total,
+            &cell.straps,
+            chip_label,
+        ));
+        if !cell.table_bets.is_empty() {
+            lines.push(Line::from("Table:"));
+            for entry in &cell.table_bets {
+                for line in format_table_bet_lines(entry, chip_label) {
+                    lines.push(Line::styled(
+                        line,
+                        Style::default().add_modifier(Modifier::DIM),
+                    ));
+                }
             }
         }
         let label = Paragraph::new(lines);
@@ -1454,26 +1458,44 @@ fn render_reward_compact(s: &strapped::Strap) -> String {
     }
 }
 
-fn format_table_bet_line(entry: &OtherPlayerBets, chip_label: &str) -> String {
+fn format_my_bet_lines(
+    chip_total: u64,
+    straps: &[(strapped::Strap, u64)],
+    chip_label: &str,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if chip_total > 0 {
+        lines.push(Line::from(format!("{chip_total} {chip_label}")));
+    }
+    for (strap, amount) in straps {
+        lines.push(Line::from(format!(
+            "{} x{}",
+            render_reward_compact(strap),
+            amount
+        )));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from("none"));
+    }
+    lines
+}
+
+fn format_table_bet_lines(
+    entry: &OtherPlayerBets,
+    _chip_label: &str,
+) -> Vec<String> {
     let mut parts = Vec::new();
     if entry.chip_total > 0 {
-        parts.push(format!("{} {}", entry.chip_total, chip_label));
+        parts.push(entry.chip_total.to_string());
     }
-    if !entry.straps.is_empty() {
-        let straps = entry
-            .straps
-            .iter()
-            .map(|(strap, amount)| format!("{}x{}", render_reward_compact(strap), amount))
-            .collect::<Vec<_>>()
-            .join(" ");
-        parts.push(straps);
+    for (strap, _amount) in &entry.straps {
+        parts.push(render_reward_compact(strap));
     }
-    let summary = if parts.is_empty() {
-        String::from("no bets")
+    if parts.is_empty() {
+        vec![String::from("none")]
     } else {
-        parts.join(", ")
-    };
-    format!("{}: {}", entry.label, summary)
+        vec![parts.join(", ")]
+    }
 }
 
 fn strap_asset_label(s: &strapped::Strap) -> String {
