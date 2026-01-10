@@ -1526,9 +1526,7 @@ fn format_bet_detail_lines(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if chip_total > 0 {
-        lines.push(Line::from(format!(
-            "{indent}{chip_total} {chip_label}"
-        )));
+        lines.push(Line::from(format!("{indent}{chip_total} {chip_label}")));
     }
     for (strap, amount) in straps {
         lines.push(Line::from(format!(
@@ -1543,10 +1541,7 @@ fn format_bet_detail_lines(
     lines
 }
 
-fn format_table_bet_lines(
-    entry: &OtherPlayerBets,
-    _chip_label: &str,
-) -> Vec<String> {
+fn format_table_bet_lines(entry: &OtherPlayerBets, _chip_label: &str) -> Vec<String> {
     let mut parts = Vec::new();
     if entry.chip_total > 0 {
         parts.push(entry.chip_total.to_string());
