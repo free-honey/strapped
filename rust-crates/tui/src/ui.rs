@@ -1,5 +1,6 @@
 use crate::client::{
     AppSnapshot,
+    OtherPlayerBets,
     PreviousGameSummary,
     VrfMode,
 };
@@ -652,6 +653,7 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
     } else {
         area.width
     };
+    let chip_label = snap.chip_asset_ticker.as_deref().unwrap_or("chips");
     for (i, cell) in rolls.iter().enumerate() {
         let c = i as u16;
         let rect = Rect::new(area.x + c * col_w, area.y, col_w, area.height);
@@ -660,6 +662,15 @@ fn draw_grid(f: &mut Frame, area: Rect, snap: &AppSnapshot) {
         lines.push(Line::from("Straps:"));
         for (strap, amt) in &cell.straps {
             lines.push(render_strap_line(strap, *amt));
+        }
+        if !cell.table_bets.is_empty() {
+            lines.push(Line::from("Table Bets:"));
+            for entry in &cell.table_bets {
+                lines.push(Line::styled(
+                    format_table_bet_line(entry, chip_label),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
         }
         // Rewards list
         lines.push(Line::from("Rewards:"));
@@ -1441,6 +1452,28 @@ fn render_reward_compact(s: &strapped::Strap) -> String {
     } else {
         format!("{}{}{}", mod_emoji, kind_emoji, s.level)
     }
+}
+
+fn format_table_bet_line(entry: &OtherPlayerBets, chip_label: &str) -> String {
+    let mut parts = Vec::new();
+    if entry.chip_total > 0 {
+        parts.push(format!("{} {}", entry.chip_total, chip_label));
+    }
+    if !entry.straps.is_empty() {
+        let straps = entry
+            .straps
+            .iter()
+            .map(|(strap, amount)| format!("{}x{}", render_reward_compact(strap), amount))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(straps);
+    }
+    let summary = if parts.is_empty() {
+        String::from("no bets")
+    } else {
+        parts.join(", ")
+    };
+    format!("{}: {}", entry.label, summary)
 }
 
 fn strap_asset_label(s: &strapped::Strap) -> String {

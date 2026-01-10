@@ -45,7 +45,10 @@ use crate::{
 use anyhow::anyhow;
 use fuels::{
     tx::ContractIdExt,
-    types::ContractId,
+    types::{
+        ContractId,
+        Identity,
+    },
 };
 
 #[cfg(test)]
@@ -169,6 +172,25 @@ where
             .find(|entry| entry.roll == roll)
         {
             entry.bets.push(placement);
+        }
+    }
+
+    fn upsert_table_bets(
+        snapshot: &mut OverviewSnapshot,
+        identity: &Identity,
+        per_roll_bets: &[AccountRollBets],
+    ) {
+        if let Some(existing) = snapshot
+            .table_bets
+            .iter_mut()
+            .find(|entry| entry.identity == *identity)
+        {
+            existing.per_roll_bets = per_roll_bets.to_vec();
+        } else {
+            snapshot.table_bets.push(crate::snapshot::TableAccountBets {
+                identity: *identity,
+                per_roll_bets: per_roll_bets.to_vec(),
+            });
         }
     }
 
@@ -501,8 +523,6 @@ impl<
         let entry = &mut snapshot.specific_bets[idx];
         entry.0 = entry.0.saturating_add(amount);
 
-        self.snapshots.update_snapshot(&snapshot, height)?;
-
         let mut account_snapshot = self
             .snapshots
             .latest_account_snapshot(&player)?
@@ -516,6 +536,9 @@ impl<
             kind: AccountBetKind::Chip,
         };
         Self::append_bet_to_account(&mut account_snapshot, roll, placement);
+        Self::upsert_table_bets(&mut snapshot, &player, &account_snapshot.per_roll_bets);
+
+        self.snapshots.update_snapshot(&snapshot, height)?;
         self.snapshots.update_account_snapshot(
             &player,
             game_id,
@@ -546,7 +569,6 @@ impl<
             accumulate_strap(&mut snapshot.specific_bets[idx].1, &strap, amount);
         }
         self.refresh_height(&mut snapshot, height);
-        self.snapshots.update_snapshot(&snapshot, height)?;
 
         let mut account_snapshot = self
             .snapshots
@@ -560,7 +582,9 @@ impl<
             kind: AccountBetKind::Strap(strap.clone()),
         };
         Self::append_bet_to_account(&mut account_snapshot, roll, placement);
+        Self::upsert_table_bets(&mut snapshot, &player, &account_snapshot.per_roll_bets);
         self.remember_strap(&strap);
+        self.snapshots.update_snapshot(&snapshot, height)?;
         self.snapshots.update_account_snapshot(
             &player,
             game_id,

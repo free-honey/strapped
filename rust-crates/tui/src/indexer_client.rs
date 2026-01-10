@@ -38,6 +38,7 @@ pub struct OverviewData {
         bool,
         u64,
     )>,
+    pub table_bets: Vec<TableAccountBets>,
 }
 
 #[allow(dead_code)]
@@ -50,6 +51,13 @@ pub struct AccountData {
     pub total_chip_won: u64,
     pub claimed_rewards: Option<(u64, Vec<(strapped::Strap, u64)>)>,
     pub block_height: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TableAccountBets {
+    pub identity: Identity,
+    #[allow(clippy::type_complexity)]
+    pub per_roll_bets: Vec<(strapped::Roll, Vec<(strapped::Bet, u64, u32)>)>,
 }
 
 #[allow(dead_code)]
@@ -210,6 +218,8 @@ struct OverviewSnapshotDto {
     specific_bets: Vec<(u64, Vec<(StrapDto, u64)>)>,
     modifiers_active: Vec<Option<ModifierDto>>,
     modifier_shop: Vec<ModifierShopDto>,
+    #[serde(default)]
+    table_bets: Vec<TableAccountBetsDto>,
 }
 
 #[derive(Deserialize)]
@@ -240,6 +250,12 @@ struct ModifierShopDto(RollDto, RollDto, ModifierDto, bool, bool, u64);
 struct AccountRollBetsDto {
     roll: RollDto,
     bets: Vec<AccountBetPlacementDto>,
+}
+
+#[derive(Deserialize)]
+struct TableAccountBetsDto {
+    identity: Identity,
+    per_roll_bets: Vec<AccountRollBetsDto>,
 }
 
 #[derive(Deserialize)]
@@ -379,6 +395,30 @@ impl From<LatestSnapshotDto> for OverviewData {
                         )
                     },
                 )
+                .collect(),
+            table_bets: dto
+                .snapshot
+                .table_bets
+                .into_iter()
+                .map(|entry| TableAccountBets {
+                    identity: entry.identity,
+                    per_roll_bets: entry
+                        .per_roll_bets
+                        .into_iter()
+                        .map(|roll_entry| {
+                            let roll: strapped::Roll = roll_entry.roll.into();
+                            let bets = roll_entry
+                                .bets
+                                .into_iter()
+                                .map(|bet| {
+                                    let bet_kind: strapped::Bet = bet.kind.into();
+                                    (bet_kind, bet.amount, bet.bet_roll_index)
+                                })
+                                .collect();
+                            (roll, bets)
+                        })
+                        .collect(),
+                })
                 .collect(),
         };
         overview.current_block_height =

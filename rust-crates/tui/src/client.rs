@@ -358,24 +358,7 @@ impl AppController {
 
         let mut cells = Vec::new();
         for (r, bets) in &my_bets {
-            let chip_total: u64 = bets
-                .iter()
-                .filter_map(|(b, amt, _)| match b {
-                    strapped::Bet::Chip => Some(*amt),
-                    _ => None,
-                })
-                .sum();
-            let mut straps: Vec<(strapped::Strap, u64)> = Vec::new();
-            for (b, amt, _) in bets {
-                if let strapped::Bet::Strap(s) = b {
-                    if let Some((_es, total)) = straps.iter_mut().find(|(es, _)| es == s)
-                    {
-                        *total += *amt;
-                    } else {
-                        straps.push((s.clone(), *amt));
-                    }
-                }
-            }
+            let (chip_total, straps) = split_bets(bets);
             let strap_total: u64 = straps.iter().map(|(_, n)| *n).sum();
             let mut rewards: Vec<RewardInfo> = Vec::new();
             for (_rr, s, cost) in strap_rewards.iter().filter(|(rr, _, _)| rr == r) {
@@ -392,12 +375,36 @@ impl AppController {
                     });
                 }
             }
+            let table_bets = overview
+                .table_bets
+                .iter()
+                .filter(|entry| entry.identity != self.alice_identity)
+                .filter_map(|entry| {
+                    entry
+                        .per_roll_bets
+                        .iter()
+                        .find(|(roll, _)| roll == r)
+                        .map(|(_, bets)| (entry, bets))
+                })
+                .filter_map(|(entry, bets)| {
+                    let (chip_total, straps) = split_bets(bets);
+                    if chip_total == 0 && straps.is_empty() {
+                        return None;
+                    }
+                    Some(OtherPlayerBets {
+                        label: short_identity_label(&entry.identity),
+                        chip_total,
+                        straps,
+                    })
+                })
+                .collect();
             cells.push(RollCell {
                 roll: r.clone(),
                 chip_total,
                 strap_total,
                 straps,
                 rewards,
+                table_bets,
             });
         }
 
@@ -448,6 +455,7 @@ impl AppController {
                     strap_total,
                     straps: Vec::new(),
                     rewards: Vec::new(),
+                    table_bets: Vec::new(),
                 });
             }
             let claimed = self.alice_claimed.contains(&sg.game_id);
@@ -1752,6 +1760,45 @@ pub fn all_rolls() -> Vec<strapped::Roll> {
     ]
 }
 
+fn split_bets(bets: &[(strapped::Bet, u64, u32)]) -> (u64, Vec<(strapped::Strap, u64)>) {
+    let chip_total: u64 = bets
+        .iter()
+        .filter_map(|(b, amt, _)| match b {
+            strapped::Bet::Chip => Some(*amt),
+            _ => None,
+        })
+        .sum();
+    let mut straps: Vec<(strapped::Strap, u64)> = Vec::new();
+    for (b, amt, _) in bets {
+        if let strapped::Bet::Strap(s) = b {
+            if let Some((_existing, total)) =
+                straps.iter_mut().find(|(existing, _)| existing == s)
+            {
+                *total += *amt;
+            } else {
+                straps.push((s.clone(), *amt));
+            }
+        }
+    }
+    (chip_total, straps)
+}
+
+fn short_identity_label(identity: &Identity) -> String {
+    match identity {
+        Identity::Address(address) => {
+            let full = address.to_string();
+            if full.len() <= 12 {
+                full
+            } else {
+                let prefix = &full[..6];
+                let suffix = &full[full.len() - 4..];
+                format!("{prefix}..{suffix}")
+            }
+        }
+        other => format!("{other:?}"),
+    }
+}
+
 fn next_roll(r: strapped::Roll) -> strapped::Roll {
     let rolls = all_rolls();
     let idx = rolls.iter().position(|x| *x == r).unwrap_or(0);
@@ -1771,6 +1818,7 @@ pub struct RollCell {
     pub strap_total: u64,
     pub straps: Vec<(strapped::Strap, u64)>,
     pub rewards: Vec<RewardInfo>,
+    pub table_bets: Vec<OtherPlayerBets>,
 }
 
 #[derive(Clone, Debug)]
@@ -1778,6 +1826,13 @@ pub struct RewardInfo {
     pub strap: strapped::Strap,
     pub cost: u64,
     pub count: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct OtherPlayerBets {
+    pub label: String,
+    pub chip_total: u64,
+    pub straps: Vec<(strapped::Strap, u64)>,
 }
 
 #[allow(clippy::complexity)]
@@ -2088,6 +2143,7 @@ enum SnapshotWorkerCommand {
     FetchHistory(Vec<u32>),
 }
 
+#[allow(clippy::large_enum_variant)]
 enum SnapshotWorkerEvent {
     Snapshot(SnapshotBundle),
     History(Vec<HistoryRecord>),
