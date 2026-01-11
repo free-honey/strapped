@@ -232,7 +232,7 @@ function normalizePerRollBets(input: unknown): NormalizedRollBets[] {
 }
 
 function sumBetAmounts(bets: unknown[]): number {
-  return bets.reduce((sum, bet) => {
+  return bets.reduce<number>((sum, bet) => {
     if (Array.isArray(bet)) {
       const numeric = bet.find((value) => typeof value === "number");
       return typeof numeric === "number" ? sum + numeric : sum;
