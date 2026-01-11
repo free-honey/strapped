@@ -12,7 +12,11 @@
         "npm-cache"
       ],
       "commands": [
-        "npm run build"
+        "npm run build",
+        "mkdir -p bin",
+        "curl -sSL https://github.com/static-web-server/static-web-server/releases/download/v2.32.0/static-web-server-v2.32.0-x86_64-unknown-linux-gnu.tar.gz -o /tmp/static-web-server.tar.gz",
+        "tar -xzf /tmp/static-web-server.tar.gz -C bin static-web-server",
+        "chmod +x bin/static-web-server"
       ]
     }
   },
@@ -21,10 +25,11 @@
       {
         "step": "build",
         "include": [
-          "dist"
+          "dist",
+          "bin/static-web-server"
         ]
       }
     ],
-    "startCommand": "npm run preview -- --host 0.0.0.0 --port ${PORT}"
+    "startCommand": "./bin/static-web-server --root ./dist --host 0.0.0.0 --port ${PORT}"
   }
 }
