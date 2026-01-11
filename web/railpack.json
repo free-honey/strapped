@@ -15,7 +15,7 @@
         "npm run build",
         "mkdir -p bin",
         "curl -sSL https://github.com/static-web-server/static-web-server/releases/download/v2.32.0/static-web-server-v2.32.0-x86_64-unknown-linux-gnu.tar.gz -o /tmp/static-web-server.tar.gz",
-        "tar -xzf /tmp/static-web-server.tar.gz -C bin static-web-server",
+        "tar -xzf /tmp/static-web-server.tar.gz -C bin --strip-components=1",
         "chmod +x bin/static-web-server"
       ]
     }
