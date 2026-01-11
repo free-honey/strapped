@@ -4,25 +4,14 @@
     "npm-cache": {
       "directory": "~/.npm",
       "type": "locked"
-    },
-    "node-modules": {
-      "directory": "node_modules",
-      "type": "locked"
-    },
-    "vite-cache": {
-      "directory": "node_modules/.vite",
-      "type": "locked"
     }
   },
   "steps": {
     "build": {
       "caches": [
-        "npm-cache",
-        "node-modules",
-        "vite-cache"
+        "npm-cache"
       ],
       "commands": [
-        "npm ci",
         "npm run build"
       ]
     }
