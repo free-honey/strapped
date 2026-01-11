@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "caches": {
+    "npm-cache": {
+      "directory": "~/.npm",
+      "type": "locked"
+    },
+    "node-modules": {
+      "directory": "node_modules",
+      "type": "locked"
+    },
+    "vite-cache": {
+      "directory": "node_modules/.vite",
+      "type": "locked"
+    }
+  },
+  "steps": {
+    "build": {
+      "inputs": [
+        {
+          "local": true,
+          "include": [
+            "package.json",
+            "package-lock.json",
+            "vite.config.ts",
+            "tsconfig.json",
+            "tsconfig.node.json",
+            "index.html",
+            "src"
+          ]
+        }
+      ],
+      "caches": [
+        "npm-cache",
+        "node-modules",
+        "vite-cache"
+      ],
+      "commands": [
+        "npm ci",
+        "npm run build"
+      ]
+    }
+  },
+  "deploy": {
+    "inputs": [
+      {
+        "step": "build",
+        "include": [
+          "dist"
+        ]
+      }
+    ],
+    "startCommand": "npm run preview -- --host 0.0.0.0 --port ${PORT}"
+  }
+}
