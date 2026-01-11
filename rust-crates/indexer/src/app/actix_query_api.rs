@@ -13,6 +13,7 @@ use crate::{
         OverviewSnapshot,
     },
 };
+use actix_cors::Cors;
 use actix_web::{
     App,
     HttpServer,
@@ -24,7 +25,6 @@ use actix_web::{
     },
     web,
 };
-use actix_cors::Cors;
 use anyhow::Context;
 use fuels::types::{
     Address,
@@ -378,7 +378,7 @@ mod tests {
             .headers()
             .get("access-control-allow-origin")
             .and_then(|value| value.to_str().ok());
-        assert_eq!(header, Some("*"));
+        assert_eq!(header, Some("http://localhost:5173"));
     }
 
     #[tokio::test]
