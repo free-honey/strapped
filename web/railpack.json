@@ -16,20 +16,6 @@
   },
   "steps": {
     "build": {
-      "inputs": [
-        {
-          "local": true,
-          "include": [
-            "package.json",
-            "package-lock.json",
-            "vite.config.ts",
-            "tsconfig.json",
-            "tsconfig.node.json",
-            "index.html",
-            "src"
-          ]
-        }
-      ],
       "caches": [
         "npm-cache",
         "node-modules",
