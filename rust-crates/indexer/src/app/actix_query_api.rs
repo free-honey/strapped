@@ -13,6 +13,7 @@ use crate::{
         OverviewSnapshot,
     },
 };
+use actix_cors::Cors;
 use actix_web::{
     App,
     HttpServer,
@@ -115,6 +116,7 @@ impl ActixQueryApi {
 
             App::new()
                 .app_data(web::Data::new(sender))
+                .wrap(Cors::permissive())
                 .route("/snapshot/latest", web::get().to(handle_latest_snapshot))
                 .route(
                     "/account/{identity}/{game_id}",
@@ -344,6 +346,39 @@ mod tests {
         // then
         let response = client_task.await.unwrap();
         assert_eq!(response, expected_response);
+    }
+
+    #[tokio::test]
+    async fn query__cors_allows_any_origin() {
+        // given
+        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let client = reqwest::Client::new();
+        let url = format!("{}/snapshot/latest", api.base_url());
+
+        let client_task = tokio::spawn(async move {
+            client
+                .get(url)
+                .header("Origin", "http://localhost:5173")
+                .send()
+                .await
+                .unwrap()
+        });
+
+        // when
+        let query = api.query().await.unwrap().expect("expected query");
+        if let Query::LatestSnapshot(sender) = query {
+            sender.send((OverviewSnapshot::new(), 1)).unwrap();
+        } else {
+            panic!("expected latest snapshot query got {:?}", query);
+        }
+
+        // then
+        let response = client_task.await.unwrap();
+        let header = response
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(header, Some("http://localhost:5173"));
     }
 
     #[tokio::test]
