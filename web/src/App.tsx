@@ -178,6 +178,74 @@ function normalizeModifierShop(entries: unknown): ModifierShopEntry[] {
     .filter((entry): entry is ModifierShopEntry => entry !== null);
 }
 
+function formatIdentity(identity: unknown): string {
+  if (!identity || typeof identity !== "object") {
+    return String(identity ?? "unknown");
+  }
+
+  const record = identity as Record<string, unknown>;
+  if (typeof record.Address === "string") {
+    return record.Address;
+  }
+  if (typeof record.ContractId === "string") {
+    return record.ContractId;
+  }
+
+  return JSON.stringify(identity);
+}
+
+type NormalizedRollBets = {
+  roll: Roll;
+  bets: [unknown, number, number][];
+};
+
+function normalizePerRollBets(input: unknown): NormalizedRollBets[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .map((entry) => {
+      if (Array.isArray(entry) && entry.length === 2) {
+        const [roll, bets] = entry;
+        return {
+          roll: roll as Roll,
+          bets: Array.isArray(bets) ? (bets as [unknown, number, number][]) : [],
+        };
+      }
+
+      if (entry && typeof entry === "object") {
+        const obj = entry as Record<string, unknown>;
+        if ("roll" in obj && "bets" in obj) {
+          return {
+            roll: obj.roll as Roll,
+            bets: Array.isArray(obj.bets)
+              ? (obj.bets as [unknown, number, number][])
+              : [],
+          };
+        }
+      }
+
+      return null;
+    })
+    .filter((entry): entry is NormalizedRollBets => entry !== null);
+}
+
+function sumBetAmounts(bets: unknown[]): number {
+  return bets.reduce((sum, bet) => {
+    if (Array.isArray(bet)) {
+      const numeric = bet.find((value) => typeof value === "number");
+      return typeof numeric === "number" ? sum + numeric : sum;
+    }
+    if (bet && typeof bet === "object") {
+      const record = bet as Record<string, unknown>;
+      const amount = record.amount;
+      return typeof amount === "number" ? sum + amount : sum;
+    }
+    return sum;
+  }, 0);
+}
+
 export default function App() {
   const baseUrl = useMemo(
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
@@ -280,7 +348,12 @@ export default function App() {
     <div className="app">
       <section className="panel panel--tight panel--top">
         <div className="panel__header">
-          <div className="app__title">Strapped</div>
+          <div className="app__title-row">
+            <div className="app__title">Strapped</div>
+            <div className="game-pill">
+              Game: {snapshot ? snapshot.game_id : "—"}
+            </div>
+          </div>
           <div className="app__status">
             <span className={`pill pill--${status}`}>{status}</span>
             <span className="app__updated">
@@ -296,9 +369,6 @@ export default function App() {
         </div>
         <div className="panel__body">
           <div className="status-line">
-            <div className="stat-item">
-              Game: {snapshot ? snapshot.game_id : "—"}
-            </div>
             <div className="stat-item">
               Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}
             </div>
@@ -324,6 +394,18 @@ export default function App() {
               {snapshot ? formatNumber(snapshot.roll_frequency) : "—"}
             </div>
           </div>
+          <div className="status-line">
+            <div className="stat-item stat-item--label">Roll History:</div>
+            <div className="roll-history roll-history--inline">
+              {snapshot && snapshot.rolls.length > 0
+                ? snapshot.rolls.map((roll, index) => (
+                    <span key={`${roll}-${index}`} className="roll-pill">
+                      {roll}
+                    </span>
+                  ))
+                : "None"}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -334,21 +416,6 @@ export default function App() {
             <div className="stat-item">Balance: —</div>
             <div className="stat-item">Chips: —</div>
             <div className="stat-item">Straps: —</div>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2 className="panel__title">Roll History</h2>
-        <div className="panel__body">
-          <div className="roll-history">
-            {snapshot && snapshot.rolls.length > 0
-              ? snapshot.rolls.map((roll, index) => (
-                  <span key={`${roll}-${index}`} className="roll-pill">
-                    {roll}
-                  </span>
-                ))
-              : "None"}
           </div>
         </div>
       </section>
@@ -452,19 +519,38 @@ export default function App() {
           <div className="panel__body">
             {snapshot && snapshot.table_bets.length > 0 ? (
               <div className="list">
-                {snapshot.table_bets.map((table, index) => (
-                  <div key={`table-${index}`} className="list__row">
-                    <div className="list__headline">
-                      Player {index + 1}
+                {snapshot.table_bets.map((table, index) => {
+                  const perRoll = normalizePerRollBets(table.per_roll_bets);
+                  const rollLines = perRoll
+                    .map(({ roll, bets }) => {
+                      if (!Array.isArray(bets) || bets.length === 0) {
+                        return null;
+                      }
+                      const total = sumBetAmounts(bets);
+                      if (total === 0) {
+                        return `${roll}: 0 chips`;
+                      }
+                      return `${roll}: ${formatNumber(total)} chips`;
+                    })
+                    .filter((line): line is string => line !== null);
+
+                  return (
+                    <div key={`table-${index}`} className="list__row">
+                      <div className="list__headline">
+                        Address: {formatIdentity(table.identity)}
+                      </div>
+                      {rollLines.length > 0 ? (
+                        <div className="list__stack">
+                          {rollLines.map((line) => (
+                            <div key={line}>{line}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="list__subtle">No bets</div>
+                      )}
                     </div>
-                    <div className="list__subtle">
-                      {JSON.stringify(table.identity)}
-                    </div>
-                    <pre className="list__code">
-                      {JSON.stringify(table.per_roll_bets, null, 2)}
-                    </pre>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div>None</div>

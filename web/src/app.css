@@ -38,6 +38,22 @@ body {
   font-weight: 700;
 }
 
+.app__title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.game-pill {
+  font-size: 16px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: 2px solid rgba(45, 38, 32, 0.6);
+  background: rgba(255, 255, 255, 0.85);
+  color: #1f1b16;
+}
+
 .app__subtitle {
   margin-top: 8px;
   color: #51453c;
@@ -185,6 +201,12 @@ body {
   align-items: center;
 }
 
+.roll-history--inline {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
 .roll-pill {
   border: 1px solid var(--panel-border);
   padding: 4px 10px;
@@ -271,6 +293,13 @@ body {
   overflow-x: auto;
 }
 
+.list__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
 .status-line {
   font-weight: 600;
   display: flex;
@@ -297,6 +326,18 @@ body {
 
 .stat-item {
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 2px solid rgba(45, 38, 32, 0.35);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.stat-item--label {
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .panel--scroll {
