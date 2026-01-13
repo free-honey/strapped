@@ -235,6 +235,67 @@ export default function App() {
   const [isGamesOpen, setIsGamesOpen] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
+  const [expandedOrigin, setExpandedOrigin] = useState<{
+    roll: Roll;
+    originLeft: number;
+    originTop: number;
+    originWidth: number;
+    originHeight: number;
+    targetWidth: number;
+    targetHeight: number;
+    translateX: number;
+    translateY: number;
+  } | null>(null);
+  const [isExpandedActive, setIsExpandedActive] = useState(false);
+
+  useEffect(() => {
+    if (!activeRoll) {
+      setExpandedOrigin(null);
+      setIsExpandedActive(false);
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setActiveRoll(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeRoll]);
+
+  const openExpandedShop = (
+    roll: Roll,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const targetWidth = Math.min(900, window.innerWidth * 0.92);
+    const targetHeight = Math.min(560, window.innerHeight * 0.8);
+    const targetLeft = (window.innerWidth - targetWidth) / 2;
+    const targetTop = (window.innerHeight - targetHeight) / 2;
+
+    setExpandedOrigin({
+      roll,
+      originLeft: rect.left,
+      originTop: rect.top,
+      originWidth: rect.width,
+      originHeight: rect.height,
+      targetWidth,
+      targetHeight,
+      translateX: targetLeft - rect.left,
+      translateY: targetTop - rect.top,
+    });
+    setIsExpandedActive(false);
+    requestAnimationFrame(() => {
+      setActiveRoll(roll);
+      requestAnimationFrame(() => {
+        setIsExpandedActive(true);
+      });
+    });
+  };
   const isAnyModalOpen = Boolean(
     activeRoll || isGamesOpen || isInfoOpen || isDiceHistoryOpen
   );
@@ -394,26 +455,8 @@ export default function App() {
     return base.join(" ");
   };
 
-  const selectedRollIndex = activeRoll ? getRollIndex(activeRoll) : -1;
-  const selectedRollBets =
-    selectedRollIndex >= 0 ? snapshot?.specific_bets?.[selectedRollIndex] : null;
-  const selectedTotalChips = selectedRollBets ? selectedRollBets[0] : null;
-  const selectedStrapBets = selectedRollBets ? selectedRollBets[1] : [];
-  const selectedRewards = activeRoll ? rewardsByRoll.get(activeRoll) ?? [] : [];
-  const selectedModifier =
-    selectedRollIndex >= 0 ? snapshot?.modifiers_active?.[selectedRollIndex] : null;
-  const selectedModifierEmoji = selectedModifier
-    ? modifierEmojis[selectedModifier] ?? ""
-    : "";
-  const selectedStrapTotal = selectedStrapBets.reduce(
-    (sum, [, amount]) => sum + amount,
-    0
-  );
-  const activeShopClass =
-    selectedRollIndex >= 0 ? `shop-tile--${selectedRollIndex % 5}` : "";
-
   return (
-    <div className="street-app">
+    <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
       <header className="street-header">
         <h1 className="street-title">STRAPPED!</h1>
         <div className="street-meta">
@@ -485,15 +528,39 @@ export default function App() {
               modifier,
               index,
             });
+            const isExpanded = activeRoll === roll;
             const danglingReward = rewards[0];
+            const expandedStyle =
+              expandedOrigin?.roll === roll
+                ? ({
+                    "--origin-left": `${expandedOrigin.originLeft}px`,
+                    "--origin-top": `${expandedOrigin.originTop}px`,
+                    "--origin-width": `${expandedOrigin.originWidth}px`,
+                    "--origin-height": `${expandedOrigin.originHeight}px`,
+                    "--target-width": `${expandedOrigin.targetWidth}px`,
+                    "--target-height": `${expandedOrigin.targetHeight}px`,
+                    "--translate-x": `${expandedOrigin.translateX}px`,
+                    "--translate-y": `${expandedOrigin.translateY}px`,
+                  } as React.CSSProperties)
+                : undefined;
 
             return (
               <div key={roll} className="shop-cell">
-                <button
-                  type="button"
-                  className={shopClassName}
-                  onClick={() => setActiveRoll(roll)}
+                <div
+                  className={`shop-frame${
+                    isExpanded ? " shop-frame--expanded" : ""
+                  }`}
                 >
+                  <button
+                    type="button"
+                    className={`${shopClassName}${isExpanded ? " shop-tile--expanded" : ""}${
+                      isExpanded && isExpandedActive
+                        ? " shop-tile--expanded-active"
+                        : ""
+                    }`}
+                    onClick={(event) => openExpandedShop(roll, event)}
+                    style={expandedStyle}
+                  >
                   <div className="shop-sign">
                     <span className="shop-sign__label">{rollLabels[roll]}</span>
                   </div>
@@ -504,6 +571,54 @@ export default function App() {
                         <span>Chips: {formatNumber(totalChips ?? 0)}</span>
                         <span>Straps: {formatNumber(totalStrapBets)}</span>
                       </div>
+                      {isExpanded ? (
+                        <div className="shop-window__details">
+                          <div className="shop-window__section">
+                            <h3>Rewards</h3>
+                            {rewards.length > 0 ? (
+                              <div className="shop-window__stack">
+                                {rewards.map(([strap, amount], rewardIndex) => (
+                                  <div key={`${roll}-reward-${rewardIndex}`}>
+                                    {formatRewardCompact(strap)} ·{" "}
+                                    {formatNumber(amount)}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="shop-window__muted">
+                                None for this shop.
+                              </div>
+                            )}
+                          </div>
+                          <div className="shop-window__section">
+                            <h3>Table bets</h3>
+                            {strapBets.length > 0 ? (
+                              <div className="shop-window__stack">
+                                {strapBets.map(([strap, amount], strapIndex) => (
+                                  <div key={`${roll}-strap-${strapIndex}`}>
+                                    {formatRewardCompact(strap)} ·{" "}
+                                    {formatNumber(amount)}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="shop-window__muted">No strap bets.</div>
+                            )}
+                          </div>
+                          <div className="shop-window__section">
+                            <h3>Modifiers</h3>
+                            {modifier ? (
+                              <div className="shop-window__stack">
+                                <div>
+                                  {modifierEmojis[modifier] ?? ""} {modifier}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="shop-window__muted">None active.</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="shop-door" />
                   </div>
@@ -523,7 +638,8 @@ export default function App() {
                       className={`modifier-aura modifier-aura--${modifierStory.theme}`}
                     />
                   ) : null}
-                </button>
+                  </button>
+                </div>
                 <div className="modifier-stack">
                   {modifierStory ? (
                     <div
@@ -582,6 +698,15 @@ export default function App() {
         </section>
       </main>
 
+      {activeRoll ? (
+        <button
+          type="button"
+          className="shop-overlay"
+          aria-label="Close shop"
+          onClick={() => setActiveRoll(null)}
+        />
+      ) : null}
+
       <footer className="street-footer">
         <button
           className="ghost-button"
@@ -602,74 +727,6 @@ export default function App() {
           {error ? ` · ⚠️ ${error}` : ""}
         </div>
       </footer>
-
-      {activeRoll && (
-        <div className="modal-overlay modal-overlay--blur" role="dialog" aria-modal="true">
-          <div className={`shop-focus ${activeShopClass}`}>
-            <button
-              className="ghost-button shop-focus__close"
-              type="button"
-              onClick={() => setActiveRoll(null)}
-            >
-              Close
-            </button>
-            <div className="shop-sign">
-              <span className="shop-sign__label">{rollLabels[activeRoll]}</span>
-            </div>
-            <div className="shop-awning" />
-            <div className="shop-focus__panel">
-              <div className="shop-focus__window">
-                <div className="shop-focus__section">
-                  <h3>Totals</h3>
-                  <div>Chips: {formatNumber(selectedTotalChips ?? 0)}</div>
-                  <div>Straps: {formatNumber(selectedStrapTotal)}</div>
-                </div>
-                <div className="shop-focus__section">
-                  <h3>Rewards</h3>
-                  {selectedRewards.length > 0 ? (
-                    <div className="shop-focus__stack">
-                      {selectedRewards.map(([strap, amount], rewardIndex) => (
-                        <div key={`${activeRoll}-reward-${rewardIndex}`}>
-                          {formatRewardCompact(strap)} · {formatNumber(amount)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="shop-focus__muted">None for this shop.</div>
-                  )}
-                </div>
-                <div className="shop-focus__section">
-                  <h3>Table bets</h3>
-                  {selectedStrapBets.length > 0 ? (
-                    <div className="shop-focus__stack">
-                      {selectedStrapBets.map(([strap, amount], strapIndex) => (
-                        <div key={`${activeRoll}-strap-${strapIndex}`}>
-                          {formatRewardCompact(strap)} · {formatNumber(amount)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="shop-focus__muted">No strap bets.</div>
-                  )}
-                </div>
-                <div className="shop-focus__section">
-                  <h3>Modifiers</h3>
-                  {selectedModifier ? (
-                    <div className="shop-focus__stack">
-                      <div>
-                        {selectedModifierEmoji} {selectedModifier}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="shop-focus__muted">None active.</div>
-                  )}
-                </div>
-              </div>
-              <div className="shop-door" />
-            </div>
-          </div>
-        </div>
-      )}
 
       {isGamesOpen && (
         <div className="modal-overlay" role="dialog" aria-modal="true">

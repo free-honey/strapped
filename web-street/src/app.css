@@ -251,6 +251,66 @@ button {
   position: relative;
 }
 
+.shop-frame {
+  position: relative;
+  z-index: 1;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  transform-origin: bottom center;
+}
+
+.shop-frame--measuring {
+  transform: none !important;
+}
+
+.shop-frame:hover {
+  transform: translateY(-18px) scale(1.25);
+}
+
+.shop-frame:hover .shop-tile {
+  box-shadow: 0 20px 32px rgba(31, 22, 18, 0.28);
+  z-index: 2;
+}
+
+.shop-frame:hover .shop-window {
+  transform: scale(1.06);
+  box-shadow: inset 0 0 0 2px rgba(60, 45, 34, 0.12);
+}
+
+.shop-frame:hover .shop-door {
+  transform: scale(0.88);
+  transform-origin: bottom center;
+}
+
+.shop-frame:hover .shop-meta {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.shop-frame--expanded {
+  z-index: 40;
+  transform: none;
+  transition: none;
+}
+
+.shop-frame--expanded:hover {
+  transform: none;
+}
+
+.street-app--expanded .shop-frame:hover {
+  transform: none;
+}
+
+.street-app--expanded .shop-frame:hover .shop-tile,
+.street-app--expanded .shop-frame:hover .shop-window,
+.street-app--expanded .shop-frame:hover .shop-door {
+  box-shadow: none;
+  transform: none;
+}
+
+.shop-tile--expanded {
+  box-shadow: 0 24px 50px rgba(31, 22, 18, 0.3);
+}
+
 .modifier-stack {
   display: flex;
   flex-direction: column;
@@ -449,10 +509,27 @@ button {
   animation-delay: 0.55s;
 }
 
-.shop-tile:hover {
-  transform: translateY(-18px) scale(1.25);
-  box-shadow: 0 20px 32px rgba(31, 22, 18, 0.28);
-  z-index: 2;
+.shop-tile--expanded {
+  position: fixed;
+  top: var(--origin-top);
+  left: var(--origin-left);
+  width: var(--origin-width);
+  height: var(--origin-height);
+  transform: translate(0, 0);
+  padding: 18px 20px 22px;
+  border-radius: 18px;
+  box-shadow: 0 24px 50px rgba(31, 22, 18, 0.3);
+  z-index: 30;
+}
+
+.shop-tile--expanded.shop-tile--expanded-active {
+  width: var(--target-width);
+  height: var(--target-height);
+  transform: translate(var(--translate-x), var(--translate-y));
+  transition: width 0.6s cubic-bezier(0.2, 0.85, 0.2, 1),
+    height 0.6s cubic-bezier(0.2, 0.85, 0.2, 1),
+    transform 0.6s cubic-bezier(0.2, 0.85, 0.2, 1),
+    box-shadow 0.6s ease;
 }
 
 .shops-row:hover .shop-tile:not(:hover) {
@@ -497,6 +574,10 @@ button {
   box-shadow: 0 4px 0 rgba(60, 45, 34, 0.2);
 }
 
+.shop-tile--expanded .shop-awning {
+  width: 92%;
+}
+
 .shop-sign {
   text-align: center;
   margin-bottom: 2px;
@@ -527,6 +608,13 @@ button {
   margin-top: auto;
   padding: 0 var(--facade-pad-right) 0 var(--facade-pad-left);
   gap: var(--facade-gap);
+}
+
+.shop-tile--expanded .shop-facade {
+  --facade-pad-left: 12px;
+  --facade-pad-right: 12px;
+  --facade-gap: 18px;
+  margin-top: 12px;
 }
 
 .shop-window {
@@ -593,19 +681,68 @@ button {
   pointer-events: none;
 }
 
-.shop-tile:hover .shop-meta {
+.shop-tile--expanded .shop-meta {
   opacity: 1;
-  transform: translateY(0) scale(1);
+  transform: none;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.85);
 }
 
-.shop-tile:hover .shop-window {
-  transform: scale(1.06);
-  box-shadow: inset 0 0 0 2px rgba(60, 45, 34, 0.12);
+.shop-tile--expanded .shop-window {
+  height: auto;
+  min-height: 320px;
+  padding: 16px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #d7f1ff, #f7fbff);
+  transform: none;
+  box-shadow: none;
 }
 
-.shop-tile:hover .shop-door {
-  transform: scale(0.88);
-  transform-origin: bottom center;
+.shop-tile--expanded .shop-window::after {
+  inset: 10px;
+  border-radius: 8px;
+}
+
+.shop-window__details {
+  position: relative;
+  z-index: 1;
+  margin-top: 10px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.shop-window__section {
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.shop-window__section h3 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.shop-window__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shop-window__muted {
+  color: var(--ink-soft);
+}
+
+.shop-tile--expanded .shop-door,
+.shop-tile--expanded:hover .shop-door {
+  transform: none;
 }
 
 
@@ -781,6 +918,16 @@ button {
   color: var(--ink-soft);
 }
 
+.shop-overlay {
+  position: fixed;
+  inset: 0;
+  border: none;
+  background: rgba(15, 14, 12, 0.28);
+  padding: 0;
+  margin: 0;
+  z-index: 5;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -790,107 +937,6 @@ button {
   align-items: center;
   padding: 24px;
   z-index: 20;
-}
-
-.modal-overlay--blur {
-  background: rgba(15, 14, 12, 0.35);
-  backdrop-filter: blur(10px);
-}
-
-.shop-focus {
-  width: min(900px, 92vw);
-  border: 3px solid var(--tile-border);
-  border-radius: 18px;
-  padding: 16px 20px 22px;
-  background: var(--tile);
-  box-shadow: 0 24px 50px rgba(31, 22, 18, 0.3);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  position: relative;
-  animation: modalPop 0.3s ease both;
-}
-
-.shop-focus__close {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-}
-
-.shop-focus .shop-awning {
-  height: 18px;
-}
-
-.shop-focus .shop-sign__roll {
-  font-size: 34px;
-}
-
-.shop-focus .shop-sign__label {
-  font-size: 14px;
-}
-
-.shop-focus__panel {
-  width: 100%;
-  display: flex;
-  gap: 18px;
-  align-items: flex-end;
-  justify-content: center;
-}
-
-.shop-focus__window {
-  flex: 1;
-  min-height: 280px;
-  border: 3px solid #3c2d22;
-  background: linear-gradient(180deg, #d7f1ff, #f7fbff);
-  border-radius: 10px;
-  position: relative;
-  padding: 14px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.shop-focus__window::after {
-  content: "";
-  position: absolute;
-  inset: 10px;
-  border: 2px solid rgba(60, 45, 34, 0.35);
-  border-radius: 8px;
-  pointer-events: none;
-}
-
-.shop-focus__section {
-  position: relative;
-  z-index: 1;
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 10px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.shop-focus__section h3 {
-  margin: 0;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.shop-focus__stack {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.shop-focus__muted {
-  color: var(--ink-soft);
-}
-
-.shop-focus .shop-door {
-  height: 78px;
 }
 
 .modal {
