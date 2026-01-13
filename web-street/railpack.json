@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "caches": {
+    "npm-cache": {
+      "directory": "~/.npm",
+      "type": "locked"
+    }
+  },
+  "steps": {
+    "build": {
+      "caches": [
+        "npm-cache"
+      ],
+      "commands": [
+        "npm run build",
+        "mkdir -p bin",
+        "curl -sSL https://github.com/static-web-server/static-web-server/releases/download/v2.32.0/static-web-server-v2.32.0-x86_64-unknown-linux-gnu.tar.gz -o /tmp/static-web-server.tar.gz",
+        "tar -xzf /tmp/static-web-server.tar.gz -C bin --strip-components=1",
+        "chmod +x bin/static-web-server"
+      ]
+    }
+  },
+  "deploy": {
+    "inputs": [
+      {
+        "step": "build",
+        "include": [
+          "dist",
+          "bin/static-web-server"
+        ]
+      }
+    ],
+    "startCommand": "./bin/static-web-server --root ./dist --host 0.0.0.0 --port ${PORT}"
+  }
+}
