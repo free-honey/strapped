@@ -374,8 +374,17 @@ const parseBetPlacement = (
   return null;
 };
 
+type BetTotals = {
+  chipTotal: number;
+  strapTotals: Map<string, { strap: Strap; amount: number }>;
+};
+
 const summarizeBetsByKind = (bets: unknown[]): BetSummary => {
-  const totals = bets.reduce(
+  const initialTotals: BetTotals = {
+    chipTotal: 0,
+    strapTotals: new Map<string, { strap: Strap; amount: number }>(),
+  };
+  const totals = bets.reduce<BetTotals>(
     (acc, bet) => {
       const parsed = parseBetPlacement(bet);
       if (!parsed) {
@@ -394,10 +403,7 @@ const summarizeBetsByKind = (bets: unknown[]): BetSummary => {
       });
       return acc;
     },
-    {
-      chipTotal: 0,
-      strapTotals: new Map<string, { strap: Strap; amount: number }>(),
-    }
+    initialTotals
   );
 
   return {
