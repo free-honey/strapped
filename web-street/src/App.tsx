@@ -222,6 +222,193 @@ function normalizeModifierShop(entries: unknown): ModifierShopEntry[] {
     .filter((entry): entry is ModifierShopEntry => entry !== null);
 }
 
+function formatIdentity(identity: unknown): string {
+  if (!identity || typeof identity !== "object") {
+    return String(identity ?? "unknown");
+  }
+
+  const record = identity as Record<string, unknown>;
+  if (typeof record.Address === "string") {
+    return record.Address;
+  }
+  if (typeof record.ContractId === "string") {
+    return record.ContractId;
+  }
+
+  return JSON.stringify(identity);
+}
+
+type NormalizedRollBets = {
+  roll: Roll;
+  bets: unknown[];
+};
+
+function normalizePerRollBets(input: unknown): NormalizedRollBets[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .map((entry) => {
+      if (Array.isArray(entry) && entry.length === 2) {
+        const [roll, bets] = entry;
+        return {
+          roll: roll as Roll,
+          bets: Array.isArray(bets) ? bets : [],
+        };
+      }
+
+      if (entry && typeof entry === "object") {
+        const obj = entry as Record<string, unknown>;
+        if ("roll" in obj && "bets" in obj) {
+          return {
+            roll: obj.roll as Roll,
+            bets: Array.isArray(obj.bets) ? obj.bets : [],
+          };
+        }
+      }
+
+      return null;
+    })
+    .filter((entry): entry is NormalizedRollBets => entry !== null);
+}
+
+type BetSummary = {
+  chipTotal: number;
+  straps: [Strap, number][];
+};
+
+const strapKey = (strap: Strap) =>
+  `${strap.kind}:${strap.level}:${strap.modifier}`;
+
+const parseStrap = (value: unknown): Strap | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.level === "number" &&
+    typeof record.kind === "string" &&
+    typeof record.modifier === "string"
+  ) {
+    return {
+      level: record.level,
+      kind: record.kind,
+      modifier: record.modifier,
+    };
+  }
+
+  return null;
+};
+
+const parseBetKind = (
+  value: unknown
+): { kind: "chip" } | { kind: "strap"; strap: Strap } | null => {
+  if (value === "Chip") {
+    return { kind: "chip" };
+  }
+  if (value === "Strap") {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    const match = value
+      .map((entry) => parseBetKind(entry))
+      .find((entry) => entry !== null);
+    return match ?? null;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if ("Chip" in record) {
+      return { kind: "chip" };
+    }
+    if ("Strap" in record) {
+      const strap = parseStrap(record.Strap);
+      return strap ? { kind: "strap", strap } : null;
+    }
+  }
+  return null;
+};
+
+const parseBetPlacement = (
+  bet: unknown
+): { amount: number; kind: "chip" } | { amount: number; kind: "strap"; strap: Strap } | null => {
+  if (!bet) {
+    return null;
+  }
+
+  const record = bet as Record<string, unknown>;
+  const amount =
+    typeof record.amount === "number"
+      ? record.amount
+      : Array.isArray(bet) && typeof bet[1] === "number"
+        ? bet[1]
+        : Array.isArray(bet)
+          ? bet.find((value) => typeof value === "number")
+          : null;
+
+  if (typeof amount !== "number") {
+    return null;
+  }
+
+  const kindCandidate =
+    "kind" in record
+      ? record.kind
+      : "bet" in record
+        ? record.bet
+        : bet;
+  const kind = parseBetKind(kindCandidate);
+  if (kind?.kind === "chip") {
+    return { amount, kind: "chip" };
+  }
+  if (kind?.kind === "strap") {
+    return { amount, kind: "strap", strap: kind.strap };
+  }
+
+  const fallbackStrap =
+    "strap" in record ? parseStrap(record.strap) : parseStrap(record.Strap);
+  if (fallbackStrap) {
+    return { amount, kind: "strap", strap: fallbackStrap };
+  }
+
+  return null;
+};
+
+const summarizeBetsByKind = (bets: unknown[]): BetSummary => {
+  const totals = bets.reduce(
+    (acc, bet) => {
+      const parsed = parseBetPlacement(bet);
+      if (!parsed) {
+        return acc;
+      }
+      if (parsed.kind === "chip") {
+        acc.chipTotal += parsed.amount;
+        return acc;
+      }
+
+      const key = strapKey(parsed.strap);
+      const existing = acc.strapTotals.get(key);
+      acc.strapTotals.set(key, {
+        strap: parsed.strap,
+        amount: (existing?.amount ?? 0) + parsed.amount,
+      });
+      return acc;
+    },
+    {
+      chipTotal: 0,
+      strapTotals: new Map<string, { strap: Strap; amount: number }>(),
+    }
+  );
+
+  return {
+    chipTotal: totals.chipTotal,
+    straps: Array.from(totals.strapTotals.values()).map((entry) => [
+      entry.strap,
+      entry.amount,
+    ]),
+  };
+};
+
 export default function App() {
   const baseUrl = useMemo(
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
@@ -530,6 +717,49 @@ export default function App() {
             });
             const isExpanded = activeRoll === roll;
             const danglingReward = rewards[0];
+            const tableBetsForRoll = (snapshot?.table_bets ?? [])
+              .map((entry) => {
+                const perRoll = normalizePerRollBets(entry.per_roll_bets);
+                const rollEntry = perRoll.find(
+                  (rollEntry) => rollEntry.roll === roll
+                );
+                if (!rollEntry) {
+                  return null;
+                }
+                const summary = summarizeBetsByKind(rollEntry.bets);
+                if (summary.chipTotal === 0 && summary.straps.length === 0) {
+                  return null;
+                }
+                return {
+                  identity: entry.identity,
+                  chipTotal: summary.chipTotal,
+                  straps: summary.straps,
+                };
+              })
+              .filter(
+                (
+                  entry
+                ): entry is {
+                  identity: unknown;
+                  chipTotal: number;
+                  straps: [Strap, number][];
+                } => entry !== null
+              );
+            const tableStrapSummary = tableBetsForRoll.reduce(
+              (summary, entry) => {
+                entry.straps.forEach(([strap, amount]) => {
+                  const key = strapKey(strap);
+                  const existing = summary.get(key);
+                  summary.set(key, {
+                    strap,
+                    amount: (existing?.amount ?? 0) + amount,
+                  });
+                });
+                return summary;
+              },
+              new Map<string, { strap: Strap; amount: number }>()
+            );
+            const tableStrapTotals = Array.from(tableStrapSummary.values());
             const expandedStyle =
               expandedOrigin?.roll === roll
                 ? ({
@@ -565,12 +795,14 @@ export default function App() {
                     <span className="shop-sign__label">{rollLabels[roll]}</span>
                   </div>
                   <div className="shop-awning" />
-                  <div className="shop-facade">
+                    <div className="shop-facade">
                     <div className="shop-window">
-                      <div className="shop-meta">
-                        <span>Chips: {formatNumber(totalChips ?? 0)}</span>
-                        <span>Straps: {formatNumber(totalStrapBets)}</span>
-                      </div>
+                      {!isExpanded ? (
+                        <div className="shop-meta">
+                          <span>Chips: {formatNumber(totalChips ?? 0)}</span>
+                          <span>Straps: {formatNumber(totalStrapBets)}</span>
+                        </div>
+                      ) : null}
                       {isExpanded ? (
                         <div className="shop-window__details">
                           <div className="shop-window__section">
@@ -591,19 +823,8 @@ export default function App() {
                             )}
                           </div>
                           <div className="shop-window__section">
-                            <h3>Table bets</h3>
-                            {strapBets.length > 0 ? (
-                              <div className="shop-window__stack">
-                                {strapBets.map(([strap, amount], strapIndex) => (
-                                  <div key={`${roll}-strap-${strapIndex}`}>
-                                    {formatRewardCompact(strap)} ·{" "}
-                                    {formatNumber(amount)}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">No strap bets.</div>
-                            )}
+                            <h3>Your bets</h3>
+                            <div className="shop-window__muted">TBD</div>
                           </div>
                           <div className="shop-window__section">
                             <h3>Modifiers</h3>
@@ -617,12 +838,76 @@ export default function App() {
                               <div className="shop-window__muted">None active.</div>
                             )}
                           </div>
+                          <div className="shop-window__section shop-window__section--wide">
+                            <h3>Table bets</h3>
+                            <div className="shop-window__table-summary">
+                              <span>
+                                Chips: {formatNumber(totalChips ?? 0)}
+                              </span>
+                              {tableStrapTotals.length > 0 ? (
+                                <div className="shop-window__table-straps">
+                                  {tableStrapTotals.map(({ strap, amount }) => (
+                                    <span key={`strap-summary-${strapKey(strap)}`}>
+                                      {formatRewardCompact(strap)} ·{" "}
+                                      {formatNumber(amount)}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span>Straps: {formatNumber(totalStrapBets)}</span>
+                              )}
+                            </div>
+                            {tableBetsForRoll.length > 0 ? (
+                              <div className="shop-window__table-scroll">
+                                <div className="shop-window__table">
+                                  {tableBetsForRoll.map((entry, tableIndex) => (
+                                    <div
+                                      key={`${roll}-table-${tableIndex}`}
+                                      className="shop-window__table-entry"
+                                    >
+                                      <div className="shop-window__address">
+                                        address:{" "}
+                                        {formatIdentity(entry.identity).toLowerCase()}
+                                      </div>
+                                      <div className="shop-window__stack">
+                                        <div>
+                                          Chip bets: {formatNumber(entry.chipTotal)}
+                                        </div>
+                                        {entry.straps.length > 0 ? (
+                                          <div className="shop-window__stack">
+                                            {entry.straps.map(
+                                              ([strap, amount], strapIndex) => (
+                                                <div
+                                                  key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
+                                                >
+                                                  {formatRewardCompact(strap)} ·{" "}
+                                                  {formatNumber(amount)}
+                                                </div>
+                                              )
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <div className="shop-window__muted">
+                                            No strap bets.
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="shop-window__muted">
+                                No table bets yet.
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ) : null}
                     </div>
                     <div className="shop-door" />
                   </div>
-                  {danglingReward ? (
+                  {!isExpanded && danglingReward ? (
                     <div className="shop-dangling">
                       <span className="shop-dangling__emoji">
                         {formatRewardCompact(danglingReward[0])}
