@@ -1,4 +1,10 @@
 import { CSSProperties, useEffect, useMemo, useState } from "react";
+import type { WalletUnlocked } from "fuels";
+import {
+  connectFuelWallet,
+  createStrappedContract,
+} from "./fuel/client";
+import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -440,6 +446,19 @@ export default function App() {
     translateY: number;
   } | null>(null);
   const [isExpandedActive, setIsExpandedActive] = useState(false);
+  const [networkKey, setNetworkKey] =
+    useState<FuelNetworkKey>(DEFAULT_NETWORK);
+  const [walletStatus, setWalletStatus] = useState<
+    "idle" | "connecting" | "connected" | "error"
+  >("idle");
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<WalletUnlocked | null>(null);
+  const [rollStatus, setRollStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [rollError, setRollError] = useState<string | null>(null);
+  const [rollTxId, setRollTxId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeRoll) {
@@ -617,6 +636,14 @@ export default function App() {
   const formatNumber = (value: number | null | undefined) =>
     value === null || value === undefined ? "—" : value.toLocaleString();
 
+  const formatAddress = (address: string | null) => {
+    if (!address) {
+      return "Not connected";
+    }
+    const trimmed = address.toLowerCase();
+    return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
+  };
+
   const diceRolls = useMemo(() => {
     if (!snapshot || snapshot.rolls.length === 0) {
       return [];
@@ -648,12 +675,80 @@ export default function App() {
     return base.join(" ");
   };
 
+  const connectWallet = async () => {
+    setWalletStatus("connecting");
+    setWalletError(null);
+
+    try {
+      const connected = await connectFuelWallet(networkKey);
+      setWallet(connected.wallet);
+      setWalletAddress(connected.address);
+      setWalletStatus("connected");
+      return connected.wallet;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Wallet error";
+      setWalletStatus("error");
+      setWalletError(message);
+      return null;
+    }
+  };
+
+  const handleRoll = async () => {
+    setRollError(null);
+    setRollTxId(null);
+
+    let activeWallet = wallet;
+    if (!activeWallet) {
+      activeWallet = await connectWallet();
+    }
+
+    if (!activeWallet) {
+      setRollStatus("error");
+      return;
+    }
+
+    setRollStatus("signing");
+
+    try {
+      const contract = createStrappedContract(activeWallet, networkKey);
+      const response = await contract.functions.roll_dice().call();
+      setRollTxId(response.transactionId);
+      setRollStatus("pending");
+      await response.waitForResult();
+      setRollStatus("success");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Roll failed";
+      setRollError(message);
+      setRollStatus("error");
+    }
+  };
+
+  const isRolling = rollStatus === "signing" || rollStatus === "pending";
+  const rollButtonLabel = (() => {
+    if (rollStatus === "signing") {
+      return "Signing...";
+    }
+    if (rollStatus === "pending") {
+      return "Rolling...";
+    }
+    if (rollStatus === "success") {
+      return "Roll again";
+    }
+    return "Roll";
+  })();
+
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
       <header className="street-header">
         <h1 className="street-title">STRAPPED!</h1>
         <div className="street-meta">
           <span className={`status-chip status-chip--${status}`}>{status}</span>
+          <div className="wallet-pill">
+            <span>{formatAddress(walletAddress)}</span>
+            {walletStatus === "connected" ? null : (
+              <span className="wallet-pill__dot" />
+            )}
+          </div>
           <button
             className="ghost-button"
             type="button"
@@ -695,6 +790,57 @@ export default function App() {
             <div className="dice-placeholder">Waiting on rolls...</div>
           )}
         </button>
+
+        <div className="roll-panel">
+          <div className="roll-panel__row">
+            <label className="roll-panel__label" htmlFor="network-select">
+              Network
+            </label>
+            <select
+              id="network-select"
+              className="roll-panel__select"
+              value={networkKey}
+              onChange={(event) =>
+                setNetworkKey(event.target.value as FuelNetworkKey)
+              }
+              disabled={walletStatus === "connecting"}
+            >
+              {Object.entries(FUEL_NETWORKS).map(([key, network]) => (
+                <option key={key} value={key}>
+                  {network.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="roll-panel__row roll-panel__row--actions">
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={connectWallet}
+              disabled={walletStatus === "connecting"}
+            >
+              {walletStatus === "connecting" ? "Connecting..." : "Connect"}
+            </button>
+            <button
+              className="primary-button roll-button"
+              type="button"
+              onClick={handleRoll}
+              disabled={isRolling || walletStatus === "connecting"}
+            >
+              {rollButtonLabel}
+            </button>
+          </div>
+          <div className="roll-panel__status">
+            {walletError ? `Wallet: ${walletError}` : null}
+            {!walletError && rollError ? `Roll: ${rollError}` : null}
+            {!walletError && !rollError && rollTxId
+              ? `Tx: ${rollTxId.slice(0, 10)}...${rollTxId.slice(-6)}`
+              : null}
+            {!walletError && !rollError && !rollTxId
+              ? "Ready to roll on testnet."
+              : null}
+          </div>
+        </div>
 
         <section className="shops-row">
           {rollOrder.map((roll, index) => {
