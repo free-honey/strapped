@@ -34,7 +34,6 @@ createRoot(rootElement).render(
           {
             chainId: CHAIN_IDS.fuel.testnet,
             url: FUEL_NETWORKS.testnet.graphqlUrl,
-            name: FUEL_NETWORKS.testnet.label,
           },
         ]}
       >
