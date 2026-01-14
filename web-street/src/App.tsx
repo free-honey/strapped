@@ -1,9 +1,12 @@
-import { CSSProperties, useEffect, useMemo, useState } from "react";
-import type { WalletUnlocked } from "fuels";
 import {
-  connectFuelWallet,
-  createStrappedContract,
-} from "./fuel/client";
+  useAccount,
+  useConnectUI,
+  useIsConnected,
+  useSelectNetwork,
+  useWallet,
+} from "@fuels/react";
+import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
 const POLL_INTERVAL_MS = 1000;
@@ -448,12 +451,52 @@ export default function App() {
   const [isExpandedActive, setIsExpandedActive] = useState(false);
   const [networkKey, setNetworkKey] =
     useState<FuelNetworkKey>(DEFAULT_NETWORK);
-  const [walletStatus, setWalletStatus] = useState<
-    "idle" | "connecting" | "connected" | "error"
-  >("idle");
   const [walletError, setWalletError] = useState<string | null>(null);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<WalletUnlocked | null>(null);
+  const { connect, isConnecting } = useConnectUI();
+  const { isConnected } = useIsConnected();
+  const { wallet } = useWallet();
+  const { account } = useAccount();
+  const { selectNetworkAsync } = useSelectNetwork();
+  const walletStatus: "idle" | "connecting" | "connected" | "error" = walletError
+    ? "error"
+    : isConnecting
+      ? "connecting"
+      : isConnected
+        ? "connected"
+        : "idle";
+  const walletAddress = account ?? null;
+
+  useEffect(() => {
+    if (isConnected) {
+      setWalletError(null);
+    }
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    let cancelled = false;
+    const selectNetwork = async () => {
+      try {
+        await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        const message =
+          err instanceof Error ? err.message : "Wallet network error";
+        setWalletError(message);
+      }
+    };
+
+    selectNetwork();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, networkKey, selectNetworkAsync]);
   const [rollStatus, setRollStatus] = useState<
     "idle" | "signing" | "pending" | "success" | "error"
   >("idle");
@@ -676,20 +719,18 @@ export default function App() {
   };
 
   const connectWallet = async () => {
-    setWalletStatus("connecting");
     setWalletError(null);
 
     try {
-      const connected = await connectFuelWallet(networkKey);
-      setWallet(connected.wallet);
-      setWalletAddress(connected.address);
-      setWalletStatus("connected");
-      return connected.wallet;
+      if (isConnected) {
+        return true;
+      }
+      await connect();
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Wallet error";
-      setWalletStatus("error");
       setWalletError(message);
-      return null;
+      return false;
     }
   };
 
@@ -697,12 +738,8 @@ export default function App() {
     setRollError(null);
     setRollTxId(null);
 
-    let activeWallet = wallet;
-    if (!activeWallet) {
-      activeWallet = await connectWallet();
-    }
-
-    if (!activeWallet) {
+    if (!isConnected || !wallet) {
+      setWalletError("Connect wallet to roll");
       setRollStatus("error");
       return;
     }
@@ -710,7 +747,7 @@ export default function App() {
     setRollStatus("signing");
 
     try {
-      const contract = createStrappedContract(activeWallet, networkKey);
+      const contract = createStrappedContract(wallet, networkKey);
       const response = await contract.functions.roll_dice().call();
       setRollTxId(response.transactionId);
       setRollStatus("pending");
