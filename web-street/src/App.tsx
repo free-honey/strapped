@@ -976,6 +976,7 @@ export default function App() {
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
+  const lastObservedRollCountRef = useRef<number>(0);
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -2036,6 +2037,14 @@ export default function App() {
     rollCountRef.current = rollCount;
     lastRollRef.current = lastRoll;
   }, [rollCount, lastRoll]);
+
+  useEffect(() => {
+    const previousCount = lastObservedRollCountRef.current;
+    lastObservedRollCountRef.current = rollCount;
+    if (!isRollAnimating && rollCount > previousCount) {
+      setRollLandPulse(true);
+    }
+  }, [rollCount, isRollAnimating]);
 
   useEffect(() => {
     if (!snapshot) {
