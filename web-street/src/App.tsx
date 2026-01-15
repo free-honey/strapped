@@ -744,6 +744,19 @@ const rollHitAfterBet = (
   rolls: Roll[]
 ) => rolls.some((roll, index) => roll === targetRoll && betRollIndex <= index);
 
+const rollHitAfterBetWithModifier = (
+  targetRoll: Roll,
+  betRollIndex: number,
+  modifierRollIndex: number,
+  rolls: Roll[]
+) =>
+  rolls.some(
+    (roll, index) =>
+      roll === targetRoll &&
+      betRollIndex <= index &&
+      modifierRollIndex <= index
+  );
+
 const hasClaimableBets = (
   rolls: Roll[],
   perRollBets: NormalizedRollBets[]
@@ -889,7 +902,12 @@ const eligibleClaimModifiers = (entry: HistoryEntry) => {
     strapBets.some(
       (bet) =>
         bet.roll === modifier.modifierRoll &&
-        bet.betRollIndex <= modifier.rollIndex
+        rollHitAfterBetWithModifier(
+          bet.roll,
+          bet.betRollIndex,
+          modifier.rollIndex,
+          entry.rolls
+        )
     )
   );
 };
@@ -948,6 +966,9 @@ export default function App() {
   const [rollingFace, setRollingFace] = useState<Roll | null>(null);
   const [rollLandPulse, setRollLandPulse] = useState(false);
   const [rollFallbackFace, setRollFallbackFace] = useState<Roll | null>("Seven");
+  const [chipBalanceOverride, setChipBalanceOverride] = useState<string | null>(
+    null
+  );
   const rollAnimationRef = useRef<number | null>(null);
   const rollAnimationEndRef = useRef<number>(0);
   const rollAnimationOriginRef = useRef<Roll | null>(null);
@@ -996,6 +1017,7 @@ export default function App() {
     account: walletAddress,
     assetId: chipAssetId,
   });
+  const displayChipBalance = chipBalanceOverride ?? chipBalance;
   const closetGroups = useMemo(() => {
     if (ownedStraps.length === 0) {
       return [];
@@ -1208,71 +1230,83 @@ export default function App() {
     };
   }, [baseUrl, walletAddress]);
 
-  useEffect(() => {
-    if (!provider || !walletAddress || knownStraps.length === 0) {
+  const refreshBalances = async () => {
+    if (!provider || !walletAddress) {
       setOwnedStraps([]);
+      setChipBalanceOverride(null);
+      return;
+    }
+    try {
+      const result = await provider.getBalances(walletAddress);
+      const balances = Array.isArray(result)
+        ? result
+        : (result as { balances?: Array<{ assetId: string; amount: unknown }> })
+            .balances ?? [];
+      const byAssetId = new Map<string, string>();
+      balances.forEach((entry) => {
+        const assetId =
+          typeof entry.assetId === "string" ? entry.assetId : String(entry.assetId);
+        const normalizedAssetId = normalizeAssetIdValue(assetId);
+        if (!normalizedAssetId) {
+          return;
+        }
+        const amount =
+          typeof entry.amount === "string"
+            ? entry.amount
+            : entry.amount?.toString?.() ?? String(entry.amount);
+        byAssetId.set(normalizedAssetId, amount);
+      });
+      const owned = knownStraps
+        .map((strap) => {
+          const amount = byAssetId.get(strap.assetId);
+          if (!amount) {
+            return null;
+          }
+          try {
+            if (BigInt(amount) <= 0n) {
+              return null;
+            }
+          } catch (err) {
+            return null;
+          }
+          return {
+            assetId: strap.assetId,
+            strap: strap.strap,
+            amount,
+          };
+        })
+        .filter((entry): entry is OwnedStrap => entry !== null);
+
+      setOwnedStraps(owned);
+      setChipBalanceOverride(byAssetId.get(chipAssetId) ?? null);
+    } catch (err) {
+      setOwnedStraps([]);
+    }
+  };
+
+  useEffect(() => {
+    if (!provider || !walletAddress) {
+      setOwnedStraps([]);
+      setChipBalanceOverride(null);
       return;
     }
 
     let cancelled = false;
-    const loadOwnedStraps = async () => {
-      try {
-        const result = await provider.getBalances(walletAddress);
-        const balances = Array.isArray(result)
-          ? result
-          : (result as { balances?: Array<{ assetId: string; amount: unknown }> })
-              .balances ?? [];
-        const byAssetId = new Map<string, string>();
-        balances.forEach((entry) => {
-          const assetId =
-            typeof entry.assetId === "string" ? entry.assetId : String(entry.assetId);
-          const normalizedAssetId = normalizeAssetIdValue(assetId);
-          if (!normalizedAssetId) {
-            return;
-          }
-          const amount =
-            typeof entry.amount === "string"
-              ? entry.amount
-              : entry.amount?.toString?.() ?? String(entry.amount);
-          byAssetId.set(normalizedAssetId, amount);
-        });
-        const owned = knownStraps
-          .map((strap) => {
-            const amount = byAssetId.get(strap.assetId);
-            if (!amount) {
-              return null;
-            }
-            try {
-              if (BigInt(amount) <= 0n) {
-                return null;
-              }
-            } catch (err) {
-              return null;
-            }
-            return {
-              assetId: strap.assetId,
-              strap: strap.strap,
-              amount,
-            };
-          })
-          .filter((entry): entry is OwnedStrap => entry !== null);
-
-        if (!cancelled) {
-          setOwnedStraps(owned);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setOwnedStraps([]);
-        }
+    const runRefresh = async () => {
+      if (cancelled) {
+        return;
       }
+      await refreshBalances();
     };
 
-    loadOwnedStraps();
+    runRefresh();
+    const intervalId = window.setInterval(runRefresh, 10000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
-  }, [provider, walletAddress, knownStraps]);
+  }, [provider, walletAddress, knownStraps, chipAssetId]);
 
   useEffect(() => {
     if (!baseUrl || !walletAddress || !snapshot) {
@@ -1700,6 +1734,7 @@ export default function App() {
       setRollStatus("pending");
       await response.waitForResult();
       setRollStatus("success");
+      await refreshBalances();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Roll failed";
       setRollError(message);
@@ -1765,6 +1800,7 @@ export default function App() {
       setBetStatus("pending");
       await response.waitForResult();
       setBetStatus("success");
+      await refreshBalances();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Bet failed";
       setBetError(message);
@@ -1803,6 +1839,7 @@ export default function App() {
       setModifierPurchaseStatus("pending");
       await response.waitForResult();
       setModifierPurchaseStatus("success");
+      await refreshBalances();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Purchase modifier failed";
@@ -1843,6 +1880,7 @@ export default function App() {
       setClaimStatus("pending");
       await response.waitForResult();
       setClaimStatus("success");
+      await refreshBalances();
 
       let chipDelta: number | null = null;
       try {
@@ -2844,7 +2882,9 @@ export default function App() {
 
       <footer className="street-footer">
         <div className="footer-actions">
-          <div className="chips-banner">{formatChipUnits(chipBalance)} CHIPS</div>
+          <div className="chips-banner">
+            {formatChipUnits(displayChipBalance)} CHIPS
+          </div>
           <button
             className="ghost-button"
             type="button"
