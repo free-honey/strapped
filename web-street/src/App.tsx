@@ -1312,6 +1312,7 @@ export default function App() {
     }
     return snapshot.rolls.slice(-6).reverse();
   }, [snapshot]);
+  const lastRoll = diceRolls[0] ?? null;
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
@@ -1392,6 +1393,18 @@ export default function App() {
     }
     return "Roll";
   })();
+  const rollStatusMessage = (() => {
+    if (walletError) {
+      return `Wallet: ${walletError}`;
+    }
+    if (rollError) {
+      return `Roll: ${rollError}`;
+    }
+    if (rollTxId) {
+      return `Tx: ${rollTxId.slice(0, 10)}...${rollTxId.slice(-6)}`;
+    }
+    return isConnected ? null : "Connect wallet to roll.";
+  })();
 
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
@@ -1441,54 +1454,43 @@ export default function App() {
         <div className="cloud cloud--two" />
         <div className="street-ground" />
 
-        <button
-          type="button"
-          className="dice-strip"
-          aria-label="Recent dice rolls"
-          onClick={() => setIsDiceHistoryOpen(true)}
-          disabled={diceRolls.length === 0}
-        >
-          {diceRolls.length > 0 ? (
-            diceRolls.map((roll, index) => (
-              <div
-                key={`${roll}-${index}`}
-                className="dice-card"
-                style={
-                  { "--depth": index, "--offset": index * 42 } as CSSProperties
-                }
-              >
-                <div className="dice-face">{rollNumbers[roll]}</div>
-                <div className="dice-label">{rollLabels[roll]}</div>
-              </div>
-            ))
-          ) : (
-            <div className="dice-placeholder">Waiting on rolls...</div>
-          )}
-        </button>
-
         <div className="roll-panel">
-          <div className="roll-panel__row roll-panel__row--actions">
-            <button
-              className="primary-button roll-button"
-              type="button"
-              onClick={handleRoll}
-              disabled={isRolling || walletStatus === "connecting"}
-            >
-              {rollButtonLabel}
-            </button>
+          <div className="roll-panel__row roll-panel__row--main">
+            <div className="roll-panel__last">
+              <span className="roll-panel__label">Last roll</span>
+              {lastRoll ? (
+                <div className="dice-card dice-card--single">
+                  <div className="dice-face">{rollNumbers[lastRoll]}</div>
+                  <div className="dice-label">{rollLabels[lastRoll]}</div>
+                </div>
+              ) : (
+                <div className="dice-placeholder roll-panel__placeholder">
+                  Waiting on rolls...
+                </div>
+              )}
+            </div>
+            <div className="roll-panel__actions">
+              <button
+                className="primary-button roll-button"
+                type="button"
+                onClick={handleRoll}
+                disabled={isRolling || walletStatus === "connecting"}
+              >
+                {rollButtonLabel}
+              </button>
+              <button
+                className="ghost-button roll-history-button"
+                type="button"
+                onClick={() => setIsDiceHistoryOpen(true)}
+                disabled={diceRolls.length === 0}
+              >
+                History
+              </button>
+            </div>
           </div>
-          <div className="roll-panel__status">
-            {walletError ? `Wallet: ${walletError}` : null}
-            {!walletError && rollError ? `Roll: ${rollError}` : null}
-            {!walletError && !rollError && rollTxId
-              ? `Tx: ${rollTxId.slice(0, 10)}...${rollTxId.slice(-6)}`
-              : null}
-            {!walletError && !rollError && !rollTxId
-              ? isConnected
-                ? `Ready to roll on ${FUEL_NETWORKS[networkKey].label.toLowerCase()}.`
-                : "Connect wallet to roll."
-              : null}
-          </div>
+          {rollStatusMessage ? (
+            <div className="roll-panel__status">{rollStatusMessage}</div>
+          ) : null}
         </div>
 
         <section className="shops-row">
@@ -1866,7 +1868,6 @@ export default function App() {
                         <div className="closet-kind__icon" aria-hidden="true">
                           {group.emoji}
                         </div>
-                        <div className="closet-kind__label">{group.kind}</div>
                       </div>
                       <div className="closet-kind__items">
                         {group.entries.map((entry) => (
@@ -1897,9 +1898,7 @@ export default function App() {
 
       <footer className="street-footer">
         <div className="footer-actions">
-          <div className="chips-banner chips-banner--footer">
-            {formatChipUnits(chipBalance)} CHIPS
-          </div>
+          <div className="chips-banner">{formatChipUnits(chipBalance)} CHIPS</div>
           <button
             className="ghost-button"
             type="button"
