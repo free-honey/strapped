@@ -2,12 +2,13 @@ import {
   useAccount,
   useBalance,
   useConnectUI,
+  useDisconnect,
   useIsConnected,
   useProvider,
   useSelectNetwork,
   useWallet,
 } from "@fuels/react";
-import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
@@ -993,6 +994,7 @@ export default function App() {
     useState<FuelNetworkKey>(DEFAULT_NETWORK);
   const [walletError, setWalletError] = useState<string | null>(null);
   const { connect, isConnecting } = useConnectUI();
+  const { disconnect, isPending: isDisconnecting } = useDisconnect();
   const { isConnected } = useIsConnected();
   const { wallet } = useWallet();
   const { account } = useAccount();
@@ -1152,37 +1154,36 @@ export default function App() {
     };
   }, [isConnected, networkKey, selectNetworkAsync]);
 
-  useEffect(() => {
+  const fetchStraps = useCallback(async () => {
     if (!baseUrl) {
       setKnownStraps([]);
       return;
     }
+    try {
+      const response = await fetch(`${baseUrl}/straps`);
+      if (!response.ok) {
+        throw new Error(`strap metadata responded with ${response.status}`);
+      }
+      const payload = await response.json();
+      const straps = normalizeStrapMetadata(payload);
+      setKnownStraps(straps);
+    } catch (err) {
+      setKnownStraps([]);
+    }
+  }, [baseUrl]);
 
+  useEffect(() => {
     let cancelled = false;
     const loadStraps = async () => {
-      try {
-        const response = await fetch(`${baseUrl}/straps`);
-        if (!response.ok) {
-          throw new Error(`strap metadata responded with ${response.status}`);
-        }
-        const payload = await response.json();
-        const straps = normalizeStrapMetadata(payload);
-        if (!cancelled) {
-          setKnownStraps(straps);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setKnownStraps([]);
-        }
-      }
+      await fetchStraps();
     };
-
-    loadStraps();
-
+    if (!cancelled) {
+      loadStraps();
+    }
     return () => {
       cancelled = true;
     };
-  }, [baseUrl]);
+  }, [fetchStraps]);
 
   useEffect(() => {
     if (!baseUrl || !walletAddress) {
@@ -1234,7 +1235,7 @@ export default function App() {
     };
   }, [baseUrl, walletAddress]);
 
-  const refreshBalances = async () => {
+  const refreshBalances = useCallback(async () => {
     if (!provider || !walletAddress) {
       setOwnedStraps([]);
       setChipBalanceOverride(null);
@@ -1286,7 +1287,7 @@ export default function App() {
     } catch (err) {
       setOwnedStraps([]);
     }
-  };
+  }, [provider, walletAddress, knownStraps, chipAssetId]);
 
   useEffect(() => {
     if (!provider || !walletAddress) {
@@ -1310,7 +1311,18 @@ export default function App() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [provider, walletAddress, knownStraps, chipAssetId]);
+  }, [provider, walletAddress, knownStraps, chipAssetId, refreshBalances]);
+
+  useEffect(() => {
+    if (!isClosetOpen) {
+      return;
+    }
+    const refreshCloset = async () => {
+      await fetchStraps();
+      await refreshBalances();
+    };
+    refreshCloset();
+  }, [isClosetOpen, fetchStraps, refreshBalances]);
 
   useEffect(() => {
     if (!baseUrl || !walletAddress || !snapshot) {
@@ -2130,10 +2142,22 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            onClick={connectWallet}
-            disabled={walletStatus === "connecting"}
+            onClick={() => {
+              if (isConnected) {
+                disconnect();
+              } else {
+                connectWallet();
+              }
+            }}
+            disabled={walletStatus === "connecting" || isDisconnecting}
           >
-            {walletStatus === "connecting" ? "Connecting..." : "Connect"}
+            {walletStatus === "connecting"
+              ? "Connecting..."
+              : isDisconnecting
+                ? "Disconnecting..."
+                : isConnected
+                  ? "Disconnect"
+                  : "Connect"}
           </button>
         </div>
       </header>
@@ -2204,6 +2228,7 @@ export default function App() {
             const hasTableBets = Boolean(
               (totalChips ?? 0) > 0 || strapBets.length > 0
             );
+            const hasChipTableBets = Boolean((totalChips ?? 0) > 0);
             const totalStrapBets = strapBets.reduce(
               (sum, [, amount]) => sum + amount,
               0
@@ -2504,7 +2529,7 @@ export default function App() {
                         ))}
                       </div>
                     ) : null}
-                    <div className="shop-glow" />
+                    {hasChipTableBets ? <div className="bet-aura" /> : null}
                     {modifierStory ? (
                       <div
                         className={`modifier-aura modifier-aura--${modifierStory.theme}`}

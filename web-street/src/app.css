@@ -1106,11 +1106,22 @@ button {
 
 .modifier-aura {
   position: absolute;
-  inset: -10px;
-  border-radius: 24px;
+  inset: -40px;
+  border-radius: 54px;
   opacity: 0.85;
   z-index: -1;
   pointer-events: none;
+}
+
+.bet-aura {
+  position: absolute;
+  inset: -28px;
+  border-radius: 46px;
+  opacity: 0.9;
+  z-index: -2;
+  pointer-events: none;
+  box-shadow: 0 0 28px rgba(255, 204, 94, 0.7),
+    0 0 60px rgba(238, 164, 26, 0.45);
 }
 
 .modifier-aura--evil {
