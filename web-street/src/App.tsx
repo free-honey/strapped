@@ -927,6 +927,7 @@ export default function App() {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
   const [isClosetOpen, setIsClosetOpen] = useState(false);
+  const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
   const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
   const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
   const [betAmount, setBetAmount] = useState("1");
@@ -2027,6 +2028,14 @@ export default function App() {
   const selectedBetGroup = closetGroups.find(
     (group) => group.kind === betStrapKind
   );
+  const unclaimedGames = useMemo(
+    () =>
+      gameHistory.filter((entry) => {
+        const accountBets = entry.account?.per_roll_bets ?? [];
+        return !entry.claimed && hasClaimableBets(entry.rolls, accountBets);
+      }),
+    [gameHistory]
+  );
 
   const stopRollAnimation = (showFallback: boolean, pulse: boolean) => {
     setIsRollAnimating(false);
@@ -2108,6 +2117,220 @@ export default function App() {
       window.clearTimeout(timeoutId);
     };
   }, [rollLandPulse]);
+
+  const renderHistoryList = (entries: HistoryEntry[], emptyLabel: string) =>
+    entries.length > 0 ? (
+      <div className="history-list">
+        {entries.map((entry) => {
+          const accountBets = entry.account?.per_roll_bets ?? [];
+          const accountBetsSummary = summarizeBetsByKind(
+            accountBets.flatMap((bets) => bets.bets)
+          );
+          const accountBetDetails = accountBets.flatMap((rollEntry) =>
+            rollEntry.bets
+              .map((bet) => {
+                const parsed = parseAccountBetPlacement(bet);
+                if (!parsed) {
+                  return null;
+                }
+                return {
+                  roll: rollEntry.roll,
+                  kind: parsed.kind,
+                  amount: parsed.amount,
+                  strap: parsed.kind === "strap" ? parsed.strap : undefined,
+                  betRollIndex: parsed.betRollIndex,
+                };
+              })
+              .filter(
+                (
+                  bet
+                ): bet is {
+                  roll: Roll;
+                  kind: "chip" | "strap";
+                  amount: number;
+                  strap: Strap | undefined;
+                  betRollIndex: number | undefined;
+                } => bet !== null
+              )
+          );
+          const hasClaimable = hasClaimableBets(entry.rolls, accountBets);
+          const claimedLabel = entry.claimed
+            ? "Claimed"
+            : hasClaimable
+            ? "Unclaimed"
+            : "Nothing to claim";
+          const canClaim = !entry.claimed && hasClaimable;
+          const isClaimingGame = claimGameId === entry.gameId;
+          const claimButtonLabel = isClaimingGame
+            ? claimStatus === "signing"
+              ? "Signing..."
+              : claimStatus === "pending"
+              ? "Claiming..."
+              : claimStatus === "error"
+              ? "Claim failed"
+              : claimStatus === "success"
+              ? "Claimed"
+              : "Claim"
+            : "Claim";
+          const claimDisabled = !canClaim || (isClaimBusy && !isClaimingGame);
+          const handleClaimClick = () => {
+            const eligibleModifiers = canClaim ? eligibleClaimModifiers(entry) : [];
+            if (eligibleModifiers.length > 0) {
+              setClaimModifierEntry(entry);
+              setClaimModifierOptions(eligibleModifiers);
+              setClaimModifierSelection(
+                eligibleModifiers.map(
+                  (modifier) =>
+                    `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
+                )
+              );
+              return;
+            }
+            handleClaimRewards(entry, []);
+          };
+          return (
+            <div key={`history-${entry.gameId}`} className="history-item">
+              <div className="history-item__header">
+                <div>
+                  <div className="history-item__title">Game {entry.gameId}</div>
+                  <div className="history-item__status">{claimedLabel}</div>
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={claimDisabled}
+                  onClick={handleClaimClick}
+                  title={
+                    isClaimingGame && claimStatus === "error"
+                      ? claimError ?? undefined
+                      : undefined
+                  }
+                >
+                  {claimButtonLabel}
+                </button>
+              </div>
+              <div className="history-item__detail">
+                <span>Rolls:</span>{" "}
+                {entry.rolls.length > 0
+                  ? entry.rolls
+                      .map((roll, index) => {
+                        const activeModifiers = entry.modifiers
+                          .filter(
+                            (modifier) =>
+                              modifier.modifierRoll === roll &&
+                              modifier.rollIndex <= index
+                          )
+                          .map((modifier) => modifierEmojis[modifier.modifier] ?? "")
+                          .filter(Boolean)
+                          .join("");
+                        return `${rollLabels[roll]}${
+                          activeModifiers ? ` ${activeModifiers}` : ""
+                        }`;
+                      })
+                      .join(", ")
+                  : "—"}
+              </div>
+              <div className="history-item__detail">
+                <span>Rewards:</span>{" "}
+                {(() => {
+                  const rewardTiles = rollOrder
+                    .map((roll) => {
+                      const items = entry.strapRewards.filter(
+                        ([rewardRoll]) => rewardRoll === roll
+                      );
+                      return items.length > 0 ? { roll, items } : null;
+                    })
+                    .filter(
+                      (
+                        tile
+                      ): tile is {
+                        roll: Roll;
+                        items: [Roll, Strap, number][];
+                      } => tile !== null
+                    );
+                  if (rewardTiles.length === 0) {
+                    return "—";
+                  }
+                  return (
+                    <div className="history-rewards-grid">
+                      {rewardTiles.map((tile) => (
+                        <div
+                          key={`history-reward-${entry.gameId}-${tile.roll}`}
+                          className="history-reward-tile"
+                        >
+                          <div className="history-reward-tile__title">
+                            {rollNumbers[tile.roll]}
+                          </div>
+                          <div className="history-reward-tile__items">
+                            {tile.items.map(([, strap, amount], rewardIndex) => (
+                              <div
+                                key={`history-reward-${entry.gameId}-${tile.roll}-${rewardIndex}`}
+                                className="history-reward-tile__item"
+                              >
+                                {formatRewardCompact(strap)}/{formatNumber(amount)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+              <div className="history-item__detail">
+                <span>Your bets:</span>{" "}
+                {accountBetsSummary.chipTotal > 0 ||
+                accountBetsSummary.straps.length > 0
+                  ? [
+                      accountBetsSummary.chipTotal > 0
+                        ? `${formatNumber(accountBetsSummary.chipTotal)} chips`
+                        : null,
+                      ...accountBetsSummary.straps.map(
+                        ([strap, amount]) =>
+                          `${formatRewardCompact(strap)} x${formatNumber(amount)}`
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join(", ")
+                  : "—"}
+              </div>
+              {accountBetDetails.length > 0 ? (
+                <div className="history-item__detail history-item__detail--tight">
+                  <span>Bets detail:</span>
+                  <div className="history-bets">
+                    {accountBetDetails.map((bet, index) => {
+                      const betIndexLabel =
+                        typeof bet.betRollIndex === "number"
+                          ? ` @${bet.betRollIndex}`
+                          : "";
+                      const betLabel =
+                        bet.kind === "chip"
+                          ? `${formatNumber(bet.amount)} chips`
+                          : bet.strap
+                          ? `${formatRewardCompact(bet.strap)} x${formatNumber(
+                              bet.amount
+                            )}`
+                          : `strap x${formatNumber(bet.amount)}`;
+                      return (
+                        <div
+                          key={`history-bet-${entry.gameId}-${index}`}
+                          className="history-bet-line"
+                        >
+                          {rollLabels[bet.roll]}: {betLabel}
+                          {betIndexLabel}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    ) : (
+      <div className="modal-muted">{emptyLabel}</div>
+    );
 
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
@@ -2980,239 +3203,29 @@ export default function App() {
             </div>
             <div className="modal__body modal__body--scroll">
               <div className="modal-card modal-card--wide">
-                <h3>Unclaimed history</h3>
-                {gameHistory.length > 0 ? (
-                  <div className="history-list">
-                    {gameHistory.map((entry) => {
-                      const accountBets = entry.account?.per_roll_bets ?? [];
-                      const accountBetsSummary = summarizeBetsByKind(
-                        accountBets.flatMap((bets) => bets.bets)
-                      );
-                      const accountBetDetails = accountBets.flatMap((rollEntry) =>
-                        rollEntry.bets
-                          .map((bet) => {
-                            const parsed = parseAccountBetPlacement(bet);
-                            if (!parsed) {
-                              return null;
-                            }
-                            return {
-                              roll: rollEntry.roll,
-                              kind: parsed.kind,
-                              amount: parsed.amount,
-                              strap: parsed.kind === "strap" ? parsed.strap : undefined,
-                              betRollIndex: parsed.betRollIndex,
-                            };
-                          })
-                          .filter(
-                            (
-                              bet
-                            ): bet is {
-                              roll: Roll;
-                              kind: "chip" | "strap";
-                              amount: number;
-                              strap: Strap | undefined;
-                              betRollIndex: number | undefined;
-                            } => bet !== null
-                          )
-                      );
-                      const hasClaimable = hasClaimableBets(entry.rolls, accountBets);
-                      const claimedLabel = entry.claimed
-                        ? "Claimed"
-                        : hasClaimable
-                        ? "Unclaimed"
-                        : "Nothing to claim";
-                      const canClaim = !entry.claimed && hasClaimable;
-                      const isClaimingGame = claimGameId === entry.gameId;
-                      const claimButtonLabel = isClaimingGame
-                        ? claimStatus === "signing"
-                          ? "Signing..."
-                          : claimStatus === "pending"
-                          ? "Claiming..."
-                          : claimStatus === "error"
-                          ? "Claim failed"
-                          : claimStatus === "success"
-                          ? "Claimed"
-                          : "Claim"
-                        : "Claim";
-                      const claimDisabled =
-                        !canClaim || (isClaimBusy && !isClaimingGame);
-                      const handleClaimClick = () => {
-                        const eligibleModifiers = canClaim
-                          ? eligibleClaimModifiers(entry)
-                          : [];
-                        if (eligibleModifiers.length > 0) {
-                          setClaimModifierEntry(entry);
-                          setClaimModifierOptions(eligibleModifiers);
-                          setClaimModifierSelection(
-                            eligibleModifiers.map(
-                              (modifier) =>
-                                `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
-                            )
-                          );
-                          return;
-                        }
-                        handleClaimRewards(entry, []);
-                      };
-                      return (
-                        <div
-                          key={`history-${entry.gameId}`}
-                          className="history-item"
-                        >
-                          <div className="history-item__header">
-                            <div>
-                              <div className="history-item__title">
-                                Game {entry.gameId}
-                              </div>
-                              <div className="history-item__status">
-                                {claimedLabel}
-                              </div>
-                            </div>
-                            <button
-                              className="primary-button"
-                              type="button"
-                              disabled={claimDisabled}
-                              onClick={handleClaimClick}
-                              title={
-                                isClaimingGame && claimStatus === "error"
-                                  ? claimError ?? undefined
-                                  : undefined
-                              }
-                            >
-                              {claimButtonLabel}
-                            </button>
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Rolls:</span>{" "}
-                            {entry.rolls.length > 0
-                              ? entry.rolls
-                                  .map((roll, index) => {
-                                    const activeModifiers = entry.modifiers
-                                      .filter(
-                                        (modifier) =>
-                                          modifier.modifierRoll === roll &&
-                                          modifier.rollIndex <= index
-                                      )
-                                      .map(
-                                        (modifier) =>
-                                          modifierEmojis[modifier.modifier] ?? ""
-                                      )
-                                      .filter(Boolean)
-                                      .join("");
-                                    return `${rollLabels[roll]}${
-                                      activeModifiers ? ` ${activeModifiers}` : ""
-                                    }`;
-                                  })
-                                  .join(", ")
-                              : "—"}
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Rewards:</span>{" "}
-                            {(() => {
-                              const rewardTiles = rollOrder
-                                .map((roll) => {
-                                  const items = entry.strapRewards.filter(
-                                    ([rewardRoll]) => rewardRoll === roll
-                                  );
-                                  return items.length > 0 ? { roll, items } : null;
-                                })
-                                .filter(
-                                  (
-                                    tile
-                                  ): tile is {
-                                    roll: Roll;
-                                    items: [Roll, Strap, number][];
-                                  } => tile !== null
-                                );
-                              if (rewardTiles.length === 0) {
-                                return "—";
-                              }
-                              return (
-                                <div className="history-rewards-grid">
-                                  {rewardTiles.map((tile) => (
-                                    <div
-                                      key={`history-reward-${entry.gameId}-${tile.roll}`}
-                                      className="history-reward-tile"
-                                    >
-                                      <div className="history-reward-tile__title">
-                                        {rollNumbers[tile.roll]}
-                                      </div>
-                                      <div className="history-reward-tile__items">
-                                        {tile.items.map(
-                                          ([, strap, amount], rewardIndex) => (
-                                            <div
-                                              key={`history-reward-${entry.gameId}-${tile.roll}-${rewardIndex}`}
-                                              className="history-reward-tile__item"
-                                            >
-                                              {formatRewardCompact(strap)}/
-                                              {formatNumber(amount)}
-                                            </div>
-                                          )
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Your bets:</span>{" "}
-                            {accountBetsSummary.chipTotal > 0 ||
-                            accountBetsSummary.straps.length > 0
-                              ? [
-                                  accountBetsSummary.chipTotal > 0
-                                    ? `${formatNumber(
-                                        accountBetsSummary.chipTotal
-                                      )} chips`
-                                    : null,
-                                  ...accountBetsSummary.straps.map(
-                                    ([strap, amount]) =>
-                                      `${formatRewardCompact(strap)} x${formatNumber(
-                                        amount
-                                      )}`
-                                  ),
-                                ]
-                                  .filter(Boolean)
-                                  .join(", ")
-                              : "—"}
-                          </div>
-                          {accountBetDetails.length > 0 ? (
-                            <div className="history-item__detail history-item__detail--tight">
-                              <span>Bets detail:</span>
-                              <div className="history-bets">
-                                {accountBetDetails.map((bet, index) => {
-                                  const betIndexLabel =
-                                    typeof bet.betRollIndex === "number"
-                                      ? ` @${bet.betRollIndex}`
-                                      : "";
-                                  const betLabel =
-                                    bet.kind === "chip"
-                                      ? `${formatNumber(bet.amount)} chips`
-                                      : bet.strap
-                                      ? `${formatRewardCompact(
-                                          bet.strap
-                                        )} x${formatNumber(bet.amount)}`
-                                      : `strap x${formatNumber(bet.amount)}`;
-                                  return (
-                                    <div
-                                      key={`history-bet-${entry.gameId}-${index}`}
-                                      className="history-bet-line"
-                                    >
-                                      {rollLabels[bet.roll]}: {betLabel}
-                                      {betIndexLabel}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="modal-muted">No previous games yet.</div>
-                )}
+                <div className="modal-tabs">
+                  <button
+                    type="button"
+                    className={`modal-tab${
+                      gamesTab === "recent" ? " modal-tab--active" : ""
+                    }`}
+                    onClick={() => setGamesTab("recent")}
+                  >
+                    Recent games
+                  </button>
+                  <button
+                    type="button"
+                    className={`modal-tab${
+                      gamesTab === "unclaimed" ? " modal-tab--active" : ""
+                    }`}
+                    onClick={() => setGamesTab("unclaimed")}
+                  >
+                    Unclaimed games
+                  </button>
+                </div>
+                {gamesTab === "recent"
+                  ? renderHistoryList(gameHistory, "No previous games yet.")
+                  : renderHistoryList(unclaimedGames, "No unclaimed games yet.")}
               </div>
             </div>
           </div>

@@ -1368,6 +1368,33 @@ button {
   grid-column: 1 / -1;
 }
 
+.modal-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(60, 45, 34, 0.08);
+  margin-bottom: 12px;
+}
+
+.modal-tab {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.modal-tab--active {
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  box-shadow: 0 2px 6px rgba(60, 45, 34, 0.1);
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
