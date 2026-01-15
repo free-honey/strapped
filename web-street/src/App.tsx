@@ -1203,7 +1203,7 @@ export default function App() {
   const openExpandedShop = (roll: Roll, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
     const targetWidth = Math.min(900, window.innerWidth * 0.92);
-    const targetHeight = Math.min(560, window.innerHeight * 0.8);
+    const targetHeight = Math.min(520, window.innerHeight * 0.74);
     const targetLeft = (window.innerWidth - targetWidth) / 2;
     const targetTop = (window.innerHeight - targetHeight) / 2;
 
