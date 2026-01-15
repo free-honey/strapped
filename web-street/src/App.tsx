@@ -1,4 +1,15 @@
+import {
+  useAccount,
+  useBalance,
+  useConnectUI,
+  useIsConnected,
+  useProvider,
+  useSelectNetwork,
+  useWallet,
+} from "@fuels/react";
 import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { createStrappedContract } from "./fuel/client";
+import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -58,6 +69,50 @@ type SnapshotResponse = {
   snapshot: OverviewSnapshot;
   block_height: number;
 };
+
+type AccountSnapshot = {
+  total_chip_bet: number;
+  strap_bets: [Strap, number][];
+  total_chip_won: number;
+  claimed_rewards: [number, [Strap, number][]] | null;
+  per_roll_bets: NormalizedRollBets[];
+};
+
+type AccountSnapshotResponse = {
+  snapshot: AccountSnapshot;
+  block_height: number;
+};
+
+type StrapMetadata = {
+  assetId: string;
+  strap: Strap;
+};
+
+type HistoricalSnapshot = {
+  game_id: number;
+  rolls: Roll[];
+  modifiers: { rollIndex: number; modifier: string; modifierRoll: Roll }[];
+  strap_rewards: [Roll, Strap, number][];
+};
+
+type HistoryEntry = {
+  gameId: number;
+  rolls: Roll[];
+  modifiers: { rollIndex: number; modifier: string; modifierRoll: Roll }[];
+  strapRewards: [Roll, Strap, number][];
+  account: AccountSnapshot | null;
+  claimed: boolean;
+};
+
+type OwnedStrap = {
+  assetId: string;
+  strap: Strap;
+  amount: string;
+};
+
+type AccountBetDetail =
+  | { amount: number; kind: "chip"; betRollIndex?: number }
+  | { amount: number; kind: "strap"; strap: Strap; betRollIndex?: number };
 
 const rollOrder: Roll[] = [
   "Two",
@@ -123,13 +178,15 @@ const strapEmojis: Record<string, string> = {
   Belt: "🧵",
 };
 
+const strapKindOrder = Object.keys(strapEmojis);
+
 const modifierEmojis: Record<string, string> = {
   Nothing: "",
   Burnt: "🧯",
   Lucky: "🍀",
   Holy: "👼",
   Holey: "🫥",
-  Scotch: "🏴",
+  Scotch: "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
   Soaked: "🌊",
   Moldy: "🍄",
   Starched: "🏳️",
@@ -137,6 +194,8 @@ const modifierEmojis: Record<string, string> = {
   Groovy: "✌️",
   Delicate: "❤️",
 };
+
+const modifierOrder = Object.keys(modifierEmojis);
 
 type ModifierStory = {
   cta: string;
@@ -146,25 +205,25 @@ type ModifierStory = {
 };
 
 const modifierStories: Record<string, ModifierStory> = {
-  Burnt: { cta: "commit arson", applied: "ablaze", icon: "🔥", theme: "burnt" },
+  Burnt: { cta: "commit arson", applied: "ablaze", icon: "🧯", theme: "burnt" },
   Lucky: { cta: "bury gold", applied: "charmed", icon: "🍀", theme: "lucky" },
-  Holy: { cta: "bless shop", applied: "blessed", icon: "✝", theme: "holy" },
-  Holey: { cta: "release moths", applied: "holey", icon: "🕳️", theme: "holey" },
-  Scotch: { cta: "play bagpipes", applied: "oaked", icon: "🥃", theme: "scotch" },
-  Soaked: { cta: "flood shop", applied: "soaked", icon: "💧", theme: "soaked" },
+  Holy: { cta: "buy indulgences", applied: "blessed", icon: "👼", theme: "holy" },
+  Holey: { cta: "release moths", applied: "overrun", icon: "🫥", theme: "holey" },
+  Scotch: { cta: "play bagpipes", applied: "bagpipes playing softly", icon: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", theme: "scotch" },
+  Soaked: { cta: "open hydrant", applied: "flooded", icon: "🌊", theme: "soaked" },
   Moldy: {
     cta: "leave clothes in washer",
-    applied: "moldy",
+    applied: "mildewed",
     icon: "🍄",
     theme: "moldy",
   },
-  Starched: { cta: "dump flour", applied: "starched", icon: "✨", theme: "starched" },
+  Starched: { cta: "dump flour", applied: "dusted", icon: "🏳️", theme: "starched" },
   Evil: { cta: "curse shop", applied: "cursed", icon: "😈", theme: "evil" },
-  Groovy: { cta: "dump paint", applied: "groovy", icon: "🪩", theme: "groovy" },
+  Groovy: { cta: "dump paint", applied: "splattered", icon: "✌️", theme: "groovy" },
   Delicate: {
     cta: "handle with care",
-    applied: "delicate",
-    icon: "🕊️",
+    applied: "caressed",
+    icon: "❤️",
     theme: "delicate",
   },
 };
@@ -415,6 +474,283 @@ const summarizeBetsByKind = (bets: unknown[]): BetSummary => {
   };
 };
 
+const formatAssetId = (assetId: string | null | undefined) => {
+  if (!assetId) {
+    return "—";
+  }
+  const normalized = assetId.startsWith("0x") ? assetId.slice(2) : assetId;
+  const prefix = normalized.slice(0, 4);
+  return `0x${prefix}...`;
+};
+
+const normalizeAssetIdValue = (assetId: string | null | undefined) => {
+  if (!assetId) {
+    return null;
+  }
+  const lower = assetId.toLowerCase();
+  return lower.startsWith("0x") ? lower : `0x${lower}`;
+};
+
+const formatAssetLabel = (assetId: string | null | undefined, ticker?: string) => {
+  const prefix = formatAssetId(assetId);
+  if (prefix === "—") {
+    return prefix;
+  }
+  return ticker ? `${ticker} | ${prefix}` : prefix;
+};
+
+const formatBalanceValue = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value.toString();
+  }
+  const record = value as { format?: () => string; toString?: () => string };
+  if (typeof record.format === "function") {
+    return record.format();
+  }
+  if (typeof record.toString === "function") {
+    return record.toString();
+  }
+  return "—";
+};
+
+const formatChipUnits = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  const record = value as { toString?: () => string };
+  if (typeof record.toString !== "function") {
+    return "—";
+  }
+  try {
+    const raw = BigInt(record.toString());
+    return raw.toLocaleString("en-US");
+  } catch (err) {
+    return record.toString();
+  }
+};
+
+const formatQuantity = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  const record = value as { toString?: () => string };
+  if (typeof record.toString !== "function") {
+    return "—";
+  }
+  try {
+    const raw = BigInt(record.toString());
+    return raw.toLocaleString("en-US");
+  } catch (err) {
+    return record.toString();
+  }
+};
+
+const parseAccountBetPlacement = (bet: unknown): AccountBetDetail | null => {
+  const parsed = parseBetPlacement(bet);
+  if (!parsed) {
+    return null;
+  }
+  let betRollIndex: number | undefined;
+  if (bet && typeof bet === "object") {
+    const record = bet as Record<string, unknown>;
+    const rawIndex =
+      typeof record.bet_roll_index === "number"
+        ? record.bet_roll_index
+        : typeof record.betRollIndex === "number"
+          ? record.betRollIndex
+          : undefined;
+    if (typeof rawIndex === "number") {
+      betRollIndex = rawIndex;
+    }
+  }
+
+  if (parsed.kind === "chip") {
+    return { amount: parsed.amount, kind: "chip", betRollIndex };
+  }
+  return {
+    amount: parsed.amount,
+    kind: "strap",
+    strap: parsed.strap,
+    betRollIndex,
+  };
+};
+
+const normalizeAccountSnapshot = (input: unknown): AccountSnapshot | null => {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  const snapshot =
+    record.snapshot && typeof record.snapshot === "object"
+      ? (record.snapshot as Record<string, unknown>)
+      : record;
+  const strapBets = Array.isArray(snapshot.strap_bets)
+    ? snapshot.strap_bets
+        .map((entry) => {
+          if (!Array.isArray(entry) || entry.length < 2) {
+            return null;
+          }
+          const strap = parseStrap(entry[0]);
+          const amount = typeof entry[1] === "number" ? entry[1] : null;
+          return strap && amount !== null ? ([strap, amount] as [Strap, number]) : null;
+        })
+        .filter((entry): entry is [Strap, number] => entry !== null)
+    : [];
+  const claimedRewards =
+    Array.isArray(snapshot.claimed_rewards) && snapshot.claimed_rewards.length >= 2
+      ? (() => {
+          const chips =
+            typeof snapshot.claimed_rewards[0] === "number"
+              ? snapshot.claimed_rewards[0]
+              : null;
+          const straps = Array.isArray(snapshot.claimed_rewards[1])
+            ? snapshot.claimed_rewards[1]
+                .map((entry) => {
+                  if (!Array.isArray(entry) || entry.length < 2) {
+                    return null;
+                  }
+                  const strap = parseStrap(entry[0]);
+                  const amount = typeof entry[1] === "number" ? entry[1] : null;
+                  return strap && amount !== null
+                    ? ([strap, amount] as [Strap, number])
+                    : null;
+                })
+                .filter((entry): entry is [Strap, number] => entry !== null)
+            : [];
+          return chips === null ? null : ([chips, straps] as [number, [Strap, number][]]);
+        })()
+      : null;
+
+  return {
+    total_chip_bet:
+      typeof snapshot.total_chip_bet === "number" ? snapshot.total_chip_bet : 0,
+    strap_bets: strapBets,
+    total_chip_won:
+      typeof snapshot.total_chip_won === "number" ? snapshot.total_chip_won : 0,
+    claimed_rewards: claimedRewards,
+    per_roll_bets: normalizePerRollBets(snapshot.per_roll_bets),
+  };
+};
+
+const normalizeStrapMetadata = (input: unknown): StrapMetadata[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const record = entry as Record<string, unknown>;
+      const assetId =
+        typeof record.asset_id === "string"
+          ? normalizeAssetIdValue(record.asset_id)
+          : null;
+      const strap = parseStrap(record.strap);
+      return assetId && strap ? { assetId, strap } : null;
+    })
+    .filter((entry): entry is StrapMetadata => entry !== null);
+};
+
+const normalizeHistoricalSnapshot = (input: unknown): HistoricalSnapshot | null => {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  const snapshot =
+    record.snapshot && typeof record.snapshot === "object"
+      ? (record.snapshot as Record<string, unknown>)
+      : record;
+  const rolls = Array.isArray(snapshot.rolls)
+    ? snapshot.rolls.map((roll) => roll as Roll)
+    : [];
+  const modifiers = Array.isArray(snapshot.modifiers)
+    ? snapshot.modifiers
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") {
+            return null;
+          }
+          const modifierRecord = entry as Record<string, unknown>;
+          const rollIndex =
+            typeof modifierRecord.roll_index === "number"
+              ? modifierRecord.roll_index
+              : null;
+          const modifier =
+            typeof modifierRecord.modifier === "string"
+              ? modifierRecord.modifier
+              : null;
+          const modifierRoll =
+            typeof modifierRecord.modifier_roll === "string"
+              ? (modifierRecord.modifier_roll as Roll)
+              : null;
+          return rollIndex !== null && modifier && modifierRoll
+            ? { rollIndex, modifier, modifierRoll }
+            : null;
+        })
+        .filter(
+          (
+            entry
+          ): entry is { rollIndex: number; modifier: string; modifierRoll: Roll } =>
+            entry !== null
+        )
+    : [];
+  const strapRewards = Array.isArray(snapshot.strap_rewards)
+    ? snapshot.strap_rewards
+        .map((entry) => {
+          if (!Array.isArray(entry) || entry.length < 3) {
+            return null;
+          }
+          const roll = entry[0] as Roll;
+          const strap = parseStrap(entry[1]);
+          const amount = typeof entry[2] === "number" ? entry[2] : null;
+          return strap && amount !== null ? ([roll, strap, amount] as [Roll, Strap, number]) : null;
+        })
+        .filter((entry): entry is [Roll, Strap, number] => entry !== null)
+    : [];
+  const gameId = typeof snapshot.game_id === "number" ? snapshot.game_id : 0;
+  return {
+    game_id: gameId,
+    rolls,
+    modifiers,
+    strap_rewards: strapRewards,
+  };
+};
+
+const rollHitAfterBet = (
+  targetRoll: Roll,
+  betRollIndex: number,
+  rolls: Roll[]
+) => rolls.some((roll, index) => roll === targetRoll && betRollIndex <= index);
+
+const hasClaimableBets = (
+  rolls: Roll[],
+  perRollBets: NormalizedRollBets[]
+) => {
+  if (rolls.length === 0) {
+    return false;
+  }
+
+  for (const rollEntry of perRollBets) {
+    const parsedBets = rollEntry.bets
+      .map(parseAccountBetPlacement)
+      .filter((bet): bet is AccountBetDetail => bet !== null);
+    for (const bet of parsedBets) {
+      const betRollIndex = bet.betRollIndex ?? 0;
+      if (rollHitAfterBet(rollEntry.roll, betRollIndex, rolls)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
 export default function App() {
   const baseUrl = useMemo(
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
@@ -428,6 +764,7 @@ export default function App() {
   const [isGamesOpen, setIsGamesOpen] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
+  const [isClosetOpen, setIsClosetOpen] = useState(false);
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -440,6 +777,350 @@ export default function App() {
     translateY: number;
   } | null>(null);
   const [isExpandedActive, setIsExpandedActive] = useState(false);
+  const [networkKey, setNetworkKey] =
+    useState<FuelNetworkKey>(DEFAULT_NETWORK);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const { connect, isConnecting } = useConnectUI();
+  const { isConnected } = useIsConnected();
+  const { wallet } = useWallet();
+  const { account } = useAccount();
+  const { provider } = useProvider();
+  const { selectNetworkAsync } = useSelectNetwork();
+  const [baseAssetId, setBaseAssetId] = useState<string | null>(null);
+  const [accountSnapshot, setAccountSnapshot] = useState<AccountSnapshot | null>(
+    null
+  );
+  const [knownStraps, setKnownStraps] = useState<StrapMetadata[]>([]);
+  const [ownedStraps, setOwnedStraps] = useState<OwnedStrap[]>([]);
+  const [gameHistory, setGameHistory] = useState<HistoryEntry[]>([]);
+  const snapshot = data?.snapshot ?? null;
+  const walletStatus: "idle" | "connecting" | "connected" | "error" = walletError
+    ? "error"
+    : isConnecting
+      ? "connecting"
+      : isConnected
+        ? "connected"
+        : "idle";
+  const walletAddress = account ?? null;
+  const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
+  const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
+  const baseAssetTicker = FUEL_NETWORKS[networkKey].baseAssetTicker;
+  const { balance: chipBalance } = useBalance({
+    account: walletAddress,
+    assetId: chipAssetId,
+  });
+  const closetGroups = useMemo(() => {
+    if (ownedStraps.length === 0) {
+      return [];
+    }
+
+    const modifierRank = new Map(
+      modifierOrder.map((modifier, index) => [modifier, index])
+    );
+    const grouped = new Map<string, OwnedStrap[]>();
+    ownedStraps.forEach((entry) => {
+      const kind = entry.strap.kind;
+      const existing = grouped.get(kind);
+      if (existing) {
+        existing.push(entry);
+      } else {
+        grouped.set(kind, [entry]);
+      }
+    });
+
+    const sortedKinds = [
+      ...strapKindOrder.filter((kind) => grouped.has(kind)),
+      ...Array.from(grouped.keys())
+        .filter((kind) => !strapKindOrder.includes(kind))
+        .sort(),
+    ];
+
+    return sortedKinds.map((kind) => {
+      const entries = [...(grouped.get(kind) ?? [])].sort((a, b) => {
+        const rankA = modifierRank.get(a.strap.modifier) ?? Number.MAX_SAFE_INTEGER;
+        const rankB = modifierRank.get(b.strap.modifier) ?? Number.MAX_SAFE_INTEGER;
+        if (rankA !== rankB) {
+          return rankA - rankB;
+        }
+        if (a.strap.level !== b.strap.level) {
+          return a.strap.level - b.strap.level;
+        }
+        return a.assetId.localeCompare(b.assetId);
+      });
+
+      return {
+        kind,
+        emoji: strapEmojis[kind] ?? "🎁",
+        entries,
+      };
+    });
+  }, [ownedStraps]);
+
+  useEffect(() => {
+    if (isConnected) {
+      setWalletError(null);
+    }
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (!provider || !isConnected) {
+      setBaseAssetId(null);
+      return;
+    }
+
+    let cancelled = false;
+    provider
+      .getBaseAssetId()
+      .then((id) => {
+        if (!cancelled) {
+          setBaseAssetId(id);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBaseAssetId(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, isConnected]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    let cancelled = false;
+    const selectNetwork = async () => {
+      try {
+        await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        const message =
+          err instanceof Error ? err.message : "Wallet network error";
+        setWalletError(message);
+      }
+    };
+
+    selectNetwork();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, networkKey, selectNetworkAsync]);
+
+  useEffect(() => {
+    if (!baseUrl) {
+      setKnownStraps([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadStraps = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/straps`);
+        if (!response.ok) {
+          throw new Error(`strap metadata responded with ${response.status}`);
+        }
+        const payload = await response.json();
+        const straps = normalizeStrapMetadata(payload);
+        if (!cancelled) {
+          setKnownStraps(straps);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setKnownStraps([]);
+        }
+      }
+    };
+
+    loadStraps();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl]);
+
+  useEffect(() => {
+    if (!baseUrl || !walletAddress) {
+      setAccountSnapshot(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadAccountSnapshot = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/account/${walletAddress}`);
+        if (response.status === 404) {
+          if (!cancelled) {
+            setAccountSnapshot(null);
+          }
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`account snapshot responded with ${response.status}`);
+        }
+        const payload = (await response.json()) as AccountSnapshotResponse | null;
+        const snapshot = payload ? normalizeAccountSnapshot(payload) : null;
+        if (!cancelled) {
+          setAccountSnapshot(snapshot);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAccountSnapshot(null);
+        }
+      }
+    };
+
+    loadAccountSnapshot();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, walletAddress]);
+
+  useEffect(() => {
+    if (!provider || !walletAddress || knownStraps.length === 0) {
+      setOwnedStraps([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadOwnedStraps = async () => {
+      try {
+        const result = await provider.getBalances(walletAddress);
+        const balances = Array.isArray(result)
+          ? result
+          : (result as { balances?: Array<{ assetId: string; amount: unknown }> })
+              .balances ?? [];
+        const byAssetId = new Map<string, string>();
+        balances.forEach((entry) => {
+          const assetId =
+            typeof entry.assetId === "string" ? entry.assetId : String(entry.assetId);
+          const normalizedAssetId = normalizeAssetIdValue(assetId);
+          if (!normalizedAssetId) {
+            return;
+          }
+          const amount =
+            typeof entry.amount === "string"
+              ? entry.amount
+              : entry.amount?.toString?.() ?? String(entry.amount);
+          byAssetId.set(normalizedAssetId, amount);
+        });
+        const owned = knownStraps
+          .map((strap) => {
+            const amount = byAssetId.get(strap.assetId);
+            if (!amount) {
+              return null;
+            }
+            try {
+              if (BigInt(amount) <= 0n) {
+                return null;
+              }
+            } catch (err) {
+              return null;
+            }
+            return {
+              assetId: strap.assetId,
+              strap: strap.strap,
+              amount,
+            };
+          })
+          .filter((entry): entry is OwnedStrap => entry !== null);
+
+        if (!cancelled) {
+          setOwnedStraps(owned);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setOwnedStraps([]);
+        }
+      }
+    };
+
+    loadOwnedStraps();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, walletAddress, knownStraps]);
+
+  useEffect(() => {
+    if (!baseUrl || !walletAddress || !snapshot) {
+      setGameHistory([]);
+      return;
+    }
+
+    const currentGameId = snapshot.game_id;
+    if (currentGameId === 0) {
+      setGameHistory([]);
+      return;
+    }
+
+    const historyDepth = 8;
+    const gameIds = Array.from(
+      { length: Math.min(currentGameId, historyDepth) },
+      (_, index) => currentGameId - 1 - index
+    );
+    let cancelled = false;
+    const loadHistory = async () => {
+      const entries = await Promise.all(
+        gameIds.map(async (gameId) => {
+          try {
+            const [historyResponse, accountResponse] = await Promise.all([
+              fetch(`${baseUrl}/historical/${gameId}`),
+              fetch(`${baseUrl}/account/${walletAddress}/${gameId}`),
+            ]);
+            if (!historyResponse.ok) {
+              return null;
+            }
+            const historyPayload = await historyResponse.json();
+            const history = normalizeHistoricalSnapshot(historyPayload);
+            if (!history) {
+              return null;
+            }
+            let account: AccountSnapshot | null = null;
+            if (accountResponse.ok) {
+              const accountPayload = await accountResponse.json();
+              account = normalizeAccountSnapshot(accountPayload);
+            }
+            const claimed = Boolean(account?.claimed_rewards);
+            return {
+              gameId: history.game_id,
+              rolls: history.rolls,
+              modifiers: history.modifiers,
+              strapRewards: history.strap_rewards,
+              account,
+              claimed,
+            } as HistoryEntry;
+          } catch (err) {
+            return null;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setGameHistory(
+          entries.filter((entry): entry is HistoryEntry => entry !== null)
+        );
+      }
+    };
+
+    loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, walletAddress, snapshot]);
+  const [rollStatus, setRollStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [rollError, setRollError] = useState<string | null>(null);
+  const [rollTxId, setRollTxId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeRoll) {
@@ -490,7 +1171,7 @@ export default function App() {
     });
   };
   const isAnyModalOpen = Boolean(
-    activeRoll || isGamesOpen || isInfoOpen || isDiceHistoryOpen
+    activeRoll || isGamesOpen || isInfoOpen || isDiceHistoryOpen || isClosetOpen
   );
 
   useEffect(() => {
@@ -508,6 +1189,7 @@ export default function App() {
       setIsGamesOpen(false);
       setIsInfoOpen(false);
       setIsDiceHistoryOpen(false);
+      setIsClosetOpen(false);
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -576,7 +1258,6 @@ export default function App() {
     };
   }, [baseUrl]);
 
-  const snapshot = data?.snapshot ?? null;
   const rewardsByRoll = useMemo(() => {
     const map = new Map<Roll, [Strap, number][]>();
     if (!snapshot) {
@@ -617,12 +1298,21 @@ export default function App() {
   const formatNumber = (value: number | null | undefined) =>
     value === null || value === undefined ? "—" : value.toLocaleString();
 
+  const formatAddress = (address: string | null) => {
+    if (!address) {
+      return "Not connected";
+    }
+    const trimmed = address.toLowerCase();
+    return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
+  };
+
   const diceRolls = useMemo(() => {
     if (!snapshot || snapshot.rolls.length === 0) {
       return [];
     }
     return snapshot.rolls.slice(-6).reverse();
   }, [snapshot]);
+  const lastRoll = diceRolls[0] ?? null;
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
@@ -648,18 +1338,111 @@ export default function App() {
     return base.join(" ");
   };
 
+  const connectWallet = async () => {
+    setWalletError(null);
+
+    try {
+      if (isConnected) {
+        return true;
+      }
+      await connect();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Wallet error";
+      setWalletError(message);
+      return false;
+    }
+  };
+
+  const handleRoll = async () => {
+    setRollError(null);
+    setRollTxId(null);
+
+    if (!isConnected || !wallet) {
+      setWalletError("Connect wallet to roll");
+      setRollStatus("error");
+      return;
+    }
+
+    setRollStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions.roll_dice().call();
+      setRollTxId(response.transactionId);
+      setRollStatus("pending");
+      await response.waitForResult();
+      setRollStatus("success");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Roll failed";
+      setRollError(message);
+      setRollStatus("error");
+    }
+  };
+
+  const isRolling = rollStatus === "signing" || rollStatus === "pending";
+  const rollButtonLabel = (() => {
+    if (!isConnected) {
+      return "Connect wallet to play";
+    }
+    if (rollStatus === "signing") {
+      return "Signing...";
+    }
+    if (rollStatus === "pending") {
+      return "Rolling...";
+    }
+    if (rollStatus === "success") {
+      return "Roll again";
+    }
+    return "Roll";
+  })();
+  const rollStatusMessage = (() => {
+    if (walletError) {
+      return `Wallet: ${walletError}`;
+    }
+    if (rollError) {
+      return `Roll: ${rollError}`;
+    }
+    return isConnected ? null : "Connect wallet to play.";
+  })();
+
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
       <header className="street-header">
         <h1 className="street-title">STRAPPED!</h1>
         <div className="street-meta">
           <span className={`status-chip status-chip--${status}`}>{status}</span>
+          <div className="wallet-pill">
+            <span>{formatAddress(walletAddress)}</span>
+            {walletStatus === "connected" ? null : (
+              <span className="wallet-pill__dot" />
+            )}
+          </div>
+          <label className="network-picker" htmlFor="network-select">
+            <span>Network</span>
+            <select
+              id="network-select"
+              className="network-picker__select"
+              value={networkKey}
+              onChange={(event) =>
+                setNetworkKey(event.target.value as FuelNetworkKey)
+              }
+              disabled={walletStatus === "connecting"}
+            >
+              {Object.entries(FUEL_NETWORKS).map(([key, network]) => (
+                <option key={key} value={key}>
+                  {network.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsInfoOpen(true)}
+            onClick={connectWallet}
+            disabled={walletStatus === "connecting"}
           >
-            Game info
+            {walletStatus === "connecting" ? "Connecting..." : "Connect"}
           </button>
         </div>
       </header>
@@ -671,30 +1454,44 @@ export default function App() {
         <div className="cloud cloud--two" />
         <div className="street-ground" />
 
-        <button
-          type="button"
-          className="dice-strip"
-          aria-label="Recent dice rolls"
-          onClick={() => setIsDiceHistoryOpen(true)}
-          disabled={diceRolls.length === 0}
-        >
-          {diceRolls.length > 0 ? (
-            diceRolls.map((roll, index) => (
-              <div
-                key={`${roll}-${index}`}
-                className="dice-card"
-                style={
-                  { "--depth": index, "--offset": index * 42 } as CSSProperties
-                }
+        <div className="roll-panel">
+          <div className="roll-panel__row roll-panel__row--main">
+            <div className="roll-panel__last">
+              <span className="roll-panel__label">Last roll</span>
+              {lastRoll ? (
+                <div className="dice-card dice-card--single">
+                  <div className="dice-face">{rollNumbers[lastRoll]}</div>
+                  <div className="dice-label">{rollLabels[lastRoll]}</div>
+                </div>
+              ) : (
+                <div className="dice-placeholder roll-panel__placeholder">
+                  Waiting on rolls...
+                </div>
+              )}
+            </div>
+            <div className="roll-panel__actions">
+              <button
+                className="primary-button roll-button"
+                type="button"
+                onClick={handleRoll}
+                disabled={!isConnected || isRolling || walletStatus === "connecting"}
               >
-                <div className="dice-face">{rollNumbers[roll]}</div>
-                <div className="dice-label">{rollLabels[roll]}</div>
-              </div>
-            ))
-          ) : (
-            <div className="dice-placeholder">Waiting on rolls...</div>
-          )}
-        </button>
+                {rollButtonLabel}
+              </button>
+              <button
+                className="ghost-button roll-history-button"
+                type="button"
+                onClick={() => setIsDiceHistoryOpen(true)}
+                disabled={diceRolls.length === 0}
+              >
+                History
+              </button>
+            </div>
+          </div>
+          {rollStatusMessage ? (
+            <div className="roll-panel__status">{rollStatusMessage}</div>
+          ) : null}
+        </div>
 
         <section className="shops-row">
           {rollOrder.map((roll, index) => {
@@ -715,6 +1512,13 @@ export default function App() {
               (sum, [, amount]) => sum + amount,
               0
             );
+            const accountRollEntry = accountSnapshot?.per_roll_bets.find(
+              (entry) => entry.roll === roll
+            );
+            const accountBetDetails = (accountRollEntry?.bets ?? [])
+              .map(parseAccountBetPlacement)
+              .filter((entry): entry is AccountBetDetail => entry !== null);
+            const hasAccountBets = accountBetDetails.length > 0;
             const shopClassName = buildShopClasses({
               hasReward: rewards.length > 0,
               hasTableBets,
@@ -805,8 +1609,32 @@ export default function App() {
                     <div className="shop-window">
                       {!isExpanded ? (
                         <div className="shop-meta">
-                          <span>Chips: {formatNumber(totalChips ?? 0)}</span>
-                          <span>Straps: {formatNumber(totalStrapBets)}</span>
+                          <div className="shop-meta__section">
+                            <span className="shop-meta__title">Your bets</span>
+                            {hasAccountBets ? (
+                              <div className="shop-meta__stack">
+                                {accountBetDetails.map((detail, detailIndex) => (
+                                  <span key={`bet-${roll}-${detailIndex}`}>
+                                    {detail.kind === "chip"
+                                      ? `Chip x${formatNumber(detail.amount)}`
+                                      : `${formatRewardCompact(detail.strap)} x${formatNumber(
+                                          detail.amount
+                                        )}`}
+                                    {typeof detail.betRollIndex === "number"
+                                      ? ` @${detail.betRollIndex}`
+                                      : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="shop-meta__muted">None yet.</span>
+                            )}
+                          </div>
+                          <div className="shop-meta__section">
+                            <span className="shop-meta__title">Table totals</span>
+                            <span>Chips: {formatNumber(totalChips ?? 0)}</span>
+                            <span>Straps: {formatNumber(totalStrapBets)}</span>
+                          </div>
                         </div>
                       ) : null}
                       {isExpanded ? (
@@ -830,7 +1658,24 @@ export default function App() {
                           </div>
                           <div className="shop-window__section">
                             <h3>Your bets</h3>
-                            <div className="shop-window__muted">TBD</div>
+                            {accountBetDetails.length > 0 ? (
+                              <div className="shop-window__stack">
+                                {accountBetDetails.map((detail, detailIndex) => (
+                                  <div key={`account-bet-${roll}-${detailIndex}`}>
+                                    {detail.kind === "chip"
+                                      ? `Chip x${formatNumber(detail.amount)}`
+                                      : `${formatRewardCompact(detail.strap)} x${formatNumber(
+                                          detail.amount
+                                        )}`}
+                                    {typeof detail.betRollIndex === "number"
+                                      ? ` @${detail.betRollIndex}`
+                                      : ""}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="shop-window__muted">No bets yet.</div>
+                            )}
                           </div>
                           <div className="shop-window__section">
                             <h3>Modifiers</h3>
@@ -998,21 +1843,84 @@ export default function App() {
         />
       ) : null}
 
+      {isClosetOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Wardrobe</div>
+                <h2 className="modal__title">Closet</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsClosetOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {ownedStraps.length > 0 ? (
+                <div className="closet-list">
+                  {closetGroups.map((group) => (
+                    <div key={`closet-kind-${group.kind}`} className="closet-kind">
+                      <div className="closet-kind__badge">
+                        <div className="closet-kind__icon" aria-hidden="true">
+                          {group.emoji}
+                        </div>
+                      </div>
+                      <div className="closet-kind__items">
+                        {group.entries.map((entry) => (
+                          <div
+                            key={`closet-${entry.assetId}`}
+                            className="closet-variant"
+                          >
+                            <div className="closet-variant__title">
+                              {modifierEmojis[entry.strap.modifier] ?? ""}
+                              L{entry.strap.level} · {formatQuantity(entry.amount)}
+                            </div>
+                            <div className="closet-variant__asset">
+                              Asset: {formatAssetId(entry.assetId)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="modal-muted">No straps yet.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <footer className="street-footer">
-        <button
-          className="ghost-button"
-          type="button"
-          onClick={() => setIsGamesOpen(true)}
-        >
-          Previous games
-        </button>
-        <button
-          className="ghost-button"
-          type="button"
-          onClick={() => setIsInfoOpen(true)}
-        >
-          Game info
-        </button>
+        <div className="footer-actions">
+          <div className="chips-banner">{formatChipUnits(chipBalance)} CHIPS</div>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() => setIsClosetOpen(true)}
+          >
+            STRAPS CLOSET
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() => setIsGamesOpen(true)}
+          >
+            Previous games
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() => setIsInfoOpen(true)}
+          >
+            Game info
+          </button>
+        </div>
         <div className="last-updated">
           {lastUpdated ? `Updated ${lastUpdated}` : "Not updated yet"}
           {error ? ` · ⚠️ ${error}` : ""}
@@ -1035,19 +1943,110 @@ export default function App() {
                 Close
               </button>
             </div>
-            <div className="modal__body">
-              <div className="modal-card">
-                <h3>Recent games</h3>
-                <div className="modal-muted">Coming soon.</div>
-              </div>
-              <div className="modal-card">
-                <h3>Claim rewards</h3>
-                <div className="modal-muted">
-                  Rewards will show here when available.
-                </div>
-                <button className="primary-button" type="button">
-                  Claim all
-                </button>
+            <div className="modal__body modal__body--scroll">
+              <div className="modal-card modal-card--wide">
+                <h3>Unclaimed history</h3>
+                {gameHistory.length > 0 ? (
+                  <div className="history-list">
+                    {gameHistory.map((entry) => {
+                      const accountBets = entry.account?.per_roll_bets ?? [];
+                      const accountBetsSummary = summarizeBetsByKind(
+                        accountBets.flatMap((bets) => bets.bets)
+                      );
+                      const hasClaimable = hasClaimableBets(entry.rolls, accountBets);
+                      const claimedLabel = entry.claimed
+                        ? "Claimed"
+                        : hasClaimable
+                        ? "Unclaimed"
+                        : "Nothing to claim";
+                      const canClaim = !entry.claimed && hasClaimable;
+                      return (
+                        <div
+                          key={`history-${entry.gameId}`}
+                          className="history-item"
+                        >
+                          <div className="history-item__header">
+                            <div>
+                              <div className="history-item__title">
+                                Game {entry.gameId}
+                              </div>
+                              <div className="history-item__status">
+                                {claimedLabel}
+                              </div>
+                            </div>
+                            <button
+                              className="primary-button"
+                              type="button"
+                              disabled={!canClaim}
+                            >
+                              Claim
+                            </button>
+                          </div>
+                          <div className="history-item__detail">
+                            <span>Rolls:</span>{" "}
+                            {entry.rolls.length > 0
+                              ? entry.rolls
+                                  .map((roll, index) => {
+                                    const activeModifiers = entry.modifiers
+                                      .filter(
+                                        (modifier) =>
+                                          modifier.modifierRoll === roll &&
+                                          modifier.rollIndex <= index
+                                      )
+                                      .map(
+                                        (modifier) =>
+                                          modifierEmojis[modifier.modifier] ?? ""
+                                      )
+                                      .filter(Boolean)
+                                      .join("");
+                                    return `${rollLabels[roll]}${
+                                      activeModifiers ? ` ${activeModifiers}` : ""
+                                    }`;
+                                  })
+                                  .join(", ")
+                              : "—"}
+                          </div>
+                          <div className="history-item__detail">
+                            <span>Rewards:</span>{" "}
+                            {entry.strapRewards.length > 0
+                              ? entry.strapRewards
+                                  .map(
+                                    ([roll, strap, amount]) =>
+                                      `${rollLabels[roll]} ${formatRewardCompact(
+                                        strap
+                                      )}/${formatNumber(amount)}`
+                                  )
+                                  .join(", ")
+                              : "—"}
+                          </div>
+                          <div className="history-item__detail">
+                            <span>Your bets:</span>{" "}
+                            {accountBetsSummary.chipTotal > 0 ||
+                            accountBetsSummary.straps.length > 0
+                              ? [
+                                  accountBetsSummary.chipTotal > 0
+                                    ? `${formatNumber(
+                                        accountBetsSummary.chipTotal
+                                      )} chips`
+                                    : null,
+                                  ...accountBetsSummary.straps.map(
+                                    ([strap, amount]) =>
+                                      `${formatRewardCompact(strap)} x${formatNumber(
+                                        amount
+                                      )}`
+                                  ),
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ")
+                              : "—"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="modal-muted">No previous games yet.</div>
+                )}
               </div>
             </div>
           </div>
@@ -1080,6 +2079,17 @@ export default function App() {
                   <div>
                     Chip bets:{" "}
                     {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
+                  </div>
+                </div>
+              </div>
+              <div className="modal-card">
+                <h3>Assets</h3>
+                <div className="modal-stack">
+                  <div>
+                    Base: {formatAssetLabel(baseAssetId, baseAssetTicker)}
+                  </div>
+                  <div>
+                    Chips: {formatAssetLabel(chipAssetId, chipAssetTicker)}
                   </div>
                 </div>
               </div>
@@ -1138,20 +2148,28 @@ export default function App() {
             </div>
             <div className="modal__body">
               <div className="modal-card">
-                <div className="modal-stack">
-                  {(snapshot?.rolls ?? []).length > 0 ? (
-                    snapshot?.rolls
+                {(snapshot?.rolls ?? []).length > 0 ? (
+                  <div className="roll-history-grid">
+                    {snapshot?.rolls
                       .slice()
                       .reverse()
                       .map((roll, index) => (
-                        <div key={`roll-history-${roll}-${index}`}>
-                          {rollNumbers[roll]} · {rollLabels[roll]}
+                        <div
+                          key={`roll-history-${roll}-${index}`}
+                          className="roll-history-item"
+                        >
+                          <span className="roll-history-index">
+                            #{snapshot?.rolls.length - index}
+                          </span>
+                          <span>
+                            {rollNumbers[roll]} · {rollLabels[roll]}
+                          </span>
                         </div>
-                      ))
-                  ) : (
-                    <div className="modal-muted">No rolls yet.</div>
-                  )}
-                </div>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="modal-muted">No rolls yet.</div>
+                )}
               </div>
             </div>
           </div>
