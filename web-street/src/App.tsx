@@ -2338,7 +2338,7 @@ export default function App() {
         })}
       </div>
     ) : (
-      <div className="modal-muted">{emptyLabel}</div>
+      <div className="modal-muted modal-muted--tall">{emptyLabel}</div>
     );
 
   return (
@@ -2853,7 +2853,7 @@ export default function App() {
 
       {betTargetRoll ? (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal">
+          <div className="modal modal--games">
             <div className="modal__header">
               <div>
                 <div className="modal__eyebrow">Bet slip</div>
@@ -2866,7 +2866,7 @@ export default function App() {
               </button>
             </div>
             <div className="modal__body">
-              <div className="modal-card modal-card--wide">
+              <div className="modal-card modal-card--wide modal-card--games">
                 {betStatus === "success" ? (
                   <div className="bet-form">
                     <div className="bet-field">

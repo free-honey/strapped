@@ -1356,6 +1356,14 @@ button {
   padding-right: 6px;
 }
 
+.modal--games .modal__body--scroll {
+  min-height: 380px;
+}
+
+.modal--games {
+  min-height: 520px;
+}
+
 .modal-card {
   border: 2px solid #dcc8a4;
   border-radius: 14px;
@@ -1368,6 +1376,10 @@ button {
 
 .modal-card--wide {
   grid-column: 1 / -1;
+}
+
+.modal-card--games {
+  min-height: 380px;
 }
 
 .modal-tabs {
@@ -1395,6 +1407,10 @@ button {
   background: rgba(255, 255, 255, 0.9);
   color: var(--ink);
   box-shadow: 0 2px 6px rgba(60, 45, 34, 0.1);
+}
+
+.modal-muted--tall {
+  min-height: 520px;
 }
 
 .history-list {
