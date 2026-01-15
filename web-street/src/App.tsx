@@ -104,6 +104,22 @@ type HistoryEntry = {
   claimed: boolean;
 };
 
+type ClaimResult = {
+  gameId: number;
+  chipWon: number | null;
+  chipBet: number | null;
+  netChip: number | null;
+  betDetails: Array<{
+    roll: Roll;
+    kind: "chip" | "strap";
+    amount: number;
+    strap?: Strap;
+    betRollIndex?: number;
+  }>;
+  straps: [Strap, number][];
+  txId: string | null;
+};
+
 type OwnedStrap = {
   assetId: string;
   strap: Strap;
@@ -786,6 +802,18 @@ export default function App() {
   const [modifierPurchaseError, setModifierPurchaseError] = useState<string | null>(
     null
   );
+  const [claimStatus, setClaimStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimGameId, setClaimGameId] = useState<number | null>(null);
+  const [claimResult, setClaimResult] = useState<ClaimResult | null>(null);
+  const [claimModifierEntry, setClaimModifierEntry] = useState<HistoryEntry | null>(
+    null
+  );
+  const [claimModifierSelection, setClaimModifierSelection] = useState<string[]>(
+    []
+  );
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -1246,6 +1274,16 @@ export default function App() {
     setBetTxId(null);
     setBetStatus("idle");
   };
+  const closeClaimModifier = () => {
+    setClaimModifierEntry(null);
+    setClaimModifierSelection([]);
+  };
+  const closeClaimResult = () => {
+    setClaimResult(null);
+    setClaimError(null);
+    setClaimStatus("idle");
+    setClaimGameId(null);
+  };
   const isAnyModalOpen = Boolean(
     activeRoll ||
       isGamesOpen ||
@@ -1254,7 +1292,9 @@ export default function App() {
       isClosetOpen ||
       betTargetRoll ||
       isStrapKindPickerOpen ||
-      isStrapPickerOpen
+      isStrapPickerOpen ||
+      Boolean(claimModifierEntry) ||
+      Boolean(claimResult)
   );
 
   useEffect(() => {
@@ -1268,6 +1308,15 @@ export default function App() {
       }
 
       event.preventDefault();
+      if (claimModifierEntry) {
+        setClaimModifierEntry(null);
+        setClaimModifierSelection([]);
+        return;
+      }
+      if (claimResult) {
+        closeClaimResult();
+        return;
+      }
       if (isStrapPickerOpen) {
         setIsStrapPickerOpen(false);
         return;
@@ -1316,6 +1365,8 @@ export default function App() {
     isInfoOpen,
     isGamesOpen,
     activeRoll,
+    claimModifierEntry,
+    claimResult,
   ]);
 
   useEffect(() => {
@@ -1603,6 +1654,90 @@ export default function App() {
     }
   };
 
+  const handleClaimRewards = async (
+    entry: HistoryEntry,
+    enabledModifiers: Array<[Roll, string]>
+  ) => {
+    setClaimError(null);
+    setClaimGameId(entry.gameId);
+
+    if (!isConnected || !wallet) {
+      setWalletError("Connect wallet to claim");
+      setClaimError("Connect wallet to claim");
+      setClaimStatus("error");
+      return;
+    }
+
+    setClaimStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions
+        .claim_rewards(entry.gameId, enabledModifiers)
+        .call();
+      setClaimStatus("pending");
+      await response.waitForResult();
+      setClaimStatus("success");
+
+      const accountBets = entry.account?.per_roll_bets ?? [];
+      const accountBetPlacements = accountBets.flatMap((rollEntry) =>
+        rollEntry.bets
+          .map((bet) => {
+            const parsed = parseAccountBetPlacement(bet);
+            if (!parsed) {
+              return null;
+            }
+            return {
+              roll: rollEntry.roll,
+              kind: parsed.kind,
+              amount: parsed.amount,
+              strap: parsed.kind === "strap" ? parsed.strap : undefined,
+              betRollIndex: parsed.betRollIndex,
+            };
+          })
+          .filter(
+            (
+              bet
+            ): bet is {
+              roll: Roll;
+              kind: "chip" | "strap";
+              amount: number;
+              strap?: Strap;
+              betRollIndex?: number;
+            } => bet !== null
+          )
+      );
+      const accountBetsSummary = summarizeBetsByKind(
+        accountBets.flatMap((bets) => bets.bets)
+      );
+      const chipWon = entry.account?.claimed_rewards?.[0] ?? null;
+      const chipBet = accountBetsSummary.chipTotal;
+      const netChip =
+        chipWon !== null && chipBet !== null ? chipWon - chipBet : null;
+      const straps = entry.account?.claimed_rewards?.[1] ?? [];
+
+      setClaimResult({
+        gameId: entry.gameId,
+        chipWon,
+        chipBet,
+        netChip,
+        betDetails: accountBetPlacements,
+        straps,
+        txId: response.transactionId,
+      });
+
+      setGameHistory((prev) =>
+        prev.map((item) =>
+          item.gameId === entry.gameId ? { ...item, claimed: true } : item
+        )
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Claim failed";
+      setClaimError(message);
+      setClaimStatus("error");
+    }
+  };
+
   const isRolling = rollStatus === "signing" || rollStatus === "pending";
   const rollButtonLabel = (() => {
     if (!isConnected) {
@@ -1644,6 +1779,7 @@ export default function App() {
     return null;
   })();
   const isBetBusy = betStatus === "signing" || betStatus === "pending";
+  const isClaimBusy = claimStatus === "signing" || claimStatus === "pending";
   const selectedBetStrap = ownedStraps.find(
     (entry) => entry.assetId === betStrapAssetId
   );
@@ -2498,6 +2634,33 @@ export default function App() {
                       const accountBetsSummary = summarizeBetsByKind(
                         accountBets.flatMap((bets) => bets.bets)
                       );
+                      const accountBetDetails = accountBets.flatMap((rollEntry) =>
+                        rollEntry.bets
+                          .map((bet) => {
+                            const parsed = parseAccountBetPlacement(bet);
+                            if (!parsed) {
+                              return null;
+                            }
+                            return {
+                              roll: rollEntry.roll,
+                              kind: parsed.kind,
+                              amount: parsed.amount,
+                              strap: parsed.kind === "strap" ? parsed.strap : undefined,
+                              betRollIndex: parsed.betRollIndex,
+                            };
+                          })
+                          .filter(
+                            (
+                              bet
+                            ): bet is {
+                              roll: Roll;
+                              kind: "chip" | "strap";
+                              amount: number;
+                              strap?: Strap;
+                              betRollIndex?: number;
+                            } => bet !== null
+                          )
+                      );
                       const hasClaimable = hasClaimableBets(entry.rolls, accountBets);
                       const claimedLabel = entry.claimed
                         ? "Claimed"
@@ -2505,6 +2668,33 @@ export default function App() {
                         ? "Unclaimed"
                         : "Nothing to claim";
                       const canClaim = !entry.claimed && hasClaimable;
+                      const isClaimingGame = claimGameId === entry.gameId;
+                      const claimButtonLabel = isClaimingGame
+                        ? claimStatus === "signing"
+                          ? "Signing..."
+                          : claimStatus === "pending"
+                          ? "Claiming..."
+                          : claimStatus === "error"
+                          ? "Claim failed"
+                          : claimStatus === "success"
+                          ? "Claimed"
+                          : "Claim"
+                        : "Claim";
+                      const claimDisabled =
+                        !canClaim || (isClaimBusy && !isClaimingGame);
+                      const handleClaimClick = () => {
+                        if (entry.modifiers.length > 0) {
+                          setClaimModifierEntry(entry);
+                          setClaimModifierSelection(
+                            entry.modifiers.map(
+                              (modifier) =>
+                                `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
+                            )
+                          );
+                          return;
+                        }
+                        handleClaimRewards(entry, []);
+                      };
                       return (
                         <div
                           key={`history-${entry.gameId}`}
@@ -2522,9 +2712,15 @@ export default function App() {
                             <button
                               className="primary-button"
                               type="button"
-                              disabled={!canClaim}
+                              disabled={claimDisabled}
+                              onClick={handleClaimClick}
+                              title={
+                                isClaimingGame && claimStatus === "error"
+                                  ? claimError ?? undefined
+                                  : undefined
+                              }
                             >
-                              Claim
+                              {claimButtonLabel}
                             </button>
                           </div>
                           <div className="history-item__detail">
@@ -2585,6 +2781,36 @@ export default function App() {
                                   .join(", ")
                               : "—"}
                           </div>
+                          {accountBetDetails.length > 0 ? (
+                            <div className="history-item__detail history-item__detail--tight">
+                              <span>Bets detail:</span>
+                              <div className="history-bets">
+                                {accountBetDetails.map((bet, index) => {
+                                  const betIndexLabel =
+                                    typeof bet.betRollIndex === "number"
+                                      ? ` @${bet.betRollIndex}`
+                                      : "";
+                                  const betLabel =
+                                    bet.kind === "chip"
+                                      ? `${formatNumber(bet.amount)} chips`
+                                      : bet.strap
+                                      ? `${formatRewardCompact(
+                                          bet.strap
+                                        )} x${formatNumber(bet.amount)}`
+                                      : `strap x${formatNumber(bet.amount)}`;
+                                  return (
+                                    <div
+                                      key={`history-bet-${entry.gameId}-${index}`}
+                                      className="history-bet-line"
+                                    >
+                                      {rollLabels[bet.roll]}: {betLabel}
+                                      {betIndexLabel}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -2669,6 +2895,208 @@ export default function App() {
                 ) : (
                   <div className="modal-muted">No shop entries yet.</div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {claimModifierEntry && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Claim</div>
+                <h2 className="modal__title">
+                  Apply modifiers for game {claimModifierEntry.gameId}?
+                </h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={closeClaimModifier}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body">
+              <div className="modal-card modal-card--wide">
+                <div className="modal-stack">
+                  {claimModifierEntry.modifiers.map((modifier, index) => {
+                    const key = `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`;
+                    const isSelected = claimModifierSelection.includes(key);
+                    return (
+                      <label
+                        key={`claim-mod-${key}-${index}`}
+                        className="claim-modifier"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setClaimModifierSelection((prev) =>
+                              checked
+                                ? [...prev, key]
+                                : prev.filter((value) => value !== key)
+                            );
+                          }}
+                        />
+                        <span className="claim-modifier__box" aria-hidden="true" />
+                        <span className="claim-modifier__label">
+                          {modifierEmojis[modifier.modifier] ?? ""}{" "}
+                          {modifier.modifier} · {rollLabels[modifier.modifierRoll]} @
+                          {modifier.rollIndex}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={closeClaimModifier}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => {
+                      const enabledModifiers = claimModifierEntry.modifiers
+                        .filter((modifier) =>
+                          claimModifierSelection.includes(
+                            `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
+                          )
+                        )
+                        .map((modifier) => [
+                          modifier.modifierRoll,
+                          modifier.modifier,
+                        ]) as Array<[Roll, string]>;
+                      closeClaimModifier();
+                      handleClaimRewards(claimModifierEntry, enabledModifiers);
+                    }}
+                  >
+                    Claim rewards
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {claimResult && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--claim-result">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Claim</div>
+                <h2 className="modal__title">
+                  Claimed game {claimResult.gameId}
+                </h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={closeClaimResult}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body">
+              <div className="modal-card modal-card--wide">
+                <div className="modal-stack">
+                  <div className="modal-row">
+                    <span>Chips won</span>
+                    <span>
+                      {claimResult.chipWon === null
+                        ? "Awaiting indexer"
+                        : formatNumber(claimResult.chipWon)}
+                    </span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Bet total</span>
+                    <span>{formatNumber(claimResult.chipBet)}</span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Net</span>
+                    <span>
+                      {claimResult.chipWon === null
+                        ? "—"
+                        : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
+                            Math.abs(claimResult.netChip)
+                          )}`}
+                    </span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Your bets</span>
+                    <span>
+                      {claimResult.betDetails.length > 0
+                        ? "See list"
+                        : "No bets recorded."}
+                    </span>
+                  </div>
+                  {claimResult.betDetails.length > 0 ? (
+                    <div className="modal-bets">
+                      {claimResult.betDetails.map((bet, index) => {
+                        const rollLabel = rollLabels[bet.roll];
+                        const betIndexLabel =
+                          typeof bet.betRollIndex === "number"
+                            ? ` @${bet.betRollIndex}`
+                            : "";
+                        const betLabel =
+                          bet.kind === "chip"
+                            ? `${formatNumber(bet.amount)} chips`
+                            : bet.strap
+                            ? `${formatRewardCompact(bet.strap)} x${formatNumber(
+                                bet.amount
+                              )}`
+                            : `strap x${formatNumber(bet.amount)}`;
+                        return (
+                          <div
+                            key={`claim-bet-${claimResult.gameId}-${index}`}
+                            className="modal-bet-line"
+                          >
+                            {rollLabel}: {betLabel}
+                            {betIndexLabel}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className="modal-row">
+                    <span>Straps</span>
+                    <span>
+                      {claimResult.straps.length > 0
+                        ? claimResult.straps
+                            .map(
+                              ([strap, amount]) =>
+                                `${formatRewardCompact(strap)} x${formatNumber(amount)}`
+                            )
+                            .join(", ")
+                        : "No strap rewards yet."}
+                    </span>
+                  </div>
+                  {claimResult.txId ? (
+                    <div className="modal-muted">
+                      Tx: {claimResult.txId.slice(0, 8)}…
+                    </div>
+                  ) : null}
+                  <div className="modal-muted">
+                    Rewards may take a moment to index.
+                  </div>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={closeClaimResult}
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             </div>
           </div>

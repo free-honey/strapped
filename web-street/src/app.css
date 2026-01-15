@@ -1247,6 +1247,24 @@ button {
   animation: modalPop 0.3s ease both;
 }
 
+.modal--claim-result {
+  font-size: 16px;
+}
+
+.modal--claim-result .modal__title {
+  font-size: 28px;
+}
+
+.modal--claim-result .modal-row {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.modal--claim-result .modal-bets,
+.modal--claim-result .modal-muted {
+  font-size: 14px;
+}
+
 .modal--tall {
   max-height: 85vh;
 }
@@ -1342,6 +1360,27 @@ button {
 .history-item__detail span {
   color: var(--ink);
   font-weight: 600;
+}
+
+.history-item__detail--tight {
+  gap: 6px;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-bets {
+  border: 1px dashed rgba(60, 45, 34, 0.25);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-bet-line {
+  font-size: 13px;
+  color: var(--ink);
 }
 
 .closet-list {
@@ -1588,6 +1627,71 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.modal-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.modal-bets {
+  border: 1px dashed #dcc8a4;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.modal-bet-line {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.claim-modifier {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.claim-modifier input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.claim-modifier__box {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 2px solid #2e221a;
+  background: rgba(255, 255, 255, 0.9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.claim-modifier input:checked + .claim-modifier__box::after {
+  content: "✓";
+  font-weight: 700;
+}
+
+.claim-modifier__label {
+  font-weight: 600;
 }
 
 .modal-muted {
