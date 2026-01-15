@@ -3082,16 +3082,53 @@ export default function App() {
                           </div>
                           <div className="history-item__detail">
                             <span>Rewards:</span>{" "}
-                            {entry.strapRewards.length > 0
-                              ? entry.strapRewards
-                                  .map(
-                                    ([roll, strap, amount]) =>
-                                      `${rollLabels[roll]} ${formatRewardCompact(
-                                        strap
-                                      )}/${formatNumber(amount)}`
-                                  )
-                                  .join(", ")
-                              : "—"}
+                            {(() => {
+                              const rewardTiles = rollOrder
+                                .map((roll) => {
+                                  const items = entry.strapRewards.filter(
+                                    ([rewardRoll]) => rewardRoll === roll
+                                  );
+                                  return items.length > 0 ? { roll, items } : null;
+                                })
+                                .filter(
+                                  (
+                                    tile
+                                  ): tile is {
+                                    roll: Roll;
+                                    items: [Roll, Strap, number][];
+                                  } => tile !== null
+                                );
+                              if (rewardTiles.length === 0) {
+                                return "—";
+                              }
+                              return (
+                                <div className="history-rewards-grid">
+                                  {rewardTiles.map((tile) => (
+                                    <div
+                                      key={`history-reward-${entry.gameId}-${tile.roll}`}
+                                      className="history-reward-tile"
+                                    >
+                                      <div className="history-reward-tile__title">
+                                        {rollNumbers[tile.roll]}
+                                      </div>
+                                      <div className="history-reward-tile__items">
+                                        {tile.items.map(
+                                          ([, strap, amount], rewardIndex) => (
+                                            <div
+                                              key={`history-reward-${entry.gameId}-${tile.roll}-${rewardIndex}`}
+                                              className="history-reward-tile__item"
+                                            >
+                                              {formatRewardCompact(strap)}/
+                                              {formatNumber(amount)}
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div className="history-item__detail">
                             <span>Your bets:</span>{" "}
