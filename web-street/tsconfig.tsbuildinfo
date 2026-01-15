@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/abi/types/strapped.ts","./src/abi/types/strappedfactory.ts","./src/abi/types/common.ts","./src/abi/types/index.ts","./src/fuel/client.ts","./src/fuel/config.ts"],"version":"5.9.3"}

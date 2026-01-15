@@ -2,16 +2,18 @@ import {
   useAccount,
   useBalance,
   useConnectUI,
+  useDisconnect,
   useIsConnected,
   useProvider,
   useSelectNetwork,
   useWallet,
 } from "@fuels/react";
-import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
 const POLL_INTERVAL_MS = 1000;
+const MAX_OWED_PERCENTAGE = 5;
 
 type FetchStatus = "idle" | "loading" | "ok" | "error";
 
@@ -102,6 +104,22 @@ type HistoryEntry = {
   strapRewards: [Roll, Strap, number][];
   account: AccountSnapshot | null;
   claimed: boolean;
+};
+
+type ClaimResult = {
+  gameId: number;
+  chipWon: number | null;
+  chipBet: number | null;
+  netChip: number | null;
+  betDetails: Array<{
+    roll: Roll;
+    kind: "chip" | "strap";
+    amount: number;
+    strap?: Strap;
+    betRollIndex?: number;
+  }>;
+  straps: [Strap, number][];
+  txId: string | null;
 };
 
 type OwnedStrap = {
@@ -728,6 +746,19 @@ const rollHitAfterBet = (
   rolls: Roll[]
 ) => rolls.some((roll, index) => roll === targetRoll && betRollIndex <= index);
 
+const rollHitAfterBetWithModifier = (
+  targetRoll: Roll,
+  betRollIndex: number,
+  modifierRollIndex: number,
+  rolls: Roll[]
+) =>
+  rolls.some(
+    (roll, index) =>
+      roll === targetRoll &&
+      betRollIndex <= index &&
+      modifierRollIndex <= index
+  );
+
 const hasClaimableBets = (
   rolls: Roll[],
   perRollBets: NormalizedRollBets[]
@@ -751,6 +782,138 @@ const hasClaimableBets = (
   return false;
 };
 
+const normalizeChipAmount = (value: unknown): number | null => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (value && typeof value === "object") {
+    const record = value as { toString?: () => string };
+    if (typeof record.toString === "function") {
+      const parsed = Number(record.toString());
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const normalizeIdentityAddress = (value: unknown): string | null => {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value.toLowerCase();
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.Address === "string") {
+      return record.Address.toLowerCase();
+    }
+    if (record.Address && typeof record.Address === "object") {
+      const addressRecord = record.Address as Record<string, unknown>;
+      if (typeof addressRecord.value === "string") {
+        return addressRecord.value.toLowerCase();
+      }
+    }
+  }
+  return null;
+};
+
+const extractClaimLogSummary = (
+  logs: unknown[],
+  walletAddress: string | null
+): { chips: number | null; straps: [Strap, number][] } => {
+  const normalizedWallet = walletAddress?.toLowerCase() ?? null;
+  for (const log of logs) {
+    if (!log || typeof log !== "object") {
+      continue;
+    }
+    const record = log as Record<string, unknown>;
+    if (!("total_chips_winnings" in record)) {
+      continue;
+    }
+    if (normalizedWallet) {
+      const identity =
+        "player" in record
+          ? record.player
+          : "identity" in record
+          ? record.identity
+          : null;
+      const normalizedIdentity = normalizeIdentityAddress(identity);
+      if (normalizedIdentity && normalizedIdentity !== normalizedWallet) {
+        continue;
+      }
+    }
+    const chips = normalizeChipAmount(record.total_chips_winnings);
+    const straps = Array.isArray(record.total_strap_winnings)
+      ? record.total_strap_winnings
+          .map((entry) => {
+            if (!Array.isArray(entry) || entry.length < 2) {
+              return null;
+            }
+            const strap = parseStrap(entry[0]);
+            const amount = normalizeChipAmount(entry[1]);
+            return strap && amount !== null ? ([strap, amount] as [Strap, number]) : null;
+          })
+          .filter((entry): entry is [Strap, number] => entry !== null)
+      : [];
+    return { chips, straps };
+  }
+  return { chips: null, straps: [] };
+};
+
+const eligibleClaimModifiers = (entry: HistoryEntry) => {
+  if (entry.rolls.length === 0) {
+    return [];
+  }
+  const perRollBets = entry.account?.per_roll_bets ?? [];
+  if (perRollBets.length === 0) {
+    return [];
+  }
+  const strapBets = perRollBets.flatMap((rollEntry) =>
+    rollEntry.bets
+      .map((bet) => {
+        const parsed = parseAccountBetPlacement(bet);
+        if (!parsed || parsed.kind !== "strap") {
+          return null;
+        }
+        return {
+          roll: rollEntry.roll,
+          betRollIndex: parsed.betRollIndex ?? 0,
+        };
+      })
+      .filter(
+        (
+          bet
+        ): bet is {
+          roll: Roll;
+          betRollIndex: number;
+        } => bet !== null
+      )
+  );
+  if (strapBets.length === 0) {
+    return [];
+  }
+  return entry.modifiers.filter((modifier) =>
+    strapBets.some(
+      (bet) =>
+        bet.roll === modifier.modifierRoll &&
+        rollHitAfterBetWithModifier(
+          bet.roll,
+          bet.betRollIndex,
+          modifier.rollIndex,
+          entry.rolls
+        )
+    )
+  );
+};
+
 export default function App() {
   const baseUrl = useMemo(
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
@@ -765,6 +928,58 @@ export default function App() {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
   const [isClosetOpen, setIsClosetOpen] = useState(false);
+  const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
+  const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
+  const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
+  const [betAmount, setBetAmount] = useState("1");
+  const [betStrapKind, setBetStrapKind] = useState<string | null>(null);
+  const [betStrapAssetId, setBetStrapAssetId] = useState<string | null>(null);
+  const [isStrapKindPickerOpen, setIsStrapKindPickerOpen] = useState(false);
+  const [isStrapPickerOpen, setIsStrapPickerOpen] = useState(false);
+  const [betStatus, setBetStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [betError, setBetError] = useState<string | null>(null);
+  const [betTxId, setBetTxId] = useState<string | null>(null);
+  const [modifierPurchaseKey, setModifierPurchaseKey] = useState<string | null>(
+    null
+  );
+  const [modifierPurchaseStatus, setModifierPurchaseStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [modifierPurchaseError, setModifierPurchaseError] = useState<string | null>(
+    null
+  );
+  const [claimStatus, setClaimStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimGameId, setClaimGameId] = useState<number | null>(null);
+  const [claimResult, setClaimResult] = useState<ClaimResult | null>(null);
+  const [claimModifierEntry, setClaimModifierEntry] = useState<HistoryEntry | null>(
+    null
+  );
+  const [claimModifierOptions, setClaimModifierOptions] = useState<
+    HistoryEntry["modifiers"]
+  >([]);
+  const [claimModifierSelection, setClaimModifierSelection] = useState<string[]>(
+    []
+  );
+  const [isRollAnimating, setIsRollAnimating] = useState(false);
+  const [rollingFace, setRollingFace] = useState<Roll | null>(null);
+  const [rollLandPulse, setRollLandPulse] = useState(false);
+  const [rollFallbackFace, setRollFallbackFace] = useState<Roll | null>("Seven");
+  const [chipBalanceOverride, setChipBalanceOverride] = useState<string | null>(
+    null
+  );
+  const rollAnimationRef = useRef<number | null>(null);
+  const rollAnimationEndRef = useRef<number>(0);
+  const rollAnimationOriginRef = useRef<Roll | null>(null);
+  const rollAnimationOriginCountRef = useRef<number>(0);
+  const rollCountRef = useRef<number>(0);
+  const lastRollRef = useRef<Roll | null>(null);
+  const lastGameIdRef = useRef<number | null>(null);
+  const lastObservedRollCountRef = useRef<number>(0);
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -781,6 +996,7 @@ export default function App() {
     useState<FuelNetworkKey>(DEFAULT_NETWORK);
   const [walletError, setWalletError] = useState<string | null>(null);
   const { connect, isConnecting } = useConnectUI();
+  const { disconnect, isPending: isDisconnecting } = useDisconnect();
   const { isConnected } = useIsConnected();
   const { wallet } = useWallet();
   const { account } = useAccount();
@@ -809,6 +1025,7 @@ export default function App() {
     account: walletAddress,
     assetId: chipAssetId,
   });
+  const displayChipBalance = chipBalanceOverride ?? chipBalance;
   const closetGroups = useMemo(() => {
     if (ownedStraps.length === 0) {
       return [];
@@ -863,6 +1080,32 @@ export default function App() {
   }, [isConnected]);
 
   useEffect(() => {
+    if (betKind !== "strap") {
+      return;
+    }
+    if (!betStrapKind || !closetGroups.some((group) => group.kind === betStrapKind)) {
+      setBetStrapKind(closetGroups[0]?.kind ?? null);
+    }
+  }, [betKind, betStrapKind, closetGroups]);
+
+  useEffect(() => {
+    if (betKind !== "strap") {
+      return;
+    }
+    if (!betStrapKind) {
+      setBetStrapAssetId(null);
+      return;
+    }
+    const group = closetGroups.find((entry) => entry.kind === betStrapKind);
+    const belongsToKind = ownedStraps.some(
+      (strap) => strap.assetId === betStrapAssetId && strap.strap.kind === betStrapKind
+    );
+    if (!belongsToKind) {
+      setBetStrapAssetId(group?.entries[0]?.assetId ?? null);
+    }
+  }, [betKind, betStrapKind, betStrapAssetId, ownedStraps, closetGroups]);
+
+  useEffect(() => {
     if (!provider || !isConnected) {
       setBaseAssetId(null);
       return;
@@ -913,37 +1156,36 @@ export default function App() {
     };
   }, [isConnected, networkKey, selectNetworkAsync]);
 
-  useEffect(() => {
+  const fetchStraps = useCallback(async () => {
     if (!baseUrl) {
       setKnownStraps([]);
       return;
     }
+    try {
+      const response = await fetch(`${baseUrl}/straps`);
+      if (!response.ok) {
+        throw new Error(`strap metadata responded with ${response.status}`);
+      }
+      const payload = await response.json();
+      const straps = normalizeStrapMetadata(payload);
+      setKnownStraps(straps);
+    } catch (err) {
+      setKnownStraps([]);
+    }
+  }, [baseUrl]);
 
+  useEffect(() => {
     let cancelled = false;
     const loadStraps = async () => {
-      try {
-        const response = await fetch(`${baseUrl}/straps`);
-        if (!response.ok) {
-          throw new Error(`strap metadata responded with ${response.status}`);
-        }
-        const payload = await response.json();
-        const straps = normalizeStrapMetadata(payload);
-        if (!cancelled) {
-          setKnownStraps(straps);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setKnownStraps([]);
-        }
-      }
+      await fetchStraps();
     };
-
-    loadStraps();
-
+    if (!cancelled) {
+      loadStraps();
+    }
     return () => {
       cancelled = true;
     };
-  }, [baseUrl]);
+  }, [fetchStraps]);
 
   useEffect(() => {
     if (!baseUrl || !walletAddress) {
@@ -952,26 +1194,35 @@ export default function App() {
     }
 
     let cancelled = false;
+    let timeoutId: number | undefined;
+
     const loadAccountSnapshot = async () => {
+      if (cancelled) {
+        return;
+      }
+
       try {
         const response = await fetch(`${baseUrl}/account/${walletAddress}`);
         if (response.status === 404) {
           if (!cancelled) {
             setAccountSnapshot(null);
           }
-          return;
-        }
-        if (!response.ok) {
+        } else if (!response.ok) {
           throw new Error(`account snapshot responded with ${response.status}`);
-        }
-        const payload = (await response.json()) as AccountSnapshotResponse | null;
-        const snapshot = payload ? normalizeAccountSnapshot(payload) : null;
-        if (!cancelled) {
-          setAccountSnapshot(snapshot);
+        } else {
+          const payload = (await response.json()) as AccountSnapshotResponse | null;
+          const snapshot = payload ? normalizeAccountSnapshot(payload) : null;
+          if (!cancelled) {
+            setAccountSnapshot(snapshot);
+          }
         }
       } catch (err) {
         if (!cancelled) {
           setAccountSnapshot(null);
+        }
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(loadAccountSnapshot, POLL_INTERVAL_MS);
         }
       }
     };
@@ -980,74 +1231,100 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [baseUrl, walletAddress]);
 
-  useEffect(() => {
-    if (!provider || !walletAddress || knownStraps.length === 0) {
+  const refreshBalances = useCallback(async () => {
+    if (!provider || !walletAddress) {
       setOwnedStraps([]);
+      setChipBalanceOverride(null);
+      return;
+    }
+    try {
+      const result = await provider.getBalances(walletAddress);
+      const balances = Array.isArray(result)
+        ? result
+        : (result as { balances?: Array<{ assetId: string; amount: unknown }> })
+            .balances ?? [];
+      const byAssetId = new Map<string, string>();
+      balances.forEach((entry) => {
+        const assetId =
+          typeof entry.assetId === "string" ? entry.assetId : String(entry.assetId);
+        const normalizedAssetId = normalizeAssetIdValue(assetId);
+        if (!normalizedAssetId) {
+          return;
+        }
+        const amount =
+          typeof entry.amount === "string"
+            ? entry.amount
+            : entry.amount?.toString?.() ?? String(entry.amount);
+        byAssetId.set(normalizedAssetId, amount);
+      });
+      const owned = knownStraps
+        .map((strap) => {
+          const amount = byAssetId.get(strap.assetId);
+          if (!amount) {
+            return null;
+          }
+          try {
+            if (BigInt(amount) <= 0n) {
+              return null;
+            }
+          } catch (err) {
+            return null;
+          }
+          return {
+            assetId: strap.assetId,
+            strap: strap.strap,
+            amount,
+          };
+        })
+        .filter((entry): entry is OwnedStrap => entry !== null);
+
+      setOwnedStraps(owned);
+      setChipBalanceOverride(byAssetId.get(chipAssetId) ?? null);
+    } catch (err) {
+      setOwnedStraps([]);
+    }
+  }, [provider, walletAddress, knownStraps, chipAssetId]);
+
+  useEffect(() => {
+    if (!provider || !walletAddress) {
+      setOwnedStraps([]);
+      setChipBalanceOverride(null);
       return;
     }
 
     let cancelled = false;
-    const loadOwnedStraps = async () => {
-      try {
-        const result = await provider.getBalances(walletAddress);
-        const balances = Array.isArray(result)
-          ? result
-          : (result as { balances?: Array<{ assetId: string; amount: unknown }> })
-              .balances ?? [];
-        const byAssetId = new Map<string, string>();
-        balances.forEach((entry) => {
-          const assetId =
-            typeof entry.assetId === "string" ? entry.assetId : String(entry.assetId);
-          const normalizedAssetId = normalizeAssetIdValue(assetId);
-          if (!normalizedAssetId) {
-            return;
-          }
-          const amount =
-            typeof entry.amount === "string"
-              ? entry.amount
-              : entry.amount?.toString?.() ?? String(entry.amount);
-          byAssetId.set(normalizedAssetId, amount);
-        });
-        const owned = knownStraps
-          .map((strap) => {
-            const amount = byAssetId.get(strap.assetId);
-            if (!amount) {
-              return null;
-            }
-            try {
-              if (BigInt(amount) <= 0n) {
-                return null;
-              }
-            } catch (err) {
-              return null;
-            }
-            return {
-              assetId: strap.assetId,
-              strap: strap.strap,
-              amount,
-            };
-          })
-          .filter((entry): entry is OwnedStrap => entry !== null);
-
-        if (!cancelled) {
-          setOwnedStraps(owned);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setOwnedStraps([]);
-        }
+    const runRefresh = async () => {
+      if (cancelled) {
+        return;
       }
+      await refreshBalances();
     };
 
-    loadOwnedStraps();
+    runRefresh();
+    const intervalId = window.setInterval(runRefresh, 10000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
-  }, [provider, walletAddress, knownStraps]);
+  }, [provider, walletAddress, knownStraps, chipAssetId, refreshBalances]);
+
+  useEffect(() => {
+    if (!isClosetOpen) {
+      return;
+    }
+    const refreshCloset = async () => {
+      await fetchStraps();
+      await refreshBalances();
+    };
+    refreshCloset();
+  }, [isClosetOpen, fetchStraps, refreshBalances]);
 
   useEffect(() => {
     if (!baseUrl || !walletAddress || !snapshot) {
@@ -1141,13 +1418,10 @@ export default function App() {
     };
   }, [activeRoll]);
 
-  const openExpandedShop = (
-    roll: Roll,
-    event: React.MouseEvent<HTMLButtonElement>
-  ) => {
-    const rect = event.currentTarget.getBoundingClientRect();
+  const openExpandedShop = (roll: Roll, target: HTMLElement) => {
+    const rect = target.getBoundingClientRect();
     const targetWidth = Math.min(900, window.innerWidth * 0.92);
-    const targetHeight = Math.min(560, window.innerHeight * 0.8);
+    const targetHeight = Math.min(520, window.innerHeight * 0.74);
     const targetLeft = (window.innerWidth - targetWidth) / 2;
     const targetTop = (window.innerHeight - targetHeight) / 2;
 
@@ -1170,8 +1444,48 @@ export default function App() {
       });
     });
   };
+  const openBetModal = (roll: Roll) => {
+    setBetTargetRoll(roll);
+    setBetKind("chip");
+    setBetAmount("1");
+    setBetStrapKind(closetGroups[0]?.kind ?? null);
+    setBetStrapAssetId(closetGroups[0]?.entries[0]?.assetId ?? null);
+    setIsStrapKindPickerOpen(false);
+    setIsStrapPickerOpen(false);
+    setBetError(null);
+    setBetTxId(null);
+    setBetStatus("idle");
+  };
+  const closeBetModal = () => {
+    setBetTargetRoll(null);
+    setIsStrapKindPickerOpen(false);
+    setIsStrapPickerOpen(false);
+    setBetError(null);
+    setBetTxId(null);
+    setBetStatus("idle");
+  };
+  const closeClaimModifier = () => {
+    setClaimModifierEntry(null);
+    setClaimModifierOptions([]);
+    setClaimModifierSelection([]);
+  };
+  const closeClaimResult = () => {
+    setClaimResult(null);
+    setClaimError(null);
+    setClaimStatus("idle");
+    setClaimGameId(null);
+  };
   const isAnyModalOpen = Boolean(
-    activeRoll || isGamesOpen || isInfoOpen || isDiceHistoryOpen || isClosetOpen
+    activeRoll ||
+      isGamesOpen ||
+      isInfoOpen ||
+      isDiceHistoryOpen ||
+      isClosetOpen ||
+      betTargetRoll ||
+      isStrapKindPickerOpen ||
+      isStrapPickerOpen ||
+      Boolean(claimModifierEntry) ||
+      Boolean(claimResult)
   );
 
   useEffect(() => {
@@ -1185,11 +1499,46 @@ export default function App() {
       }
 
       event.preventDefault();
-      setActiveRoll(null);
-      setIsGamesOpen(false);
-      setIsInfoOpen(false);
-      setIsDiceHistoryOpen(false);
-      setIsClosetOpen(false);
+      if (claimModifierEntry) {
+        setClaimModifierEntry(null);
+        setClaimModifierSelection([]);
+        return;
+      }
+      if (claimResult) {
+        closeClaimResult();
+        return;
+      }
+      if (isStrapPickerOpen) {
+        setIsStrapPickerOpen(false);
+        return;
+      }
+      if (isStrapKindPickerOpen) {
+        setIsStrapKindPickerOpen(false);
+        return;
+      }
+      if (betTargetRoll) {
+        closeBetModal();
+        return;
+      }
+      if (isClosetOpen) {
+        setIsClosetOpen(false);
+        return;
+      }
+      if (isDiceHistoryOpen) {
+        setIsDiceHistoryOpen(false);
+        return;
+      }
+      if (isInfoOpen) {
+        setIsInfoOpen(false);
+        return;
+      }
+      if (isGamesOpen) {
+        setIsGamesOpen(false);
+        return;
+      }
+      if (activeRoll) {
+        setActiveRoll(null);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -1197,7 +1546,19 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isAnyModalOpen]);
+  }, [
+    isAnyModalOpen,
+    isStrapPickerOpen,
+    isStrapKindPickerOpen,
+    betTargetRoll,
+    isClosetOpen,
+    isDiceHistoryOpen,
+    isInfoOpen,
+    isGamesOpen,
+    activeRoll,
+    claimModifierEntry,
+    claimResult,
+  ]);
 
   useEffect(() => {
     if (!baseUrl) {
@@ -1313,6 +1674,19 @@ export default function App() {
     return snapshot.rolls.slice(-6).reverse();
   }, [snapshot]);
   const lastRoll = diceRolls[0] ?? null;
+  const rollCount = snapshot?.rolls.length ?? 0;
+  const baseFallbackRoll =
+    snapshot && snapshot.rolls.length === 0 ? "Seven" : rollFallbackFace;
+  const displayedRoll =
+    isRollAnimating && rollingFace ? rollingFace : lastRoll ?? baseFallbackRoll;
+  const availableBetCapacity = useMemo(() => {
+    if (!snapshot) {
+      return null;
+    }
+    const safePool = Math.max(snapshot.pot_size - snapshot.chips_owed, 0);
+    const limit = Math.floor((safePool * MAX_OWED_PERCENTAGE) / 100);
+    return Math.max(limit - snapshot.total_chip_bets, 0);
+  }, [snapshot]);
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
@@ -1365,6 +1739,21 @@ export default function App() {
     }
 
     setRollStatus("signing");
+    setIsRollAnimating(true);
+    rollAnimationOriginRef.current = lastRoll;
+    rollAnimationOriginCountRef.current = rollCount;
+    rollAnimationEndRef.current = Date.now() + 1000;
+    setRollFallbackFace(null);
+    if (rollAnimationRef.current !== null) {
+      window.clearInterval(rollAnimationRef.current);
+    }
+    rollAnimationRef.current = window.setInterval(() => {
+      setRollingFace((prev) => {
+        const currentIndex = prev ? rollOrder.indexOf(prev) : -1;
+        const nextIndex = (currentIndex + 1) % rollOrder.length;
+        return rollOrder[nextIndex] ?? rollOrder[0];
+      });
+    }, 90);
 
     try {
       const contract = createStrappedContract(wallet, networkKey);
@@ -1373,10 +1762,230 @@ export default function App() {
       setRollStatus("pending");
       await response.waitForResult();
       setRollStatus("success");
+      await refreshBalances();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Roll failed";
       setRollError(message);
       setRollStatus("error");
+    }
+  };
+
+  const handlePlaceBet = async () => {
+    setBetError(null);
+    setBetTxId(null);
+
+    if (!betTargetRoll) {
+      return;
+    }
+    if (!isConnected || !wallet) {
+      setBetError("Connect wallet to bet");
+      setBetStatus("error");
+      return;
+    }
+
+    const amount = Number(betAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setBetError("Enter a valid amount");
+      setBetStatus("error");
+      return;
+    }
+
+    const strapSelection =
+      betKind === "strap"
+        ? ownedStraps.find((entry) => entry.assetId === betStrapAssetId) ?? null
+        : null;
+    if (betKind === "strap" && !strapSelection) {
+      setBetError("Select a strap to bet");
+      setBetStatus("error");
+      return;
+    }
+
+    setBetStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const bet =
+        betKind === "chip"
+          ? { Chip: undefined }
+          : { Strap: strapSelection?.strap };
+      const assetId =
+        betKind === "chip" ? chipAssetId : strapSelection?.assetId ?? null;
+      if (!assetId) {
+        setBetError("Missing asset id for bet");
+        setBetStatus("error");
+        return;
+      }
+      const response = await contract.functions
+        .place_bet(betTargetRoll, bet, amount)
+        .callParams({
+          forward: {
+            amount,
+            assetId,
+          },
+        })
+        .call();
+      setBetTxId(response.transactionId);
+      setBetStatus("pending");
+      await response.waitForResult();
+      setBetStatus("success");
+      await refreshBalances();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Bet failed";
+      setBetError(message);
+      setBetStatus("error");
+    }
+  };
+
+  const handlePurchaseModifier = async (
+    roll: Roll,
+    entry: ModifierShopEntry,
+    entryKey: string
+  ) => {
+    setModifierPurchaseError(null);
+
+    if (!isConnected || !wallet) {
+      setModifierPurchaseError("Connect wallet to purchase");
+      setModifierPurchaseStatus("error");
+      setModifierPurchaseKey(entryKey);
+      return;
+    }
+
+    setModifierPurchaseKey(entryKey);
+    setModifierPurchaseStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions
+        .purchase_modifier(roll, entry.modifier)
+        .callParams({
+          forward: {
+            amount: entry.price,
+            assetId: chipAssetId,
+          },
+        })
+        .call();
+      setModifierPurchaseStatus("pending");
+      await response.waitForResult();
+      setModifierPurchaseStatus("success");
+      await refreshBalances();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Purchase modifier failed";
+      setModifierPurchaseError(message);
+      setModifierPurchaseStatus("error");
+    }
+  };
+
+  const handleClaimRewards = async (
+    entry: HistoryEntry,
+    enabledModifiers: Array<[Roll, string]>
+  ) => {
+    setClaimError(null);
+    setClaimGameId(entry.gameId);
+
+    if (!isConnected || !wallet) {
+      setWalletError("Connect wallet to claim");
+      setClaimError("Connect wallet to claim");
+      setClaimStatus("error");
+      return;
+    }
+
+    setClaimStatus("signing");
+
+    try {
+      let preChipBalance: bigint | null = null;
+      try {
+        const balance = await wallet.getBalance(chipAssetId);
+        preChipBalance = BigInt(balance.toString());
+      } catch (err) {
+        preChipBalance = null;
+      }
+
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions
+        .claim_rewards(entry.gameId, enabledModifiers)
+        .call();
+      setClaimStatus("pending");
+      const claimResultValue = await response.waitForResult();
+      setClaimStatus("success");
+      await refreshBalances();
+
+      let chipDelta: number | null = null;
+      try {
+        const postBalance = await wallet.getBalance(chipAssetId);
+        if (preChipBalance !== null) {
+          const postValue = BigInt(postBalance.toString());
+          const delta = postValue > preChipBalance ? postValue - preChipBalance : 0n;
+          chipDelta = Number(delta);
+        }
+      } catch (err) {
+        chipDelta = null;
+      }
+
+      const accountBets = entry.account?.per_roll_bets ?? [];
+      const accountBetPlacements = accountBets.flatMap((rollEntry) =>
+        rollEntry.bets
+          .map((bet) => {
+            const parsed = parseAccountBetPlacement(bet);
+            if (!parsed) {
+              return null;
+            }
+            return {
+              roll: rollEntry.roll,
+              kind: parsed.kind,
+              amount: parsed.amount,
+              strap: parsed.kind === "strap" ? parsed.strap : undefined,
+              betRollIndex: parsed.betRollIndex,
+            };
+          })
+          .filter(
+            (
+              bet
+            ): bet is {
+              roll: Roll;
+              kind: "chip" | "strap";
+              amount: number;
+              strap: Strap | undefined;
+              betRollIndex: number | undefined;
+            } => bet !== null
+          )
+      );
+      const accountBetsSummary = summarizeBetsByKind(
+        accountBets.flatMap((bets) => bets.bets)
+      );
+      const claimLogs =
+        claimResultValue && "logs" in claimResultValue
+          ? (claimResultValue as { logs?: unknown[] }).logs ?? []
+          : [];
+      const claimLogSummary = extractClaimLogSummary(claimLogs, walletAddress);
+      const chipWon = claimLogSummary.chips ?? chipDelta ?? null;
+      const chipBet = accountBetsSummary.chipTotal;
+      const netChip =
+        chipWon !== null && chipBet !== null ? chipWon - chipBet : null;
+      const straps =
+        claimLogSummary.straps.length > 0
+          ? claimLogSummary.straps
+          : entry.account?.claimed_rewards?.[1] ?? [];
+
+      setClaimResult({
+        gameId: entry.gameId,
+        chipWon,
+        chipBet,
+        netChip,
+        betDetails: accountBetPlacements,
+        straps,
+        txId: response.transactionId,
+      });
+
+      setGameHistory((prev) =>
+        prev.map((item) =>
+          item.gameId === entry.gameId ? { ...item, claimed: true } : item
+        )
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Claim failed";
+      setClaimError(message);
+      setClaimStatus("error");
     }
   };
 
@@ -1405,6 +2014,332 @@ export default function App() {
     }
     return isConnected ? null : "Connect wallet to play.";
   })();
+  const betStatusMessage = (() => {
+    if (betError) {
+      return betError;
+    }
+    if (betStatus === "signing") {
+      return "Signing bet...";
+    }
+    if (betStatus === "pending") {
+      return "Bet pending...";
+    }
+    if (betStatus === "success") {
+      return "Bet placed.";
+    }
+    return null;
+  })();
+  const isBetBusy = betStatus === "signing" || betStatus === "pending";
+  const isClaimBusy = claimStatus === "signing" || claimStatus === "pending";
+  const selectedBetStrap = ownedStraps.find(
+    (entry) => entry.assetId === betStrapAssetId
+  );
+  const selectedBetGroup = closetGroups.find(
+    (group) => group.kind === betStrapKind
+  );
+  const unclaimedGames = useMemo(
+    () =>
+      gameHistory.filter((entry) => {
+        const accountBets = entry.account?.per_roll_bets ?? [];
+        return !entry.claimed && hasClaimableBets(entry.rolls, accountBets);
+      }),
+    [gameHistory]
+  );
+
+  const stopRollAnimation = (showFallback: boolean, pulse: boolean) => {
+    setIsRollAnimating(false);
+    setRollingFace(null);
+    rollAnimationOriginRef.current = null;
+    rollAnimationOriginCountRef.current = rollCountRef.current;
+    if (rollAnimationRef.current !== null) {
+      window.clearInterval(rollAnimationRef.current);
+      rollAnimationRef.current = null;
+    }
+    if (showFallback) {
+      setRollFallbackFace("Seven");
+    }
+    if (pulse) {
+      setRollLandPulse(true);
+    }
+  };
+
+  useEffect(() => {
+    rollCountRef.current = rollCount;
+    lastRollRef.current = lastRoll;
+  }, [rollCount, lastRoll]);
+
+  useEffect(() => {
+    const previousCount = lastObservedRollCountRef.current;
+    lastObservedRollCountRef.current = rollCount;
+    if (!isRollAnimating && rollCount > previousCount) {
+      setRollLandPulse(true);
+    }
+  }, [rollCount, isRollAnimating]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+    if (snapshot.rolls.length === 0) {
+      setRollFallbackFace("Seven");
+    }
+    const currentGameId = snapshot.game_id;
+    if (lastGameIdRef.current !== null && currentGameId !== lastGameIdRef.current) {
+      setRollLandPulse(true);
+    }
+    lastGameIdRef.current = currentGameId;
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (!isRollAnimating) {
+      return;
+    }
+    const origin = rollAnimationOriginRef.current;
+    const originCount = rollAnimationOriginCountRef.current;
+    const hasNewRoll = rollCount > originCount || (origin && lastRoll && origin !== lastRoll);
+    if (hasNewRoll) {
+      stopRollAnimation(false, true);
+    }
+  }, [isRollAnimating, lastRoll, rollCount]);
+
+  useEffect(() => {
+    if (rollStatus !== "error") {
+      return;
+    }
+    stopRollAnimation(false, false);
+  }, [rollStatus]);
+
+  useEffect(() => {
+    if (lastRoll) {
+      setRollFallbackFace(null);
+    }
+  }, [lastRoll]);
+
+  useEffect(() => {
+    if (!rollLandPulse) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setRollLandPulse(false);
+    }, 450);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [rollLandPulse]);
+
+  const renderHistoryList = (entries: HistoryEntry[], emptyLabel: string) =>
+    entries.length > 0 ? (
+      <div className="history-list">
+        {entries.map((entry) => {
+          const accountBets = entry.account?.per_roll_bets ?? [];
+          const accountBetsSummary = summarizeBetsByKind(
+            accountBets.flatMap((bets) => bets.bets)
+          );
+          const accountBetDetails = accountBets.flatMap((rollEntry) =>
+            rollEntry.bets
+              .map((bet) => {
+                const parsed = parseAccountBetPlacement(bet);
+                if (!parsed) {
+                  return null;
+                }
+                return {
+                  roll: rollEntry.roll,
+                  kind: parsed.kind,
+                  amount: parsed.amount,
+                  strap: parsed.kind === "strap" ? parsed.strap : undefined,
+                  betRollIndex: parsed.betRollIndex,
+                };
+              })
+              .filter(
+                (
+                  bet
+                ): bet is {
+                  roll: Roll;
+                  kind: "chip" | "strap";
+                  amount: number;
+                  strap: Strap | undefined;
+                  betRollIndex: number | undefined;
+                } => bet !== null
+              )
+          );
+          const hasClaimable = hasClaimableBets(entry.rolls, accountBets);
+          const claimedLabel = entry.claimed
+            ? "Claimed"
+            : hasClaimable
+            ? "Unclaimed"
+            : "Nothing to claim";
+          const canClaim = !entry.claimed && hasClaimable;
+          const isClaimingGame = claimGameId === entry.gameId;
+          const claimButtonLabel = isClaimingGame
+            ? claimStatus === "signing"
+              ? "Signing..."
+              : claimStatus === "pending"
+              ? "Claiming..."
+              : claimStatus === "error"
+              ? "Claim failed"
+              : claimStatus === "success"
+              ? "Claimed"
+              : "Claim"
+            : "Claim";
+          const claimDisabled = !canClaim || (isClaimBusy && !isClaimingGame);
+          const handleClaimClick = () => {
+            const eligibleModifiers = canClaim ? eligibleClaimModifiers(entry) : [];
+            if (eligibleModifiers.length > 0) {
+              setClaimModifierEntry(entry);
+              setClaimModifierOptions(eligibleModifiers);
+              setClaimModifierSelection(
+                eligibleModifiers.map(
+                  (modifier) =>
+                    `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
+                )
+              );
+              return;
+            }
+            handleClaimRewards(entry, []);
+          };
+          return (
+            <div key={`history-${entry.gameId}`} className="history-item">
+              <div className="history-item__header">
+                <div>
+                  <div className="history-item__title">Game {entry.gameId}</div>
+                  <div className="history-item__status">{claimedLabel}</div>
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={claimDisabled}
+                  onClick={handleClaimClick}
+                  title={
+                    isClaimingGame && claimStatus === "error"
+                      ? claimError ?? undefined
+                      : undefined
+                  }
+                >
+                  {claimButtonLabel}
+                </button>
+              </div>
+              <div className="history-item__detail">
+                <span>Rolls:</span>{" "}
+                {entry.rolls.length > 0
+                  ? entry.rolls
+                      .map((roll, index) => {
+                        const activeModifiers = entry.modifiers
+                          .filter(
+                            (modifier) =>
+                              modifier.modifierRoll === roll &&
+                              modifier.rollIndex <= index
+                          )
+                          .map((modifier) => modifierEmojis[modifier.modifier] ?? "")
+                          .filter(Boolean)
+                          .join("");
+                        return `${rollLabels[roll]}${
+                          activeModifiers ? ` ${activeModifiers}` : ""
+                        }`;
+                      })
+                      .join(", ")
+                  : "—"}
+              </div>
+              <div className="history-item__detail">
+                <span>Rewards:</span>{" "}
+                {(() => {
+                  const rewardTiles = rollOrder
+                    .map((roll) => {
+                      const items = entry.strapRewards.filter(
+                        ([rewardRoll]) => rewardRoll === roll
+                      );
+                      return items.length > 0 ? { roll, items } : null;
+                    })
+                    .filter(
+                      (
+                        tile
+                      ): tile is {
+                        roll: Roll;
+                        items: [Roll, Strap, number][];
+                      } => tile !== null
+                    );
+                  if (rewardTiles.length === 0) {
+                    return "—";
+                  }
+                  return (
+                    <div className="history-rewards-grid">
+                      {rewardTiles.map((tile) => (
+                        <div
+                          key={`history-reward-${entry.gameId}-${tile.roll}`}
+                          className="history-reward-tile"
+                        >
+                          <div className="history-reward-tile__title">
+                            {rollNumbers[tile.roll]}
+                          </div>
+                          <div className="history-reward-tile__items">
+                            {tile.items.map(([, strap, amount], rewardIndex) => (
+                              <div
+                                key={`history-reward-${entry.gameId}-${tile.roll}-${rewardIndex}`}
+                                className="history-reward-tile__item"
+                              >
+                                {formatRewardCompact(strap)}/{formatNumber(amount)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+              <div className="history-item__detail">
+                <span>Your bets:</span>{" "}
+                {accountBetsSummary.chipTotal > 0 ||
+                accountBetsSummary.straps.length > 0
+                  ? [
+                      accountBetsSummary.chipTotal > 0
+                        ? `${formatNumber(accountBetsSummary.chipTotal)} chips`
+                        : null,
+                      ...accountBetsSummary.straps.map(
+                        ([strap, amount]) =>
+                          `${formatRewardCompact(strap)} x${formatNumber(amount)}`
+                      ),
+                    ]
+                      .filter(Boolean)
+                      .join(", ")
+                  : "—"}
+              </div>
+              {accountBetDetails.length > 0 ? (
+                <div className="history-item__detail history-item__detail--tight">
+                  <span>Bets detail:</span>
+                  <div className="history-bets">
+                    {accountBetDetails.map((bet, index) => {
+                      const betIndexLabel =
+                        typeof bet.betRollIndex === "number"
+                          ? ` @${bet.betRollIndex}`
+                          : "";
+                      const betLabel =
+                        bet.kind === "chip"
+                          ? `${formatNumber(bet.amount)} chips`
+                          : bet.strap
+                          ? `${formatRewardCompact(bet.strap)} x${formatNumber(
+                              bet.amount
+                            )}`
+                          : `strap x${formatNumber(bet.amount)}`;
+                      return (
+                        <div
+                          key={`history-bet-${entry.gameId}-${index}`}
+                          className="history-bet-line"
+                        >
+                          {rollLabels[bet.roll]}: {betLabel}
+                          {betIndexLabel}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    ) : (
+      <div className="modal-muted modal-muted--tall">{emptyLabel}</div>
+    );
 
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
@@ -1439,10 +2374,22 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            onClick={connectWallet}
-            disabled={walletStatus === "connecting"}
+            onClick={() => {
+              if (isConnected) {
+                disconnect();
+              } else {
+                connectWallet();
+              }
+            }}
+            disabled={walletStatus === "connecting" || isDisconnecting}
           >
-            {walletStatus === "connecting" ? "Connecting..." : "Connect"}
+            {walletStatus === "connecting"
+              ? "Connecting..."
+              : isDisconnecting
+                ? "Disconnecting..."
+                : isConnected
+                  ? "Disconnect"
+                  : "Connect"}
           </button>
         </div>
       </header>
@@ -1458,16 +2405,18 @@ export default function App() {
           <div className="roll-panel__row roll-panel__row--main">
             <div className="roll-panel__last">
               <span className="roll-panel__label">Last roll</span>
-              {lastRoll ? (
-                <div className="dice-card dice-card--single">
-                  <div className="dice-face">{rollNumbers[lastRoll]}</div>
-                  <div className="dice-label">{rollLabels[lastRoll]}</div>
+              {displayedRoll ? (
+                <div
+                  className={`dice-card dice-card--single${
+                    rollLandPulse ? " dice-card--land" : ""
+                  }`}
+                >
+                  <div className="dice-face">{rollNumbers[displayedRoll]}</div>
+                  <div className="dice-label">
+                    {lastRoll ? rollLabels[displayedRoll] : "NEW GAME :)"}
+                  </div>
                 </div>
-              ) : (
-                <div className="dice-placeholder roll-panel__placeholder">
-                  Waiting on rolls...
-                </div>
-              )}
+              ) : null}
             </div>
             <div className="roll-panel__actions">
               <button
@@ -1502,12 +2451,16 @@ export default function App() {
             const modifier = snapshot?.modifiers_active?.[index] ?? null;
             const modifierStory = modifier ? modifierStories[modifier] ?? null : null;
             const modifierEntries = modifierShopByRoll.get(roll) ?? [];
-            const visibleEntries = modifierEntries.filter(
-              (entry) => !entry.purchased && entry.modifier !== modifier
-            );
+            const visibleEntries = modifierEntries.filter((entry) => !entry.purchased);
+            const modifierEntry = modifier
+              ? modifierEntries.find((entry) => entry.modifier === modifier)
+              : null;
+            const shouldShowModifierBanner = Boolean(modifier) &&
+              (modifierEntry ? Boolean(modifierEntry.purchased) : true);
             const hasTableBets = Boolean(
               (totalChips ?? 0) > 0 || strapBets.length > 0
             );
+            const hasChipTableBets = Boolean((totalChips ?? 0) > 0);
             const totalStrapBets = strapBets.reduce(
               (sum, [, amount]) => sum + amount,
               0
@@ -1526,7 +2479,6 @@ export default function App() {
               index,
             });
             const isExpanded = activeRoll === roll;
-            const danglingReward = rewards[0];
             const tableBetsForRoll = (snapshot?.table_bets ?? [])
               .map((entry) => {
                 const perRoll = normalizePerRollBets(entry.per_roll_bets);
@@ -1583,6 +2535,13 @@ export default function App() {
                     "--translate-y": `${expandedOrigin.translateY}px`,
                   } as React.CSSProperties)
                 : undefined;
+            const handleShopKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+              if (event.key !== "Enter" && event.key !== " ") {
+                return;
+              }
+              event.preventDefault();
+              openExpandedShop(roll, event.currentTarget);
+            };
 
             return (
               <div key={roll} className="shop-cell">
@@ -1591,193 +2550,227 @@ export default function App() {
                     isExpanded ? " shop-frame--expanded" : ""
                   }`}
                 >
-                  <button
-                    type="button"
+                  <div
                     className={`${shopClassName}${isExpanded ? " shop-tile--expanded" : ""}${
                       isExpanded && isExpandedActive
                         ? " shop-tile--expanded-active"
                         : ""
                     }`}
-                    onClick={(event) => openExpandedShop(roll, event)}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    onClick={(event) => openExpandedShop(roll, event.currentTarget)}
+                    onKeyDown={handleShopKeyDown}
                     style={expandedStyle}
                   >
-                  <div className="shop-sign">
-                    <span className="shop-sign__label">{rollLabels[roll]}</span>
-                  </div>
-                  <div className="shop-awning" />
+                    <div className="shop-sign">
+                      <span className="shop-sign__label">{rollLabels[roll]}</span>
+                    </div>
+                    <div className="shop-awning" />
                     <div className="shop-facade">
-                    <div className="shop-window">
-                      {!isExpanded ? (
-                        <div className="shop-meta">
-                          <div className="shop-meta__section">
-                            <span className="shop-meta__title">Your bets</span>
-                            {hasAccountBets ? (
-                              <div className="shop-meta__stack">
-                                {accountBetDetails.map((detail, detailIndex) => (
-                                  <span key={`bet-${roll}-${detailIndex}`}>
-                                    {detail.kind === "chip"
-                                      ? `Chip x${formatNumber(detail.amount)}`
-                                      : `${formatRewardCompact(detail.strap)} x${formatNumber(
-                                          detail.amount
-                                        )}`}
-                                    {typeof detail.betRollIndex === "number"
-                                      ? ` @${detail.betRollIndex}`
-                                      : ""}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="shop-meta__muted">None yet.</span>
-                            )}
-                          </div>
-                          <div className="shop-meta__section">
-                            <span className="shop-meta__title">Table totals</span>
-                            <span>Chips: {formatNumber(totalChips ?? 0)}</span>
-                            <span>Straps: {formatNumber(totalStrapBets)}</span>
-                          </div>
-                        </div>
-                      ) : null}
-                      {isExpanded ? (
-                        <div className="shop-window__details">
-                          <div className="shop-window__section">
-                            <h3>Rewards</h3>
-                            {rewards.length > 0 ? (
-                              <div className="shop-window__stack">
-                                {rewards.map(([strap, amount], rewardIndex) => (
-                                  <div key={`${roll}-reward-${rewardIndex}`}>
-                                    {formatRewardCompact(strap)} ·{" "}
-                                    {formatNumber(amount)}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">
-                                None for this shop.
-                              </div>
-                            )}
-                          </div>
-                          <div className="shop-window__section">
-                            <h3>Your bets</h3>
-                            {accountBetDetails.length > 0 ? (
-                              <div className="shop-window__stack">
-                                {accountBetDetails.map((detail, detailIndex) => (
-                                  <div key={`account-bet-${roll}-${detailIndex}`}>
-                                    {detail.kind === "chip"
-                                      ? `Chip x${formatNumber(detail.amount)}`
-                                      : `${formatRewardCompact(detail.strap)} x${formatNumber(
-                                          detail.amount
-                                        )}`}
-                                    {typeof detail.betRollIndex === "number"
-                                      ? ` @${detail.betRollIndex}`
-                                      : ""}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">No bets yet.</div>
-                            )}
-                          </div>
-                          <div className="shop-window__section">
-                            <h3>Modifiers</h3>
-                            {modifier ? (
-                              <div className="shop-window__stack">
-                                <div>
-                                  {modifierEmojis[modifier] ?? ""} {modifier}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">None active.</div>
-                            )}
-                          </div>
-                          <div className="shop-window__section shop-window__section--wide">
-                            <h3>Table bets</h3>
-                            <div className="shop-window__table-summary">
-                              <span>
-                                Chips: {formatNumber(totalChips ?? 0)}
-                              </span>
-                              {tableStrapTotals.length > 0 ? (
-                                <div className="shop-window__table-straps">
-                                  {tableStrapTotals.map(({ strap, amount }) => (
-                                    <span key={`strap-summary-${strapKey(strap)}`}>
-                                      {formatRewardCompact(strap)} ·{" "}
-                                      {formatNumber(amount)}
+                      <div className="shop-window">
+                        {!isExpanded ? (
+                          <div className="shop-meta">
+                            <div className="shop-meta__section">
+                              <span className="shop-meta__title">Your bets</span>
+                              {hasAccountBets ? (
+                                <div className="shop-meta__stack">
+                                  {accountBetDetails.map((detail, detailIndex) => (
+                                    <span key={`bet-${roll}-${detailIndex}`}>
+                                      {detail.kind === "chip"
+                                        ? `Chip x${formatNumber(detail.amount)}`
+                                        : `${formatRewardCompact(detail.strap)} x${formatNumber(
+                                            detail.amount
+                                          )}`}
+                                      {typeof detail.betRollIndex === "number"
+                                        ? ` @${detail.betRollIndex}`
+                                        : ""}
                                     </span>
                                   ))}
                                 </div>
                               ) : (
-                                <span>Straps: {formatNumber(totalStrapBets)}</span>
+                                <span className="shop-meta__muted">None yet.</span>
                               )}
                             </div>
-                            {tableBetsForRoll.length > 0 ? (
-                              <div className="shop-window__table-scroll">
-                                <div className="shop-window__table">
-                                  {tableBetsForRoll.map((entry, tableIndex) => (
-                                    <div
-                                      key={`${roll}-table-${tableIndex}`}
-                                      className="shop-window__table-entry"
-                                    >
-                                      <div className="shop-window__address">
-                                        address:{" "}
-                                        {formatIdentity(entry.identity).toLowerCase()}
-                                      </div>
-                                      <div className="shop-window__stack">
-                                        <div>
-                                          Chip bets: {formatNumber(entry.chipTotal)}
-                                        </div>
-                                        {entry.straps.length > 0 ? (
-                                          <div className="shop-window__stack">
-                                            {entry.straps.map(
-                                              ([strap, amount], strapIndex) => (
-                                                <div
-                                                  key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
-                                                >
-                                                  {formatRewardCompact(strap)} ·{" "}
-                                                  {formatNumber(amount)}
-                                                </div>
-                                              )
-                                            )}
-                                          </div>
-                                        ) : (
-                                          <div className="shop-window__muted">
-                                            No strap bets.
-                                          </div>
-                                        )}
-                                      </div>
+                            <div className="shop-meta__section">
+                              <span className="shop-meta__title">Table totals</span>
+                              <span>Chips: {formatNumber(totalChips ?? 0)}</span>
+                              <span>Straps: {formatNumber(totalStrapBets)}</span>
+                            </div>
+                          </div>
+                        ) : null}
+                        {isExpanded ? (
+                          <div className="shop-window__details">
+                            <div className="shop-window__section">
+                              <h3>Rewards</h3>
+                              {rewards.length > 0 ? (
+                                <div className="shop-window__stack">
+                                  {rewards.map(([strap, amount], rewardIndex) => (
+                                    <div key={`${roll}-reward-${rewardIndex}`}>
+                                      {formatRewardCompact(strap)} ·{" "}
+                                      {formatNumber(amount)}
                                     </div>
                                   ))}
                                 </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  None for this shop.
+                                </div>
+                              )}
+                            </div>
+                            <div className="shop-window__section">
+                              <h3>Your bets</h3>
+                              {accountBetDetails.length > 0 ? (
+                                <div className="shop-window__stack">
+                                  {accountBetDetails.map((detail, detailIndex) => (
+                                    <div key={`account-bet-${roll}-${detailIndex}`}>
+                                      {detail.kind === "chip"
+                                        ? `Chip x${formatNumber(detail.amount)}`
+                                        : `${formatRewardCompact(detail.strap)} x${formatNumber(
+                                            detail.amount
+                                          )}`}
+                                      {typeof detail.betRollIndex === "number"
+                                        ? ` @${detail.betRollIndex}`
+                                        : ""}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  No bets yet.
+                                </div>
+                              )}
+                            </div>
+                            <div className="shop-window__section">
+                              <h3>Modifiers</h3>
+                              {modifier ? (
+                                <div className="shop-window__stack">
+                                  <div>
+                                    {modifierEmojis[modifier] ?? ""} {modifier}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  None active.
+                                </div>
+                              )}
+                            </div>
+                            <div className="shop-window__section shop-window__section--wide">
+                              <h3>Table bets</h3>
+                              <div className="shop-window__table-summary">
+                                <span>
+                                  Chips: {formatNumber(totalChips ?? 0)}
+                                </span>
+                                {tableStrapTotals.length > 0 ? (
+                                  <div className="shop-window__table-straps">
+                                    {tableStrapTotals.map(({ strap, amount }) => (
+                                      <span key={`strap-summary-${strapKey(strap)}`}>
+                                        {formatRewardCompact(strap)} ·{" "}
+                                        {formatNumber(amount)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span>Straps: {formatNumber(totalStrapBets)}</span>
+                                )}
                               </div>
-                            ) : (
-                              <div className="shop-window__muted">
-                                No table bets yet.
-                              </div>
-                            )}
+                              {tableBetsForRoll.length > 0 ? (
+                                <div className="shop-window__table-scroll">
+                                  <div className="shop-window__table">
+                                    {tableBetsForRoll.map((entry, tableIndex) => (
+                                      <div
+                                        key={`${roll}-table-${tableIndex}`}
+                                        className="shop-window__table-entry"
+                                      >
+                                        <div className="shop-window__address">
+                                          address:{" "}
+                                          {formatIdentity(entry.identity).toLowerCase()}
+                                        </div>
+                                        <div className="shop-window__stack">
+                                          <div>
+                                            Chip bets:{" "}
+                                            {formatNumber(entry.chipTotal)}
+                                          </div>
+                                          {entry.straps.length > 0 ? (
+                                            <div className="shop-window__stack">
+                                              {entry.straps.map(
+                                                ([strap, amount], strapIndex) => (
+                                                  <div
+                                                    key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
+                                                  >
+                                                    {formatRewardCompact(strap)} ·{" "}
+                                                    {formatNumber(amount)}
+                                                  </div>
+                                                )
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <div className="shop-window__muted">
+                                              No strap bets.
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  No table bets yet.
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ) : null}
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        className="shop-door"
+                        aria-label={`Place bet on ${rollLabels[roll]}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openBetModal(roll);
+                        }}
+                      >
+                        <span className="shop-door__label">Bet</span>
+                      </button>
                     </div>
-                    <div className="shop-door" />
+                    {!isExpanded && rewards.length > 0 ? (
+                      <div
+                        className={`shop-dangling-stack${
+                          rewards.length > 1 ? " shop-dangling-stack--raised" : ""
+                        }`}
+                      >
+                        {rewards.map(([strap, amount], rewardIndex) => (
+                          <div
+                            key={`${roll}-dangling-${rewardIndex}`}
+                            className="shop-dangling"
+                            style={
+                              {
+                                "--dangling-index": rewardIndex,
+                              } as React.CSSProperties
+                            }
+                          >
+                            <span className="shop-dangling__emoji">
+                              {formatRewardCompact(strap)}
+                            </span>
+                            <span className="shop-dangling__price">
+                              {formatNumber(amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {hasChipTableBets ? <div className="bet-aura" /> : null}
+                    {modifierStory ? (
+                      <div
+                        className={`modifier-aura modifier-aura--${modifierStory.theme}`}
+                      />
+                    ) : null}
                   </div>
-                  {!isExpanded && danglingReward ? (
-                    <div className="shop-dangling">
-                      <span className="shop-dangling__emoji">
-                        {formatRewardCompact(danglingReward[0])}
-                      </span>
-                      <span className="shop-dangling__price">
-                        {formatNumber(danglingReward[1])}
-                      </span>
-                    </div>
-                  ) : null}
-                  <div className="shop-glow" />
-                  {modifierStory ? (
-                    <div
-                      className={`modifier-aura modifier-aura--${modifierStory.theme}`}
-                    />
-                  ) : null}
-                  </button>
                 </div>
                 <div className="modifier-stack">
-                  {modifierStory ? (
+                  {modifierStory && shouldShowModifierBanner ? (
                     <div
                       className={`modifier-banner modifier-banner--${modifierStory.theme}`}
                     >
@@ -1812,17 +2805,32 @@ export default function App() {
                         </button>
                       );
                     }
+                    const entryKey = `${roll}-${entry.modifier}-${entryIndex}`;
+                    const isPurchasing =
+                      modifierPurchaseKey === entryKey &&
+                      (modifierPurchaseStatus === "signing" ||
+                        modifierPurchaseStatus === "pending");
+                    const actionText =
+                      modifierPurchaseKey === entryKey &&
+                      modifierPurchaseStatus === "error"
+                        ? modifierPurchaseError ?? "Purchase failed"
+                        : modifierPurchaseKey === entryKey &&
+                          modifierPurchaseStatus === "success"
+                          ? "Purchased"
+                          : `${story.cta} ${formatNumber(entry.price)}`;
                     return (
                       <button
-                        key={`${roll}-${entry.modifier}-${entryIndex}`}
+                        key={entryKey}
                         type="button"
                         className={`modifier-action modifier-action--${story.theme}`}
+                        disabled={isPurchasing}
+                        onClick={() => handlePurchaseModifier(roll, entry, entryKey)}
                       >
                         <span className="modifier-action__icon" aria-hidden="true">
                           {story.icon}
                         </span>
                         <span className="modifier-action__text">
-                          {story.cta} {formatNumber(entry.price)}
+                          {actionText}
                         </span>
                       </button>
                     );
@@ -1841,6 +2849,267 @@ export default function App() {
           aria-label="Close shop"
           onClick={() => setActiveRoll(null)}
         />
+      ) : null}
+
+      {betTargetRoll ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--games">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Bet slip</div>
+                <h2 className="modal__title">
+                  Bet on {rollLabels[betTargetRoll]}
+                </h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={closeBetModal}>
+                Close
+              </button>
+            </div>
+            <div className="modal__body">
+              <div className="modal-card modal-card--wide modal-card--games">
+                {betStatus === "success" ? (
+                  <div className="bet-form">
+                    <div className="bet-field">
+                      <span className="bet-label">Success</span>
+                      <div className="bet-success">
+                        You placed{" "}
+                        {betKind === "chip"
+                          ? `${betAmount} chip(s)`
+                          : selectedBetStrap
+                          ? `${formatRewardCompact(selectedBetStrap.strap)} x${betAmount}`
+                          : `strap x${betAmount}`}{" "}
+                        on {rollLabels[betTargetRoll]}.
+                      </div>
+                      {betTxId ? (
+                        <div className="bet-muted">
+                          Tx: {betTxId.slice(0, 8)}…
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="bet-actions">
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={closeBetModal}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bet-form">
+                    <div className="bet-field">
+                      <span className="bet-label">Bet type</span>
+                      <div className="bet-toggle">
+                        <button
+                          type="button"
+                          className={`bet-toggle__button${
+                            betKind === "chip" ? " bet-toggle__button--active" : ""
+                          }`}
+                          onClick={() => setBetKind("chip")}
+                        >
+                          Chip
+                        </button>
+                        <button
+                          type="button"
+                          className={`bet-toggle__button${
+                            betKind === "strap" ? " bet-toggle__button--active" : ""
+                          }`}
+                          onClick={() => setBetKind("strap")}
+                        >
+                          Strap
+                        </button>
+                      </div>
+                    </div>
+                    {betKind === "strap" ? (
+                      <div className="bet-field">
+                        <span className="bet-label">Select strap</span>
+                        {ownedStraps.length > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              className="bet-variant-button"
+                              onClick={() => setIsStrapKindPickerOpen(true)}
+                              disabled={closetGroups.length === 0}
+                            >
+                              {selectedBetGroup
+                                ? `${selectedBetGroup.emoji} ${selectedBetGroup.kind}`
+                                : "Choose type"}
+                            </button>
+                            <button
+                              type="button"
+                              className="bet-variant-button"
+                              onClick={() => setIsStrapPickerOpen(true)}
+                              disabled={!selectedBetGroup}
+                            >
+                              {selectedBetStrap
+                                ? `${formatRewardCompact(
+                                    selectedBetStrap.strap
+                                  )} · ${formatQuantity(selectedBetStrap.amount)}`
+                                : "Choose variant"}
+                            </button>
+                          </>
+                        ) : (
+                          <div className="bet-muted">No straps owned.</div>
+                        )}
+                      </div>
+                    ) : null}
+                    <div className="bet-field">
+                      <span className="bet-label">Amount</span>
+                      <input
+                        className="bet-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        value={betAmount}
+                        onChange={(event) => setBetAmount(event.target.value)}
+                      />
+                      <span className="bet-help">
+                        {betKind === "chip"
+                          ? `Using ${chipAssetTicker}${
+                              availableBetCapacity !== null
+                                ? ` · Max bet size ${formatNumber(availableBetCapacity)}`
+                                : ""
+                            }`
+                          : "Strap quantity"}
+                      </span>
+                    </div>
+                    <div className="bet-actions">
+                      <div className="bet-status">
+                        {betStatusMessage ? betStatusMessage : "Ready to bet."}
+                        {betTxId ? ` (${betTxId.slice(0, 8)}…)` : ""}
+                      </div>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={handlePlaceBet}
+                        disabled={
+                          isBetBusy ||
+                          (betKind === "strap" && ownedStraps.length === 0)
+                        }
+                      >
+                        {isBetBusy ? "Submitting..." : "Place bet"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isStrapKindPickerOpen && betKind === "strap" ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Straps</div>
+                <h2 className="modal__title">Choose type</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsStrapKindPickerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {closetGroups.length > 0 ? (
+                <div className="bet-kind-grid">
+                  {closetGroups.map((group) => {
+                    const isActive = group.kind === betStrapKind;
+                    return (
+                      <button
+                        key={`bet-kind-${group.kind}`}
+                        type="button"
+                        className={`bet-kind${isActive ? " bet-kind--active" : ""}`}
+                        onClick={() => {
+                          setBetStrapKind(group.kind);
+                          setIsStrapKindPickerOpen(false);
+                        }}
+                      >
+                        <div className="bet-kind__icon" aria-hidden="true">
+                          {group.emoji}
+                        </div>
+                        <div className="bet-kind__label">{group.kind}</div>
+                        <div className="bet-kind__meta">
+                          {group.entries.length} variants
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="modal-muted">No straps available.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isStrapPickerOpen && betKind === "strap" ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Straps</div>
+                <h2 className="modal__title">Choose variant</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsStrapPickerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {selectedBetGroup ? (
+                <div className="closet-kind">
+                  <div className="closet-kind__badge">
+                    <div className="closet-kind__icon" aria-hidden="true">
+                      {selectedBetGroup.emoji}
+                    </div>
+                    <div>{selectedBetGroup.kind}</div>
+                  </div>
+                  <div className="closet-kind__items">
+                    {selectedBetGroup.entries.map((entry) => {
+                      const isActive = entry.assetId === betStrapAssetId;
+                      return (
+                        <button
+                          key={`bet-variant-${entry.assetId}`}
+                          type="button"
+                          className={`bet-variant${
+                            isActive ? " bet-variant--active" : ""
+                          }`}
+                          onClick={() => {
+                            setBetStrapAssetId(entry.assetId);
+                            setIsStrapPickerOpen(false);
+                          }}
+                        >
+                          <div className="bet-variant__title">
+                            {formatRewardCompact(entry.strap)}
+                          </div>
+                          <div className="bet-variant__meta">
+                            L{entry.strap.level} · {formatQuantity(entry.amount)}
+                          </div>
+                          <div className="bet-variant__asset">
+                            Asset: {formatAssetId(entry.assetId)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-muted">No straps available.</div>
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {isClosetOpen && (
@@ -1898,7 +3167,9 @@ export default function App() {
 
       <footer className="street-footer">
         <div className="footer-actions">
-          <div className="chips-banner">{formatChipUnits(chipBalance)} CHIPS</div>
+          <div className="chips-banner">
+            {formatChipUnits(displayChipBalance)} CHIPS
+          </div>
           <button
             className="ghost-button"
             type="button"
@@ -1945,108 +3216,29 @@ export default function App() {
             </div>
             <div className="modal__body modal__body--scroll">
               <div className="modal-card modal-card--wide">
-                <h3>Unclaimed history</h3>
-                {gameHistory.length > 0 ? (
-                  <div className="history-list">
-                    {gameHistory.map((entry) => {
-                      const accountBets = entry.account?.per_roll_bets ?? [];
-                      const accountBetsSummary = summarizeBetsByKind(
-                        accountBets.flatMap((bets) => bets.bets)
-                      );
-                      const hasClaimable = hasClaimableBets(entry.rolls, accountBets);
-                      const claimedLabel = entry.claimed
-                        ? "Claimed"
-                        : hasClaimable
-                        ? "Unclaimed"
-                        : "Nothing to claim";
-                      const canClaim = !entry.claimed && hasClaimable;
-                      return (
-                        <div
-                          key={`history-${entry.gameId}`}
-                          className="history-item"
-                        >
-                          <div className="history-item__header">
-                            <div>
-                              <div className="history-item__title">
-                                Game {entry.gameId}
-                              </div>
-                              <div className="history-item__status">
-                                {claimedLabel}
-                              </div>
-                            </div>
-                            <button
-                              className="primary-button"
-                              type="button"
-                              disabled={!canClaim}
-                            >
-                              Claim
-                            </button>
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Rolls:</span>{" "}
-                            {entry.rolls.length > 0
-                              ? entry.rolls
-                                  .map((roll, index) => {
-                                    const activeModifiers = entry.modifiers
-                                      .filter(
-                                        (modifier) =>
-                                          modifier.modifierRoll === roll &&
-                                          modifier.rollIndex <= index
-                                      )
-                                      .map(
-                                        (modifier) =>
-                                          modifierEmojis[modifier.modifier] ?? ""
-                                      )
-                                      .filter(Boolean)
-                                      .join("");
-                                    return `${rollLabels[roll]}${
-                                      activeModifiers ? ` ${activeModifiers}` : ""
-                                    }`;
-                                  })
-                                  .join(", ")
-                              : "—"}
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Rewards:</span>{" "}
-                            {entry.strapRewards.length > 0
-                              ? entry.strapRewards
-                                  .map(
-                                    ([roll, strap, amount]) =>
-                                      `${rollLabels[roll]} ${formatRewardCompact(
-                                        strap
-                                      )}/${formatNumber(amount)}`
-                                  )
-                                  .join(", ")
-                              : "—"}
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Your bets:</span>{" "}
-                            {accountBetsSummary.chipTotal > 0 ||
-                            accountBetsSummary.straps.length > 0
-                              ? [
-                                  accountBetsSummary.chipTotal > 0
-                                    ? `${formatNumber(
-                                        accountBetsSummary.chipTotal
-                                      )} chips`
-                                    : null,
-                                  ...accountBetsSummary.straps.map(
-                                    ([strap, amount]) =>
-                                      `${formatRewardCompact(strap)} x${formatNumber(
-                                        amount
-                                      )}`
-                                  ),
-                                ]
-                                  .filter(Boolean)
-                                  .join(", ")
-                              : "—"}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="modal-muted">No previous games yet.</div>
-                )}
+                <div className="modal-tabs">
+                  <button
+                    type="button"
+                    className={`modal-tab${
+                      gamesTab === "recent" ? " modal-tab--active" : ""
+                    }`}
+                    onClick={() => setGamesTab("recent")}
+                  >
+                    Recent games
+                  </button>
+                  <button
+                    type="button"
+                    className={`modal-tab${
+                      gamesTab === "unclaimed" ? " modal-tab--active" : ""
+                    }`}
+                    onClick={() => setGamesTab("unclaimed")}
+                  >
+                    Unclaimed games
+                  </button>
+                </div>
+                {gamesTab === "recent"
+                  ? renderHistoryList(gameHistory, "No previous games yet.")
+                  : renderHistoryList(unclaimedGames, "No unclaimed games yet.")}
               </div>
             </div>
           </div>
@@ -2077,8 +3269,14 @@ export default function App() {
                   <div>Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}</div>
                   <div>Owed: {snapshot ? formatNumber(snapshot.chips_owed) : "—"}</div>
                   <div>
-                    Chip bets:{" "}
+                    Chips bet:{" "}
                     {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
+                  </div>
+                  <div>
+                    Max bet size:{" "}
+                    {availableBetCapacity !== null
+                      ? formatNumber(availableBetCapacity)
+                      : "—"}
                   </div>
                 </div>
               </div>
@@ -2124,6 +3322,210 @@ export default function App() {
                 ) : (
                   <div className="modal-muted">No shop entries yet.</div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {claimModifierEntry && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Claim</div>
+                <h2 className="modal__title">
+                  Apply modifiers for game {claimModifierEntry.gameId}?
+                </h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={closeClaimModifier}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body">
+              <div className="modal-card modal-card--wide">
+                <div className="modal-stack">
+                  {claimModifierOptions.map((modifier, index) => {
+                    const key = `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`;
+                    const isSelected = claimModifierSelection.includes(key);
+                    return (
+                      <label
+                        key={`claim-mod-${key}-${index}`}
+                        className="claim-modifier"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setClaimModifierSelection((prev) =>
+                              checked
+                                ? [...prev, key]
+                                : prev.filter((value) => value !== key)
+                            );
+                          }}
+                        />
+                        <span className="claim-modifier__box" aria-hidden="true" />
+                        <span className="claim-modifier__label">
+                          {modifierEmojis[modifier.modifier] ?? ""}{" "}
+                          {modifier.modifier} · {rollLabels[modifier.modifierRoll]} @
+                          {modifier.rollIndex}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={closeClaimModifier}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => {
+                      const enabledModifiers = claimModifierOptions
+                        .filter((modifier) =>
+                          claimModifierSelection.includes(
+                            `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
+                          )
+                        )
+                        .map((modifier) => [
+                          modifier.modifierRoll,
+                          modifier.modifier,
+                        ]) as Array<[Roll, string]>;
+                      closeClaimModifier();
+                      handleClaimRewards(claimModifierEntry, enabledModifiers);
+                    }}
+                  >
+                    Claim rewards
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {claimResult && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--claim-result">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Claim</div>
+                <h2 className="modal__title">
+                  Claimed game {claimResult.gameId}
+                </h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={closeClaimResult}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body">
+              <div className="modal-card modal-card--wide">
+                <div className="modal-stack">
+                  <div className="modal-row">
+                    <span>Chips won</span>
+                    <span>
+                      {claimResult.chipWon === null
+                        ? "Awaiting indexer"
+                        : formatNumber(claimResult.chipWon)}
+                    </span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Bet total</span>
+                    <span>{formatNumber(claimResult.chipBet)}</span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Net</span>
+                    <span>
+                      {claimResult.chipWon === null || claimResult.netChip === null
+                        ? "—"
+                        : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
+                            Math.abs(claimResult.netChip)
+                          )}`}
+                    </span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Your bets</span>
+                    <span>
+                      {claimResult.betDetails.length > 0
+                        ? "See list"
+                        : "No bets recorded."}
+                    </span>
+                  </div>
+                  {claimResult.betDetails.length > 0 ? (
+                    <div className="modal-bets">
+                      {claimResult.betDetails.map((bet, index) => {
+                        const rollLabel = rollLabels[bet.roll];
+                        const betIndexLabel =
+                          typeof bet.betRollIndex === "number"
+                            ? ` @${bet.betRollIndex}`
+                            : "";
+                        const betLabel =
+                          bet.kind === "chip"
+                            ? `${formatNumber(bet.amount)} chips`
+                            : bet.strap
+                            ? `${formatRewardCompact(bet.strap)} x${formatNumber(
+                                bet.amount
+                              )}`
+                            : `strap x${formatNumber(bet.amount)}`;
+                        return (
+                          <div
+                            key={`claim-bet-${claimResult.gameId}-${index}`}
+                            className="modal-bet-line"
+                          >
+                            {rollLabel}: {betLabel}
+                            {betIndexLabel}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className="modal-row">
+                    <span>Straps</span>
+                    <span>
+                      {claimResult.straps.length > 0
+                        ? claimResult.straps
+                            .map(
+                              ([strap, amount]) =>
+                                `${formatRewardCompact(strap)} x${formatNumber(amount)}`
+                            )
+                            .join(", ")
+                        : "No strap rewards yet."}
+                    </span>
+                  </div>
+                  {claimResult.txId ? (
+                    <div className="modal-muted">
+                      Tx: {claimResult.txId.slice(0, 8)}…
+                    </div>
+                  ) : null}
+                  {claimResult.chipWon === null ? (
+                    <div className="modal-muted">
+                      Rewards may take a moment to index.
+                    </div>
+                  ) : null}
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={closeClaimResult}
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             </div>
           </div>
