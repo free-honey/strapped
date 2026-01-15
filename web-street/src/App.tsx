@@ -1878,7 +1878,7 @@ export default function App() {
         .claim_rewards(entry.gameId, enabledModifiers)
         .call();
       setClaimStatus("pending");
-      await response.waitForResult();
+      const claimResultValue = await response.waitForResult();
       setClaimStatus("success");
       await refreshBalances();
 
@@ -1917,15 +1917,19 @@ export default function App() {
               roll: Roll;
               kind: "chip" | "strap";
               amount: number;
-              strap?: Strap;
-              betRollIndex?: number;
+              strap: Strap | undefined;
+              betRollIndex: number | undefined;
             } => bet !== null
           )
       );
       const accountBetsSummary = summarizeBetsByKind(
         accountBets.flatMap((bets) => bets.bets)
       );
-      const claimLogSummary = extractClaimLogSummary(response.logs ?? [], walletAddress);
+      const claimLogs =
+        claimResultValue && "logs" in claimResultValue
+          ? (claimResultValue as { logs?: unknown[] }).logs ?? []
+          : [];
+      const claimLogSummary = extractClaimLogSummary(claimLogs, walletAddress);
       const chipWon = claimLogSummary.chips ?? chipDelta ?? null;
       const chipBet = accountBetsSummary.chipTotal;
       const netChip =
@@ -2961,8 +2965,8 @@ export default function App() {
                               roll: Roll;
                               kind: "chip" | "strap";
                               amount: number;
-                              strap?: Strap;
-                              betRollIndex?: number;
+                              strap: Strap | undefined;
+                              betRollIndex: number | undefined;
                             } => bet !== null
                           )
                       );
@@ -3332,7 +3336,7 @@ export default function App() {
                   <div className="modal-row">
                     <span>Net</span>
                     <span>
-                      {claimResult.chipWon === null
+                      {claimResult.chipWon === null || claimResult.netChip === null
                         ? "—"
                         : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
                             Math.abs(claimResult.netChip)
