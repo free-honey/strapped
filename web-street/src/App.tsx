@@ -767,6 +767,133 @@ const hasClaimableBets = (
   return false;
 };
 
+const normalizeChipAmount = (value: unknown): number | null => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (value && typeof value === "object") {
+    const record = value as { toString?: () => string };
+    if (typeof record.toString === "function") {
+      const parsed = Number(record.toString());
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const normalizeIdentityAddress = (value: unknown): string | null => {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value.toLowerCase();
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.Address === "string") {
+      return record.Address.toLowerCase();
+    }
+    if (record.Address && typeof record.Address === "object") {
+      const addressRecord = record.Address as Record<string, unknown>;
+      if (typeof addressRecord.value === "string") {
+        return addressRecord.value.toLowerCase();
+      }
+    }
+  }
+  return null;
+};
+
+const extractClaimLogSummary = (
+  logs: unknown[],
+  walletAddress: string | null
+): { chips: number | null; straps: [Strap, number][] } => {
+  const normalizedWallet = walletAddress?.toLowerCase() ?? null;
+  for (const log of logs) {
+    if (!log || typeof log !== "object") {
+      continue;
+    }
+    const record = log as Record<string, unknown>;
+    if (!("total_chips_winnings" in record)) {
+      continue;
+    }
+    if (normalizedWallet) {
+      const identity =
+        "player" in record
+          ? record.player
+          : "identity" in record
+          ? record.identity
+          : null;
+      const normalizedIdentity = normalizeIdentityAddress(identity);
+      if (normalizedIdentity && normalizedIdentity !== normalizedWallet) {
+        continue;
+      }
+    }
+    const chips = normalizeChipAmount(record.total_chips_winnings);
+    const straps = Array.isArray(record.total_strap_winnings)
+      ? record.total_strap_winnings
+          .map((entry) => {
+            if (!Array.isArray(entry) || entry.length < 2) {
+              return null;
+            }
+            const strap = parseStrap(entry[0]);
+            const amount = normalizeChipAmount(entry[1]);
+            return strap && amount !== null ? ([strap, amount] as [Strap, number]) : null;
+          })
+          .filter((entry): entry is [Strap, number] => entry !== null)
+      : [];
+    return { chips, straps };
+  }
+  return { chips: null, straps: [] };
+};
+
+const eligibleClaimModifiers = (entry: HistoryEntry) => {
+  if (entry.rolls.length === 0) {
+    return [];
+  }
+  const perRollBets = entry.account?.per_roll_bets ?? [];
+  if (perRollBets.length === 0) {
+    return [];
+  }
+  const strapBets = perRollBets.flatMap((rollEntry) =>
+    rollEntry.bets
+      .map((bet) => {
+        const parsed = parseAccountBetPlacement(bet);
+        if (!parsed || parsed.kind !== "strap") {
+          return null;
+        }
+        return {
+          roll: rollEntry.roll,
+          betRollIndex: parsed.betRollIndex ?? 0,
+        };
+      })
+      .filter(
+        (
+          bet
+        ): bet is {
+          roll: Roll;
+          betRollIndex: number;
+        } => bet !== null
+      )
+  );
+  if (strapBets.length === 0) {
+    return [];
+  }
+  return entry.modifiers.filter((modifier) =>
+    strapBets.some(
+      (bet) =>
+        bet.roll === modifier.modifierRoll &&
+        bet.betRollIndex <= modifier.rollIndex
+    )
+  );
+};
+
 export default function App() {
   const baseUrl = useMemo(
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
@@ -811,6 +938,9 @@ export default function App() {
   const [claimModifierEntry, setClaimModifierEntry] = useState<HistoryEntry | null>(
     null
   );
+  const [claimModifierOptions, setClaimModifierOptions] = useState<
+    HistoryEntry["modifiers"]
+  >([]);
   const [claimModifierSelection, setClaimModifierSelection] = useState<string[]>(
     []
   );
@@ -1284,6 +1414,7 @@ export default function App() {
   };
   const closeClaimModifier = () => {
     setClaimModifierEntry(null);
+    setClaimModifierOptions([]);
     setClaimModifierSelection([]);
   };
   const closeClaimResult = () => {
@@ -1697,6 +1828,14 @@ export default function App() {
     setClaimStatus("signing");
 
     try {
+      let preChipBalance: bigint | null = null;
+      try {
+        const balance = await wallet.getBalance(chipAssetId);
+        preChipBalance = BigInt(balance.toString());
+      } catch (err) {
+        preChipBalance = null;
+      }
+
       const contract = createStrappedContract(wallet, networkKey);
       const response = await contract.functions
         .claim_rewards(entry.gameId, enabledModifiers)
@@ -1704,6 +1843,18 @@ export default function App() {
       setClaimStatus("pending");
       await response.waitForResult();
       setClaimStatus("success");
+
+      let chipDelta: number | null = null;
+      try {
+        const postBalance = await wallet.getBalance(chipAssetId);
+        if (preChipBalance !== null) {
+          const postValue = BigInt(postBalance.toString());
+          const delta = postValue > preChipBalance ? postValue - preChipBalance : 0n;
+          chipDelta = Number(delta);
+        }
+      } catch (err) {
+        chipDelta = null;
+      }
 
       const accountBets = entry.account?.per_roll_bets ?? [];
       const accountBetPlacements = accountBets.flatMap((rollEntry) =>
@@ -1736,11 +1887,15 @@ export default function App() {
       const accountBetsSummary = summarizeBetsByKind(
         accountBets.flatMap((bets) => bets.bets)
       );
-      const chipWon = entry.account?.claimed_rewards?.[0] ?? null;
+      const claimLogSummary = extractClaimLogSummary(response.logs ?? [], walletAddress);
+      const chipWon = claimLogSummary.chips ?? chipDelta ?? null;
       const chipBet = accountBetsSummary.chipTotal;
       const netChip =
         chipWon !== null && chipBet !== null ? chipWon - chipBet : null;
-      const straps = entry.account?.claimed_rewards?.[1] ?? [];
+      const straps =
+        claimLogSummary.straps.length > 0
+          ? claimLogSummary.straps
+          : entry.account?.claimed_rewards?.[1] ?? [];
 
       setClaimResult({
         gameId: entry.gameId,
@@ -2005,7 +2160,6 @@ export default function App() {
               index,
             });
             const isExpanded = activeRoll === roll;
-            const danglingReward = rewards[0];
             const tableBetsForRoll = (snapshot?.table_bets ?? [])
               .map((entry) => {
                 const perRoll = normalizePerRollBets(entry.per_roll_bets);
@@ -2262,14 +2416,30 @@ export default function App() {
                         <span className="shop-door__label">Bet</span>
                       </button>
                     </div>
-                    {!isExpanded && danglingReward ? (
-                      <div className="shop-dangling">
-                        <span className="shop-dangling__emoji">
-                          {formatRewardCompact(danglingReward[0])}
-                        </span>
-                        <span className="shop-dangling__price">
-                          {formatNumber(danglingReward[1])}
-                        </span>
+                    {!isExpanded && rewards.length > 0 ? (
+                      <div
+                        className={`shop-dangling-stack${
+                          rewards.length > 1 ? " shop-dangling-stack--raised" : ""
+                        }`}
+                      >
+                        {rewards.map(([strap, amount], rewardIndex) => (
+                          <div
+                            key={`${roll}-dangling-${rewardIndex}`}
+                            className="shop-dangling"
+                            style={
+                              {
+                                "--dangling-index": rewardIndex,
+                              } as React.CSSProperties
+                            }
+                          >
+                            <span className="shop-dangling__emoji">
+                              {formatRewardCompact(strap)}
+                            </span>
+                            <span className="shop-dangling__price">
+                              {formatNumber(amount)}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     ) : null}
                     <div className="shop-glow" />
@@ -2778,10 +2948,14 @@ export default function App() {
                       const claimDisabled =
                         !canClaim || (isClaimBusy && !isClaimingGame);
                       const handleClaimClick = () => {
-                        if (canClaim && entry.modifiers.length > 0) {
+                        const eligibleModifiers = canClaim
+                          ? eligibleClaimModifiers(entry)
+                          : [];
+                        if (eligibleModifiers.length > 0) {
                           setClaimModifierEntry(entry);
+                          setClaimModifierOptions(eligibleModifiers);
                           setClaimModifierSelection(
-                            entry.modifiers.map(
+                            eligibleModifiers.map(
                               (modifier) =>
                                 `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
                             )
@@ -3017,7 +3191,7 @@ export default function App() {
             <div className="modal__body">
               <div className="modal-card modal-card--wide">
                 <div className="modal-stack">
-                  {claimModifierEntry.modifiers.map((modifier, index) => {
+                  {claimModifierOptions.map((modifier, index) => {
                     const key = `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`;
                     const isSelected = claimModifierSelection.includes(key);
                     return (
@@ -3059,7 +3233,7 @@ export default function App() {
                     className="primary-button"
                     type="button"
                     onClick={() => {
-                      const enabledModifiers = claimModifierEntry.modifiers
+                      const enabledModifiers = claimModifierOptions
                         .filter((modifier) =>
                           claimModifierSelection.includes(
                             `${modifier.modifierRoll}:${modifier.modifier}:${modifier.rollIndex}`
@@ -3179,9 +3353,11 @@ export default function App() {
                       Tx: {claimResult.txId.slice(0, 8)}…
                     </div>
                   ) : null}
-                  <div className="modal-muted">
-                    Rewards may take a moment to index.
-                  </div>
+                  {claimResult.chipWon === null ? (
+                    <div className="modal-muted">
+                      Rewards may take a moment to index.
+                    </div>
+                  ) : null}
                 </div>
                 <div className="modal-actions">
                   <button

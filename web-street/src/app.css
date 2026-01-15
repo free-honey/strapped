@@ -422,6 +422,8 @@ button {
 .shop-frame {
   position: relative;
   z-index: 1;
+  display: flex;
+  justify-content: center;
   transition: transform 0.25s ease, box-shadow 0.25s ease;
   transform-origin: bottom center;
 }
@@ -1031,16 +1033,34 @@ button {
 }
 
 
-.shop-dangling {
+.shop-dangling-stack {
   position: absolute;
   top: -90px;
-  left: 50%;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  transform: translateX(28%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 90px;
+  pointer-events: none;
+}
+
+.shop-dangling-stack--raised {
+  top: -150px;
+}
+
+.shop-dangling {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
   font-size: 32px;
   animation: bob 1.6s ease-in-out infinite;
+  z-index: calc(5 + var(--dangling-index, 0));
+  animation-delay: calc(var(--dangling-index, 0) * 0.08s);
 }
 
 .shop-dangling__emoji {
