@@ -13,6 +13,7 @@ import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
 const POLL_INTERVAL_MS = 1000;
+const MAX_OWED_PERCENTAGE = 5;
 
 type FetchStatus = "idle" | "loading" | "ok" | "error";
 
@@ -1678,6 +1679,14 @@ export default function App() {
     snapshot && snapshot.rolls.length === 0 ? "Seven" : rollFallbackFace;
   const displayedRoll =
     isRollAnimating && rollingFace ? rollingFace : lastRoll ?? baseFallbackRoll;
+  const availableBetCapacity = useMemo(() => {
+    if (!snapshot) {
+      return null;
+    }
+    const safePool = Math.max(snapshot.pot_size - snapshot.chips_owed, 0);
+    const limit = Math.floor((safePool * MAX_OWED_PERCENTAGE) / 100);
+    return Math.max(limit - snapshot.total_chip_bets, 0);
+  }, [snapshot]);
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
@@ -2958,7 +2967,11 @@ export default function App() {
                       />
                       <span className="bet-help">
                         {betKind === "chip"
-                          ? `Using ${chipAssetTicker}`
+                          ? `Using ${chipAssetTicker}${
+                              availableBetCapacity !== null
+                                ? ` · Max bet size ${formatNumber(availableBetCapacity)}`
+                                : ""
+                            }`
                           : "Strap quantity"}
                       </span>
                     </div>
@@ -3256,8 +3269,14 @@ export default function App() {
                   <div>Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}</div>
                   <div>Owed: {snapshot ? formatNumber(snapshot.chips_owed) : "—"}</div>
                   <div>
-                    Chip bets:{" "}
+                    Chips bet:{" "}
                     {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
+                  </div>
+                  <div>
+                    Max bet size:{" "}
+                    {availableBetCapacity !== null
+                      ? formatNumber(availableBetCapacity)
+                      : "—"}
                   </div>
                 </div>
               </div>

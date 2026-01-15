@@ -76,7 +76,9 @@ button {
   font-size: clamp(12px, 2.2vw, 18px);
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--ink);
+  color: #f6d657;
+  text-shadow: -2px -2px 0 #1f160f, 2px -2px 0 #1f160f, -2px 2px 0 #1f160f,
+    2px 2px 0 #1f160f, 0 3px 8px rgba(31, 22, 18, 0.4);
 }
 
 .chips-banner--footer {
