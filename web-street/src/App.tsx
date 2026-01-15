@@ -7,7 +7,7 @@ import {
   useSelectNetwork,
   useWallet,
 } from "@fuels/react";
-import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
@@ -814,6 +814,14 @@ export default function App() {
   const [claimModifierSelection, setClaimModifierSelection] = useState<string[]>(
     []
   );
+  const [isRollAnimating, setIsRollAnimating] = useState(false);
+  const [rollingFace, setRollingFace] = useState<Roll | null>(null);
+  const [rollLandPulse, setRollLandPulse] = useState(false);
+  const [rollFallbackFace, setRollFallbackFace] = useState<Roll | null>("Seven");
+  const rollAnimationRef = useRef<number | null>(null);
+  const rollAnimationEndRef = useRef<number>(0);
+  const rollAnimationOriginRef = useRef<Roll | null>(null);
+  const rollAnimationOriginCountRef = useRef<number>(0);
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -1483,6 +1491,9 @@ export default function App() {
     return snapshot.rolls.slice(-6).reverse();
   }, [snapshot]);
   const lastRoll = diceRolls[0] ?? null;
+  const rollCount = snapshot?.rolls.length ?? 0;
+  const displayedRoll =
+    isRollAnimating && rollingFace ? rollingFace : lastRoll ?? rollFallbackFace;
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
@@ -1535,6 +1546,21 @@ export default function App() {
     }
 
     setRollStatus("signing");
+    setIsRollAnimating(true);
+    rollAnimationOriginRef.current = lastRoll;
+    rollAnimationOriginCountRef.current = rollCount;
+    rollAnimationEndRef.current = Date.now() + 1000;
+    setRollFallbackFace(null);
+    if (rollAnimationRef.current !== null) {
+      window.clearInterval(rollAnimationRef.current);
+    }
+    rollAnimationRef.current = window.setInterval(() => {
+      setRollingFace((prev) => {
+        const currentIndex = prev ? rollOrder.indexOf(prev) : -1;
+        const nextIndex = (currentIndex + 1) % rollOrder.length;
+        return rollOrder[nextIndex] ?? rollOrder[0];
+      });
+    }, 90);
 
     try {
       const contract = createStrappedContract(wallet, networkKey);
@@ -1787,6 +1813,73 @@ export default function App() {
     (group) => group.kind === betStrapKind
   );
 
+  useEffect(() => {
+    if (!isRollAnimating) {
+      return;
+    }
+    const origin = rollAnimationOriginRef.current;
+    const originCount = rollAnimationOriginCountRef.current;
+    if (Date.now() < rollAnimationEndRef.current) {
+      return;
+    }
+    const hasNewRoll = rollCount > originCount || (origin && lastRoll && origin !== lastRoll);
+    if (hasNewRoll) {
+      setIsRollAnimating(false);
+      setRollingFace(null);
+      rollAnimationOriginRef.current = null;
+      rollAnimationOriginCountRef.current = rollCount;
+      if (rollAnimationRef.current !== null) {
+        window.clearInterval(rollAnimationRef.current);
+        rollAnimationRef.current = null;
+      }
+      setRollLandPulse(true);
+      return;
+    }
+    if (!lastRoll && rollCount === 0) {
+      setIsRollAnimating(false);
+      setRollingFace(null);
+      rollAnimationOriginRef.current = null;
+      rollAnimationOriginCountRef.current = rollCount;
+      if (rollAnimationRef.current !== null) {
+        window.clearInterval(rollAnimationRef.current);
+        rollAnimationRef.current = null;
+      }
+      setRollFallbackFace("Seven");
+      setRollLandPulse(true);
+    }
+  }, [isRollAnimating, lastRoll, rollCount]);
+
+  useEffect(() => {
+    if (rollStatus !== "error") {
+      return;
+    }
+    setIsRollAnimating(false);
+    setRollingFace(null);
+    rollAnimationOriginRef.current = null;
+    if (rollAnimationRef.current !== null) {
+      window.clearInterval(rollAnimationRef.current);
+      rollAnimationRef.current = null;
+    }
+  }, [rollStatus]);
+
+  useEffect(() => {
+    if (lastRoll) {
+      setRollFallbackFace(null);
+    }
+  }, [lastRoll]);
+
+  useEffect(() => {
+    if (!rollLandPulse) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setRollLandPulse(false);
+    }, 450);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [rollLandPulse]);
+
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
       <header className="street-header">
@@ -1839,16 +1932,18 @@ export default function App() {
           <div className="roll-panel__row roll-panel__row--main">
             <div className="roll-panel__last">
               <span className="roll-panel__label">Last roll</span>
-              {lastRoll ? (
-                <div className="dice-card dice-card--single">
-                  <div className="dice-face">{rollNumbers[lastRoll]}</div>
-                  <div className="dice-label">{rollLabels[lastRoll]}</div>
+              {displayedRoll ? (
+                <div
+                  className={`dice-card dice-card--single${
+                    rollLandPulse ? " dice-card--land" : ""
+                  }`}
+                >
+                  <div className="dice-face">{rollNumbers[displayedRoll]}</div>
+                  <div className="dice-label">
+                    {lastRoll ? rollLabels[displayedRoll] : "NEW GAME :)"}
+                  </div>
                 </div>
-              ) : (
-                <div className="dice-placeholder roll-panel__placeholder">
-                  Waiting on rolls...
-                </div>
-              )}
+              ) : null}
             </div>
             <div className="roll-panel__actions">
               <button
@@ -2683,7 +2778,7 @@ export default function App() {
                       const claimDisabled =
                         !canClaim || (isClaimBusy && !isClaimingGame);
                       const handleClaimClick = () => {
-                        if (entry.modifiers.length > 0) {
+                        if (canClaim && entry.modifiers.length > 0) {
                           setClaimModifierEntry(entry);
                           setClaimModifierSelection(
                             entry.modifiers.map(
