@@ -845,6 +845,19 @@ button {
   transition: transform 0.25s ease;
 }
 
+.shop-door__label {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #3c2d22;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
 .shop-door::after {
   content: "";
   position: absolute;
@@ -1025,6 +1038,12 @@ button {
 .shop-tile:hover .shop-door {
   transform: scale(0.88);
   transform-origin: bottom center;
+}
+
+.shop-tile:hover .shop-door__label,
+.shop-tile--expanded .shop-door__label,
+.shop-tile--expanded:hover .shop-door__label {
+  opacity: 1;
 }
 
 .shop-tile--expanded .shop-door,
