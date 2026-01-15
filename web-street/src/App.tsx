@@ -1382,6 +1382,9 @@ export default function App() {
 
   const isRolling = rollStatus === "signing" || rollStatus === "pending";
   const rollButtonLabel = (() => {
+    if (!isConnected) {
+      return "Connect wallet to play";
+    }
     if (rollStatus === "signing") {
       return "Signing...";
     }
@@ -1400,10 +1403,7 @@ export default function App() {
     if (rollError) {
       return `Roll: ${rollError}`;
     }
-    if (rollTxId) {
-      return `Tx: ${rollTxId.slice(0, 10)}...${rollTxId.slice(-6)}`;
-    }
-    return isConnected ? null : "Connect wallet to roll.";
+    return isConnected ? null : "Connect wallet to play.";
   })();
 
   return (
@@ -1474,7 +1474,7 @@ export default function App() {
                 className="primary-button roll-button"
                 type="button"
                 onClick={handleRoll}
-                disabled={isRolling || walletStatus === "connecting"}
+                disabled={!isConnected || isRolling || walletStatus === "connecting"}
               >
                 {rollButtonLabel}
               </button>
@@ -1985,18 +1985,22 @@ export default function App() {
                           <div className="history-item__detail">
                             <span>Rolls:</span>{" "}
                             {entry.rolls.length > 0
-                              ? entry.rolls.map((roll) => rollLabels[roll]).join(", ")
-                              : "—"}
-                          </div>
-                          <div className="history-item__detail">
-                            <span>Modifiers:</span>{" "}
-                            {entry.modifiers.length > 0
-                              ? entry.modifiers
-                                  .map((modifier) => {
-                                    const roll = rollOrder[modifier.rollIndex];
-                                    const rollLabel = roll ? rollLabels[roll] : "—";
-                                    return `${rollLabel} ${modifierEmojis[modifier.modifier] ?? ""} ${
-                                      modifier.modifier
+                              ? entry.rolls
+                                  .map((roll, index) => {
+                                    const activeModifiers = entry.modifiers
+                                      .filter(
+                                        (modifier) =>
+                                          modifier.modifierRoll === roll &&
+                                          modifier.rollIndex <= index
+                                      )
+                                      .map(
+                                        (modifier) =>
+                                          modifierEmojis[modifier.modifier] ?? ""
+                                      )
+                                      .filter(Boolean)
+                                      .join("");
+                                    return `${rollLabels[roll]}${
+                                      activeModifiers ? ` ${activeModifiers}` : ""
                                     }`;
                                   })
                                   .join(", ")
@@ -2010,7 +2014,7 @@ export default function App() {
                                     ([roll, strap, amount]) =>
                                       `${rollLabels[roll]} ${formatRewardCompact(
                                         strap
-                                      )} x${formatNumber(amount)}`
+                                      )}/${formatNumber(amount)}`
                                   )
                                   .join(", ")
                               : "—"}
