@@ -765,6 +765,27 @@ export default function App() {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
   const [isClosetOpen, setIsClosetOpen] = useState(false);
+  const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
+  const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
+  const [betAmount, setBetAmount] = useState("1");
+  const [betStrapKind, setBetStrapKind] = useState<string | null>(null);
+  const [betStrapAssetId, setBetStrapAssetId] = useState<string | null>(null);
+  const [isStrapKindPickerOpen, setIsStrapKindPickerOpen] = useState(false);
+  const [isStrapPickerOpen, setIsStrapPickerOpen] = useState(false);
+  const [betStatus, setBetStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [betError, setBetError] = useState<string | null>(null);
+  const [betTxId, setBetTxId] = useState<string | null>(null);
+  const [modifierPurchaseKey, setModifierPurchaseKey] = useState<string | null>(
+    null
+  );
+  const [modifierPurchaseStatus, setModifierPurchaseStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [modifierPurchaseError, setModifierPurchaseError] = useState<string | null>(
+    null
+  );
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -863,6 +884,32 @@ export default function App() {
   }, [isConnected]);
 
   useEffect(() => {
+    if (betKind !== "strap") {
+      return;
+    }
+    if (!betStrapKind || !closetGroups.some((group) => group.kind === betStrapKind)) {
+      setBetStrapKind(closetGroups[0]?.kind ?? null);
+    }
+  }, [betKind, betStrapKind, closetGroups]);
+
+  useEffect(() => {
+    if (betKind !== "strap") {
+      return;
+    }
+    if (!betStrapKind) {
+      setBetStrapAssetId(null);
+      return;
+    }
+    const group = closetGroups.find((entry) => entry.kind === betStrapKind);
+    const belongsToKind = ownedStraps.some(
+      (strap) => strap.assetId === betStrapAssetId && strap.strap.kind === betStrapKind
+    );
+    if (!belongsToKind) {
+      setBetStrapAssetId(group?.entries[0]?.assetId ?? null);
+    }
+  }, [betKind, betStrapKind, betStrapAssetId, ownedStraps, closetGroups]);
+
+  useEffect(() => {
     if (!provider || !isConnected) {
       setBaseAssetId(null);
       return;
@@ -952,26 +999,35 @@ export default function App() {
     }
 
     let cancelled = false;
+    let timeoutId: number | undefined;
+
     const loadAccountSnapshot = async () => {
+      if (cancelled) {
+        return;
+      }
+
       try {
         const response = await fetch(`${baseUrl}/account/${walletAddress}`);
         if (response.status === 404) {
           if (!cancelled) {
             setAccountSnapshot(null);
           }
-          return;
-        }
-        if (!response.ok) {
+        } else if (!response.ok) {
           throw new Error(`account snapshot responded with ${response.status}`);
-        }
-        const payload = (await response.json()) as AccountSnapshotResponse | null;
-        const snapshot = payload ? normalizeAccountSnapshot(payload) : null;
-        if (!cancelled) {
-          setAccountSnapshot(snapshot);
+        } else {
+          const payload = (await response.json()) as AccountSnapshotResponse | null;
+          const snapshot = payload ? normalizeAccountSnapshot(payload) : null;
+          if (!cancelled) {
+            setAccountSnapshot(snapshot);
+          }
         }
       } catch (err) {
         if (!cancelled) {
           setAccountSnapshot(null);
+        }
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(loadAccountSnapshot, POLL_INTERVAL_MS);
         }
       }
     };
@@ -980,6 +1036,9 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [baseUrl, walletAddress]);
 
@@ -1141,11 +1200,8 @@ export default function App() {
     };
   }, [activeRoll]);
 
-  const openExpandedShop = (
-    roll: Roll,
-    event: React.MouseEvent<HTMLButtonElement>
-  ) => {
-    const rect = event.currentTarget.getBoundingClientRect();
+  const openExpandedShop = (roll: Roll, target: HTMLElement) => {
+    const rect = target.getBoundingClientRect();
     const targetWidth = Math.min(900, window.innerWidth * 0.92);
     const targetHeight = Math.min(560, window.innerHeight * 0.8);
     const targetLeft = (window.innerWidth - targetWidth) / 2;
@@ -1170,8 +1226,35 @@ export default function App() {
       });
     });
   };
+  const openBetModal = (roll: Roll) => {
+    setBetTargetRoll(roll);
+    setBetKind("chip");
+    setBetAmount("1");
+    setBetStrapKind(closetGroups[0]?.kind ?? null);
+    setBetStrapAssetId(closetGroups[0]?.entries[0]?.assetId ?? null);
+    setIsStrapKindPickerOpen(false);
+    setIsStrapPickerOpen(false);
+    setBetError(null);
+    setBetTxId(null);
+    setBetStatus("idle");
+  };
+  const closeBetModal = () => {
+    setBetTargetRoll(null);
+    setIsStrapKindPickerOpen(false);
+    setIsStrapPickerOpen(false);
+    setBetError(null);
+    setBetTxId(null);
+    setBetStatus("idle");
+  };
   const isAnyModalOpen = Boolean(
-    activeRoll || isGamesOpen || isInfoOpen || isDiceHistoryOpen || isClosetOpen
+    activeRoll ||
+      isGamesOpen ||
+      isInfoOpen ||
+      isDiceHistoryOpen ||
+      isClosetOpen ||
+      betTargetRoll ||
+      isStrapKindPickerOpen ||
+      isStrapPickerOpen
   );
 
   useEffect(() => {
@@ -1185,11 +1268,37 @@ export default function App() {
       }
 
       event.preventDefault();
-      setActiveRoll(null);
-      setIsGamesOpen(false);
-      setIsInfoOpen(false);
-      setIsDiceHistoryOpen(false);
-      setIsClosetOpen(false);
+      if (isStrapPickerOpen) {
+        setIsStrapPickerOpen(false);
+        return;
+      }
+      if (isStrapKindPickerOpen) {
+        setIsStrapKindPickerOpen(false);
+        return;
+      }
+      if (betTargetRoll) {
+        closeBetModal();
+        return;
+      }
+      if (isClosetOpen) {
+        setIsClosetOpen(false);
+        return;
+      }
+      if (isDiceHistoryOpen) {
+        setIsDiceHistoryOpen(false);
+        return;
+      }
+      if (isInfoOpen) {
+        setIsInfoOpen(false);
+        return;
+      }
+      if (isGamesOpen) {
+        setIsGamesOpen(false);
+        return;
+      }
+      if (activeRoll) {
+        setActiveRoll(null);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -1197,7 +1306,17 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isAnyModalOpen]);
+  }, [
+    isAnyModalOpen,
+    isStrapPickerOpen,
+    isStrapKindPickerOpen,
+    betTargetRoll,
+    isClosetOpen,
+    isDiceHistoryOpen,
+    isInfoOpen,
+    isGamesOpen,
+    activeRoll,
+  ]);
 
   useEffect(() => {
     if (!baseUrl) {
@@ -1380,6 +1499,110 @@ export default function App() {
     }
   };
 
+  const handlePlaceBet = async () => {
+    setBetError(null);
+    setBetTxId(null);
+
+    if (!betTargetRoll) {
+      return;
+    }
+    if (!isConnected || !wallet) {
+      setBetError("Connect wallet to bet");
+      setBetStatus("error");
+      return;
+    }
+
+    const amount = Number(betAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setBetError("Enter a valid amount");
+      setBetStatus("error");
+      return;
+    }
+
+    const strapSelection =
+      betKind === "strap"
+        ? ownedStraps.find((entry) => entry.assetId === betStrapAssetId) ?? null
+        : null;
+    if (betKind === "strap" && !strapSelection) {
+      setBetError("Select a strap to bet");
+      setBetStatus("error");
+      return;
+    }
+
+    setBetStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const bet =
+        betKind === "chip"
+          ? { Chip: undefined }
+          : { Strap: strapSelection?.strap };
+      const assetId =
+        betKind === "chip" ? chipAssetId : strapSelection?.assetId ?? null;
+      if (!assetId) {
+        setBetError("Missing asset id for bet");
+        setBetStatus("error");
+        return;
+      }
+      const response = await contract.functions
+        .place_bet(betTargetRoll, bet, amount)
+        .callParams({
+          forward: {
+            amount,
+            assetId,
+          },
+        })
+        .call();
+      setBetTxId(response.transactionId);
+      setBetStatus("pending");
+      await response.waitForResult();
+      setBetStatus("success");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Bet failed";
+      setBetError(message);
+      setBetStatus("error");
+    }
+  };
+
+  const handlePurchaseModifier = async (
+    roll: Roll,
+    entry: ModifierShopEntry,
+    entryKey: string
+  ) => {
+    setModifierPurchaseError(null);
+
+    if (!isConnected || !wallet) {
+      setModifierPurchaseError("Connect wallet to purchase");
+      setModifierPurchaseStatus("error");
+      setModifierPurchaseKey(entryKey);
+      return;
+    }
+
+    setModifierPurchaseKey(entryKey);
+    setModifierPurchaseStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions
+        .purchase_modifier(roll, entry.modifier)
+        .callParams({
+          forward: {
+            amount: entry.price,
+            assetId: chipAssetId,
+          },
+        })
+        .call();
+      setModifierPurchaseStatus("pending");
+      await response.waitForResult();
+      setModifierPurchaseStatus("success");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Purchase modifier failed";
+      setModifierPurchaseError(message);
+      setModifierPurchaseStatus("error");
+    }
+  };
+
   const isRolling = rollStatus === "signing" || rollStatus === "pending";
   const rollButtonLabel = (() => {
     if (!isConnected) {
@@ -1405,6 +1628,28 @@ export default function App() {
     }
     return isConnected ? null : "Connect wallet to play.";
   })();
+  const betStatusMessage = (() => {
+    if (betError) {
+      return betError;
+    }
+    if (betStatus === "signing") {
+      return "Signing bet...";
+    }
+    if (betStatus === "pending") {
+      return "Bet pending...";
+    }
+    if (betStatus === "success") {
+      return "Bet placed.";
+    }
+    return null;
+  })();
+  const isBetBusy = betStatus === "signing" || betStatus === "pending";
+  const selectedBetStrap = ownedStraps.find(
+    (entry) => entry.assetId === betStrapAssetId
+  );
+  const selectedBetGroup = closetGroups.find(
+    (group) => group.kind === betStrapKind
+  );
 
   return (
     <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
@@ -1502,9 +1747,12 @@ export default function App() {
             const modifier = snapshot?.modifiers_active?.[index] ?? null;
             const modifierStory = modifier ? modifierStories[modifier] ?? null : null;
             const modifierEntries = modifierShopByRoll.get(roll) ?? [];
-            const visibleEntries = modifierEntries.filter(
-              (entry) => !entry.purchased && entry.modifier !== modifier
-            );
+            const visibleEntries = modifierEntries.filter((entry) => !entry.purchased);
+            const modifierEntry = modifier
+              ? modifierEntries.find((entry) => entry.modifier === modifier)
+              : null;
+            const shouldShowModifierBanner = Boolean(modifier) &&
+              (modifierEntry ? Boolean(modifierEntry.purchased) : true);
             const hasTableBets = Boolean(
               (totalChips ?? 0) > 0 || strapBets.length > 0
             );
@@ -1583,6 +1831,13 @@ export default function App() {
                     "--translate-y": `${expandedOrigin.translateY}px`,
                   } as React.CSSProperties)
                 : undefined;
+            const handleShopKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+              if (event.key !== "Enter" && event.key !== " ") {
+                return;
+              }
+              event.preventDefault();
+              openExpandedShop(roll, event.currentTarget);
+            };
 
             return (
               <div key={roll} className="shop-cell">
@@ -1591,193 +1846,211 @@ export default function App() {
                     isExpanded ? " shop-frame--expanded" : ""
                   }`}
                 >
-                  <button
-                    type="button"
+                  <div
                     className={`${shopClassName}${isExpanded ? " shop-tile--expanded" : ""}${
                       isExpanded && isExpandedActive
                         ? " shop-tile--expanded-active"
                         : ""
                     }`}
-                    onClick={(event) => openExpandedShop(roll, event)}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    onClick={(event) => openExpandedShop(roll, event.currentTarget)}
+                    onKeyDown={handleShopKeyDown}
                     style={expandedStyle}
                   >
-                  <div className="shop-sign">
-                    <span className="shop-sign__label">{rollLabels[roll]}</span>
-                  </div>
-                  <div className="shop-awning" />
+                    <div className="shop-sign">
+                      <span className="shop-sign__label">{rollLabels[roll]}</span>
+                    </div>
+                    <div className="shop-awning" />
                     <div className="shop-facade">
-                    <div className="shop-window">
-                      {!isExpanded ? (
-                        <div className="shop-meta">
-                          <div className="shop-meta__section">
-                            <span className="shop-meta__title">Your bets</span>
-                            {hasAccountBets ? (
-                              <div className="shop-meta__stack">
-                                {accountBetDetails.map((detail, detailIndex) => (
-                                  <span key={`bet-${roll}-${detailIndex}`}>
-                                    {detail.kind === "chip"
-                                      ? `Chip x${formatNumber(detail.amount)}`
-                                      : `${formatRewardCompact(detail.strap)} x${formatNumber(
-                                          detail.amount
-                                        )}`}
-                                    {typeof detail.betRollIndex === "number"
-                                      ? ` @${detail.betRollIndex}`
-                                      : ""}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="shop-meta__muted">None yet.</span>
-                            )}
-                          </div>
-                          <div className="shop-meta__section">
-                            <span className="shop-meta__title">Table totals</span>
-                            <span>Chips: {formatNumber(totalChips ?? 0)}</span>
-                            <span>Straps: {formatNumber(totalStrapBets)}</span>
-                          </div>
-                        </div>
-                      ) : null}
-                      {isExpanded ? (
-                        <div className="shop-window__details">
-                          <div className="shop-window__section">
-                            <h3>Rewards</h3>
-                            {rewards.length > 0 ? (
-                              <div className="shop-window__stack">
-                                {rewards.map(([strap, amount], rewardIndex) => (
-                                  <div key={`${roll}-reward-${rewardIndex}`}>
-                                    {formatRewardCompact(strap)} ·{" "}
-                                    {formatNumber(amount)}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">
-                                None for this shop.
-                              </div>
-                            )}
-                          </div>
-                          <div className="shop-window__section">
-                            <h3>Your bets</h3>
-                            {accountBetDetails.length > 0 ? (
-                              <div className="shop-window__stack">
-                                {accountBetDetails.map((detail, detailIndex) => (
-                                  <div key={`account-bet-${roll}-${detailIndex}`}>
-                                    {detail.kind === "chip"
-                                      ? `Chip x${formatNumber(detail.amount)}`
-                                      : `${formatRewardCompact(detail.strap)} x${formatNumber(
-                                          detail.amount
-                                        )}`}
-                                    {typeof detail.betRollIndex === "number"
-                                      ? ` @${detail.betRollIndex}`
-                                      : ""}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">No bets yet.</div>
-                            )}
-                          </div>
-                          <div className="shop-window__section">
-                            <h3>Modifiers</h3>
-                            {modifier ? (
-                              <div className="shop-window__stack">
-                                <div>
-                                  {modifierEmojis[modifier] ?? ""} {modifier}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="shop-window__muted">None active.</div>
-                            )}
-                          </div>
-                          <div className="shop-window__section shop-window__section--wide">
-                            <h3>Table bets</h3>
-                            <div className="shop-window__table-summary">
-                              <span>
-                                Chips: {formatNumber(totalChips ?? 0)}
-                              </span>
-                              {tableStrapTotals.length > 0 ? (
-                                <div className="shop-window__table-straps">
-                                  {tableStrapTotals.map(({ strap, amount }) => (
-                                    <span key={`strap-summary-${strapKey(strap)}`}>
-                                      {formatRewardCompact(strap)} ·{" "}
-                                      {formatNumber(amount)}
+                      <div className="shop-window">
+                        {!isExpanded ? (
+                          <div className="shop-meta">
+                            <div className="shop-meta__section">
+                              <span className="shop-meta__title">Your bets</span>
+                              {hasAccountBets ? (
+                                <div className="shop-meta__stack">
+                                  {accountBetDetails.map((detail, detailIndex) => (
+                                    <span key={`bet-${roll}-${detailIndex}`}>
+                                      {detail.kind === "chip"
+                                        ? `Chip x${formatNumber(detail.amount)}`
+                                        : `${formatRewardCompact(detail.strap)} x${formatNumber(
+                                            detail.amount
+                                          )}`}
+                                      {typeof detail.betRollIndex === "number"
+                                        ? ` @${detail.betRollIndex}`
+                                        : ""}
                                     </span>
                                   ))}
                                 </div>
                               ) : (
-                                <span>Straps: {formatNumber(totalStrapBets)}</span>
+                                <span className="shop-meta__muted">None yet.</span>
                               )}
                             </div>
-                            {tableBetsForRoll.length > 0 ? (
-                              <div className="shop-window__table-scroll">
-                                <div className="shop-window__table">
-                                  {tableBetsForRoll.map((entry, tableIndex) => (
-                                    <div
-                                      key={`${roll}-table-${tableIndex}`}
-                                      className="shop-window__table-entry"
-                                    >
-                                      <div className="shop-window__address">
-                                        address:{" "}
-                                        {formatIdentity(entry.identity).toLowerCase()}
-                                      </div>
-                                      <div className="shop-window__stack">
-                                        <div>
-                                          Chip bets: {formatNumber(entry.chipTotal)}
-                                        </div>
-                                        {entry.straps.length > 0 ? (
-                                          <div className="shop-window__stack">
-                                            {entry.straps.map(
-                                              ([strap, amount], strapIndex) => (
-                                                <div
-                                                  key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
-                                                >
-                                                  {formatRewardCompact(strap)} ·{" "}
-                                                  {formatNumber(amount)}
-                                                </div>
-                                              )
-                                            )}
-                                          </div>
-                                        ) : (
-                                          <div className="shop-window__muted">
-                                            No strap bets.
-                                          </div>
-                                        )}
-                                      </div>
+                            <div className="shop-meta__section">
+                              <span className="shop-meta__title">Table totals</span>
+                              <span>Chips: {formatNumber(totalChips ?? 0)}</span>
+                              <span>Straps: {formatNumber(totalStrapBets)}</span>
+                            </div>
+                          </div>
+                        ) : null}
+                        {isExpanded ? (
+                          <div className="shop-window__details">
+                            <div className="shop-window__section">
+                              <h3>Rewards</h3>
+                              {rewards.length > 0 ? (
+                                <div className="shop-window__stack">
+                                  {rewards.map(([strap, amount], rewardIndex) => (
+                                    <div key={`${roll}-reward-${rewardIndex}`}>
+                                      {formatRewardCompact(strap)} ·{" "}
+                                      {formatNumber(amount)}
                                     </div>
                                   ))}
                                 </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  None for this shop.
+                                </div>
+                              )}
+                            </div>
+                            <div className="shop-window__section">
+                              <h3>Your bets</h3>
+                              {accountBetDetails.length > 0 ? (
+                                <div className="shop-window__stack">
+                                  {accountBetDetails.map((detail, detailIndex) => (
+                                    <div key={`account-bet-${roll}-${detailIndex}`}>
+                                      {detail.kind === "chip"
+                                        ? `Chip x${formatNumber(detail.amount)}`
+                                        : `${formatRewardCompact(detail.strap)} x${formatNumber(
+                                            detail.amount
+                                          )}`}
+                                      {typeof detail.betRollIndex === "number"
+                                        ? ` @${detail.betRollIndex}`
+                                        : ""}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  No bets yet.
+                                </div>
+                              )}
+                            </div>
+                            <div className="shop-window__section">
+                              <h3>Modifiers</h3>
+                              {modifier ? (
+                                <div className="shop-window__stack">
+                                  <div>
+                                    {modifierEmojis[modifier] ?? ""} {modifier}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  None active.
+                                </div>
+                              )}
+                            </div>
+                            <div className="shop-window__section shop-window__section--wide">
+                              <h3>Table bets</h3>
+                              <div className="shop-window__table-summary">
+                                <span>
+                                  Chips: {formatNumber(totalChips ?? 0)}
+                                </span>
+                                {tableStrapTotals.length > 0 ? (
+                                  <div className="shop-window__table-straps">
+                                    {tableStrapTotals.map(({ strap, amount }) => (
+                                      <span key={`strap-summary-${strapKey(strap)}`}>
+                                        {formatRewardCompact(strap)} ·{" "}
+                                        {formatNumber(amount)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span>Straps: {formatNumber(totalStrapBets)}</span>
+                                )}
                               </div>
-                            ) : (
-                              <div className="shop-window__muted">
-                                No table bets yet.
-                              </div>
-                            )}
+                              {tableBetsForRoll.length > 0 ? (
+                                <div className="shop-window__table-scroll">
+                                  <div className="shop-window__table">
+                                    {tableBetsForRoll.map((entry, tableIndex) => (
+                                      <div
+                                        key={`${roll}-table-${tableIndex}`}
+                                        className="shop-window__table-entry"
+                                      >
+                                        <div className="shop-window__address">
+                                          address:{" "}
+                                          {formatIdentity(entry.identity).toLowerCase()}
+                                        </div>
+                                        <div className="shop-window__stack">
+                                          <div>
+                                            Chip bets:{" "}
+                                            {formatNumber(entry.chipTotal)}
+                                          </div>
+                                          {entry.straps.length > 0 ? (
+                                            <div className="shop-window__stack">
+                                              {entry.straps.map(
+                                                ([strap, amount], strapIndex) => (
+                                                  <div
+                                                    key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
+                                                  >
+                                                    {formatRewardCompact(strap)} ·{" "}
+                                                    {formatNumber(amount)}
+                                                  </div>
+                                                )
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <div className="shop-window__muted">
+                                              No strap bets.
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="shop-window__muted">
+                                  No table bets yet.
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ) : null}
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        className="shop-door"
+                        aria-label={`Place bet on ${rollLabels[roll]}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openBetModal(roll);
+                        }}
+                      >
+                        <span className="shop-door__label">Bet</span>
+                      </button>
                     </div>
-                    <div className="shop-door" />
+                    {!isExpanded && danglingReward ? (
+                      <div className="shop-dangling">
+                        <span className="shop-dangling__emoji">
+                          {formatRewardCompact(danglingReward[0])}
+                        </span>
+                        <span className="shop-dangling__price">
+                          {formatNumber(danglingReward[1])}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="shop-glow" />
+                    {modifierStory ? (
+                      <div
+                        className={`modifier-aura modifier-aura--${modifierStory.theme}`}
+                      />
+                    ) : null}
                   </div>
-                  {!isExpanded && danglingReward ? (
-                    <div className="shop-dangling">
-                      <span className="shop-dangling__emoji">
-                        {formatRewardCompact(danglingReward[0])}
-                      </span>
-                      <span className="shop-dangling__price">
-                        {formatNumber(danglingReward[1])}
-                      </span>
-                    </div>
-                  ) : null}
-                  <div className="shop-glow" />
-                  {modifierStory ? (
-                    <div
-                      className={`modifier-aura modifier-aura--${modifierStory.theme}`}
-                    />
-                  ) : null}
-                  </button>
                 </div>
                 <div className="modifier-stack">
-                  {modifierStory ? (
+                  {modifierStory && shouldShowModifierBanner ? (
                     <div
                       className={`modifier-banner modifier-banner--${modifierStory.theme}`}
                     >
@@ -1812,17 +2085,32 @@ export default function App() {
                         </button>
                       );
                     }
+                    const entryKey = `${roll}-${entry.modifier}-${entryIndex}`;
+                    const isPurchasing =
+                      modifierPurchaseKey === entryKey &&
+                      (modifierPurchaseStatus === "signing" ||
+                        modifierPurchaseStatus === "pending");
+                    const actionText =
+                      modifierPurchaseKey === entryKey &&
+                      modifierPurchaseStatus === "error"
+                        ? modifierPurchaseError ?? "Purchase failed"
+                        : modifierPurchaseKey === entryKey &&
+                          modifierPurchaseStatus === "success"
+                          ? "Purchased"
+                          : `${story.cta} ${formatNumber(entry.price)}`;
                     return (
                       <button
-                        key={`${roll}-${entry.modifier}-${entryIndex}`}
+                        key={entryKey}
                         type="button"
                         className={`modifier-action modifier-action--${story.theme}`}
+                        disabled={isPurchasing}
+                        onClick={() => handlePurchaseModifier(roll, entry, entryKey)}
                       >
                         <span className="modifier-action__icon" aria-hidden="true">
                           {story.icon}
                         </span>
                         <span className="modifier-action__text">
-                          {story.cta} {formatNumber(entry.price)}
+                          {actionText}
                         </span>
                       </button>
                     );
@@ -1841,6 +2129,263 @@ export default function App() {
           aria-label="Close shop"
           onClick={() => setActiveRoll(null)}
         />
+      ) : null}
+
+      {betTargetRoll ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Bet slip</div>
+                <h2 className="modal__title">
+                  Bet on {rollLabels[betTargetRoll]}
+                </h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={closeBetModal}>
+                Close
+              </button>
+            </div>
+            <div className="modal__body">
+              <div className="modal-card modal-card--wide">
+                {betStatus === "success" ? (
+                  <div className="bet-form">
+                    <div className="bet-field">
+                      <span className="bet-label">Success</span>
+                      <div className="bet-success">
+                        You placed{" "}
+                        {betKind === "chip"
+                          ? `${betAmount} chip(s)`
+                          : selectedBetStrap
+                          ? `${formatRewardCompact(selectedBetStrap.strap)} x${betAmount}`
+                          : `strap x${betAmount}`}{" "}
+                        on {rollLabels[betTargetRoll]}.
+                      </div>
+                      {betTxId ? (
+                        <div className="bet-muted">
+                          Tx: {betTxId.slice(0, 8)}…
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="bet-actions">
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={closeBetModal}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bet-form">
+                    <div className="bet-field">
+                      <span className="bet-label">Bet type</span>
+                      <div className="bet-toggle">
+                        <button
+                          type="button"
+                          className={`bet-toggle__button${
+                            betKind === "chip" ? " bet-toggle__button--active" : ""
+                          }`}
+                          onClick={() => setBetKind("chip")}
+                        >
+                          Chip
+                        </button>
+                        <button
+                          type="button"
+                          className={`bet-toggle__button${
+                            betKind === "strap" ? " bet-toggle__button--active" : ""
+                          }`}
+                          onClick={() => setBetKind("strap")}
+                        >
+                          Strap
+                        </button>
+                      </div>
+                    </div>
+                    {betKind === "strap" ? (
+                      <div className="bet-field">
+                        <span className="bet-label">Select strap</span>
+                        {ownedStraps.length > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              className="bet-variant-button"
+                              onClick={() => setIsStrapKindPickerOpen(true)}
+                              disabled={closetGroups.length === 0}
+                            >
+                              {selectedBetGroup
+                                ? `${selectedBetGroup.emoji} ${selectedBetGroup.kind}`
+                                : "Choose type"}
+                            </button>
+                            <button
+                              type="button"
+                              className="bet-variant-button"
+                              onClick={() => setIsStrapPickerOpen(true)}
+                              disabled={!selectedBetGroup}
+                            >
+                              {selectedBetStrap
+                                ? `${formatRewardCompact(
+                                    selectedBetStrap.strap
+                                  )} · ${formatQuantity(selectedBetStrap.amount)}`
+                                : "Choose variant"}
+                            </button>
+                          </>
+                        ) : (
+                          <div className="bet-muted">No straps owned.</div>
+                        )}
+                      </div>
+                    ) : null}
+                    <div className="bet-field">
+                      <span className="bet-label">Amount</span>
+                      <input
+                        className="bet-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        value={betAmount}
+                        onChange={(event) => setBetAmount(event.target.value)}
+                      />
+                      <span className="bet-help">
+                        {betKind === "chip"
+                          ? `Using ${chipAssetTicker}`
+                          : "Strap quantity"}
+                      </span>
+                    </div>
+                    <div className="bet-actions">
+                      <div className="bet-status">
+                        {betStatusMessage ? betStatusMessage : "Ready to bet."}
+                        {betTxId ? ` (${betTxId.slice(0, 8)}…)` : ""}
+                      </div>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={handlePlaceBet}
+                        disabled={
+                          isBetBusy ||
+                          (betKind === "strap" && ownedStraps.length === 0)
+                        }
+                      >
+                        {isBetBusy ? "Submitting..." : "Place bet"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isStrapKindPickerOpen && betKind === "strap" ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Straps</div>
+                <h2 className="modal__title">Choose type</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsStrapKindPickerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {closetGroups.length > 0 ? (
+                <div className="bet-kind-grid">
+                  {closetGroups.map((group) => {
+                    const isActive = group.kind === betStrapKind;
+                    return (
+                      <button
+                        key={`bet-kind-${group.kind}`}
+                        type="button"
+                        className={`bet-kind${isActive ? " bet-kind--active" : ""}`}
+                        onClick={() => {
+                          setBetStrapKind(group.kind);
+                          setIsStrapKindPickerOpen(false);
+                        }}
+                      >
+                        <div className="bet-kind__icon" aria-hidden="true">
+                          {group.emoji}
+                        </div>
+                        <div className="bet-kind__label">{group.kind}</div>
+                        <div className="bet-kind__meta">
+                          {group.entries.length} variants
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="modal-muted">No straps available.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isStrapPickerOpen && betKind === "strap" ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Straps</div>
+                <h2 className="modal__title">Choose variant</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsStrapPickerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {selectedBetGroup ? (
+                <div className="closet-kind">
+                  <div className="closet-kind__badge">
+                    <div className="closet-kind__icon" aria-hidden="true">
+                      {selectedBetGroup.emoji}
+                    </div>
+                    <div>{selectedBetGroup.kind}</div>
+                  </div>
+                  <div className="closet-kind__items">
+                    {selectedBetGroup.entries.map((entry) => {
+                      const isActive = entry.assetId === betStrapAssetId;
+                      return (
+                        <button
+                          key={`bet-variant-${entry.assetId}`}
+                          type="button"
+                          className={`bet-variant${
+                            isActive ? " bet-variant--active" : ""
+                          }`}
+                          onClick={() => {
+                            setBetStrapAssetId(entry.assetId);
+                            setIsStrapPickerOpen(false);
+                          }}
+                        >
+                          <div className="bet-variant__title">
+                            {formatRewardCompact(entry.strap)}
+                          </div>
+                          <div className="bet-variant__meta">
+                            L{entry.strap.level} · {formatQuantity(entry.amount)}
+                          </div>
+                          <div className="bet-variant__asset">
+                            Asset: {formatAssetId(entry.assetId)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-muted">No straps available.</div>
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {isClosetOpen && (
