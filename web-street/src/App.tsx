@@ -973,6 +973,9 @@ export default function App() {
   const rollAnimationEndRef = useRef<number>(0);
   const rollAnimationOriginRef = useRef<Roll | null>(null);
   const rollAnimationOriginCountRef = useRef<number>(0);
+  const rollCountRef = useRef<number>(0);
+  const lastRollRef = useRef<Roll | null>(null);
+  const lastGameIdRef = useRef<number | null>(null);
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -1657,8 +1660,10 @@ export default function App() {
   }, [snapshot]);
   const lastRoll = diceRolls[0] ?? null;
   const rollCount = snapshot?.rolls.length ?? 0;
+  const baseFallbackRoll =
+    snapshot && snapshot.rolls.length === 0 ? "Seven" : rollFallbackFace;
   const displayedRoll =
-    isRollAnimating && rollingFace ? rollingFace : lastRoll ?? rollFallbackFace;
+    isRollAnimating && rollingFace ? rollingFace : lastRoll ?? baseFallbackRoll;
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
@@ -2010,39 +2015,51 @@ export default function App() {
     (group) => group.kind === betStrapKind
   );
 
+  const stopRollAnimation = (showFallback: boolean, pulse: boolean) => {
+    setIsRollAnimating(false);
+    setRollingFace(null);
+    rollAnimationOriginRef.current = null;
+    rollAnimationOriginCountRef.current = rollCountRef.current;
+    if (rollAnimationRef.current !== null) {
+      window.clearInterval(rollAnimationRef.current);
+      rollAnimationRef.current = null;
+    }
+    if (showFallback) {
+      setRollFallbackFace("Seven");
+    }
+    if (pulse) {
+      setRollLandPulse(true);
+    }
+  };
+
+  useEffect(() => {
+    rollCountRef.current = rollCount;
+    lastRollRef.current = lastRoll;
+  }, [rollCount, lastRoll]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+    if (snapshot.rolls.length === 0) {
+      setRollFallbackFace("Seven");
+    }
+    const currentGameId = snapshot.game_id;
+    if (lastGameIdRef.current !== null && currentGameId !== lastGameIdRef.current) {
+      setRollLandPulse(true);
+    }
+    lastGameIdRef.current = currentGameId;
+  }, [snapshot]);
+
   useEffect(() => {
     if (!isRollAnimating) {
       return;
     }
     const origin = rollAnimationOriginRef.current;
     const originCount = rollAnimationOriginCountRef.current;
-    if (Date.now() < rollAnimationEndRef.current) {
-      return;
-    }
     const hasNewRoll = rollCount > originCount || (origin && lastRoll && origin !== lastRoll);
     if (hasNewRoll) {
-      setIsRollAnimating(false);
-      setRollingFace(null);
-      rollAnimationOriginRef.current = null;
-      rollAnimationOriginCountRef.current = rollCount;
-      if (rollAnimationRef.current !== null) {
-        window.clearInterval(rollAnimationRef.current);
-        rollAnimationRef.current = null;
-      }
-      setRollLandPulse(true);
-      return;
-    }
-    if (!lastRoll && rollCount === 0) {
-      setIsRollAnimating(false);
-      setRollingFace(null);
-      rollAnimationOriginRef.current = null;
-      rollAnimationOriginCountRef.current = rollCount;
-      if (rollAnimationRef.current !== null) {
-        window.clearInterval(rollAnimationRef.current);
-        rollAnimationRef.current = null;
-      }
-      setRollFallbackFace("Seven");
-      setRollLandPulse(true);
+      stopRollAnimation(false, true);
     }
   }, [isRollAnimating, lastRoll, rollCount]);
 
@@ -2050,13 +2067,7 @@ export default function App() {
     if (rollStatus !== "error") {
       return;
     }
-    setIsRollAnimating(false);
-    setRollingFace(null);
-    rollAnimationOriginRef.current = null;
-    if (rollAnimationRef.current !== null) {
-      window.clearInterval(rollAnimationRef.current);
-      rollAnimationRef.current = null;
-    }
+    stopRollAnimation(false, false);
   }, [rollStatus]);
 
   useEffect(() => {
