@@ -2218,7 +2218,7 @@ export default function App() {
       id: "strap-bets",
       title: "Strap Bets",
       eyebrow: "How to play",
-      body: "Betting a strap upgrades it to the next level when the roll hits.",
+      body: "Betting a strap upgrades it to the next level if the roll hits.",
       images: [
         {
           src: "/tutorial/bet_pants.png",
