@@ -2286,7 +2286,7 @@ export default function App() {
     }
     const currentGameId = snapshot.game_id;
     if (lastGameIdRef.current !== null && currentGameId !== lastGameIdRef.current) {
-      setRollLandPulse(true);
+      stopRollAnimation(true, true);
     }
     lastGameIdRef.current = currentGameId;
   }, [snapshot]);
@@ -2297,7 +2297,10 @@ export default function App() {
     }
     const origin = rollAnimationOriginRef.current;
     const originCount = rollAnimationOriginCountRef.current;
-    const hasNewRoll = rollCount > originCount || (origin && lastRoll && origin !== lastRoll);
+    const hasNewRoll =
+      rollCount > originCount ||
+      rollCount < originCount ||
+      (origin && lastRoll && origin !== lastRoll);
     if (hasNewRoll) {
       stopRollAnimation(false, true);
     }
@@ -2974,8 +2977,8 @@ export default function App() {
                         ))}
                       </div>
                     ) : null}
-                    {hasChipTableBets ? <div className="bet-aura" /> : null}
-                    {modifierStory ? (
+                    {hasTableBets ? <div className="bet-aura" /> : null}
+                    {modifierStory && shouldShowModifierBanner ? (
                       <div
                         className={`modifier-aura modifier-aura--${modifierStory.theme}`}
                       />
