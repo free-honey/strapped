@@ -132,6 +132,19 @@ type AccountBetDetail =
   | { amount: number; kind: "chip"; betRollIndex?: number }
   | { amount: number; kind: "strap"; strap: Strap; betRollIndex?: number };
 
+type TutorialStep = {
+  id: string;
+  title: string;
+  eyebrow: string;
+  body: string;
+  images?: Array<{
+    src: string;
+    alt: string;
+  }>;
+  backLabel?: string;
+  nextLabel?: string;
+};
+
 const rollOrder: Roll[] = [
   "Two",
   "Three",
@@ -218,29 +231,86 @@ const modifierOrder = Object.keys(modifierEmojis);
 type ModifierStory = {
   cta: string;
   applied: string;
+  appliedHint?: string;
   icon: string;
   theme: string;
 };
 
 const modifierStories: Record<string, ModifierStory> = {
-  Burnt: { cta: "commit arson", applied: "ablaze", icon: "🧯", theme: "burnt" },
-  Lucky: { cta: "bury gold", applied: "charmed", icon: "🍀", theme: "lucky" },
-  Holy: { cta: "buy indulgences", applied: "blessed", icon: "👼", theme: "holy" },
-  Holey: { cta: "release moths", applied: "overrun", icon: "🫥", theme: "holey" },
-  Scotch: { cta: "play bagpipes", applied: "bagpipes playing softly", icon: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", theme: "scotch" },
-  Soaked: { cta: "open hydrant", applied: "flooded", icon: "🌊", theme: "soaked" },
+  Burnt: {
+    cta: "commit arson",
+    applied: "ablaze",
+    appliedHint: "bet your straps here to apply 🧯",
+    icon: "🧯",
+    theme: "burnt",
+  },
+  Lucky: {
+    cta: "bury gold",
+    applied: "charmed",
+    appliedHint: "bet your straps here to apply 🍀",
+    icon: "🍀",
+    theme: "lucky",
+  },
+  Holy: {
+    cta: "buy indulgences",
+    applied: "blessed",
+    appliedHint: "bet your straps here to apply 👼",
+    icon: "👼",
+    theme: "holy",
+  },
+  Holey: {
+    cta: "release moths",
+    applied: "overrun",
+    appliedHint: "bet your straps here to apply 🫥",
+    icon: "🫥",
+    theme: "holey",
+  },
+  Scotch: {
+    cta: "play bagpipes",
+    applied: "bagpipes playing softly",
+    appliedHint: "bet your straps here to apply 🏴",
+    icon: "🏴",
+    theme: "scotch",
+  },
+  Soaked: {
+    cta: "open hydrant",
+    applied: "flooded",
+    appliedHint: "bet your straps here to apply 🌊",
+    icon: "🌊",
+    theme: "soaked",
+  },
   Moldy: {
     cta: "leave clothes in washer",
     applied: "mildewed",
+    appliedHint: "bet your straps here to apply 🍄",
     icon: "🍄",
     theme: "moldy",
   },
-  Starched: { cta: "dump flour", applied: "dusted", icon: "🏳️", theme: "starched" },
-  Evil: { cta: "curse shop", applied: "cursed", icon: "😈", theme: "evil" },
-  Groovy: { cta: "dump paint", applied: "splattered", icon: "✌️", theme: "groovy" },
+  Starched: {
+    cta: "dump flour",
+    applied: "dusted",
+    appliedHint: "bet your straps here to apply 🏳️",
+    icon: "🏳️",
+    theme: "starched",
+  },
+  Evil: {
+    cta: "curse shop",
+    applied: "cursed",
+    appliedHint: "bet your straps here to apply 😈",
+    icon: "😈",
+    theme: "evil",
+  },
+  Groovy: {
+    cta: "dump paint",
+    applied: "splattered",
+    appliedHint: "bet your straps here to apply ✌️",
+    icon: "✌️",
+    theme: "groovy",
+  },
   Delicate: {
     cta: "handle with care",
     applied: "caressed",
+    appliedHint: "bet your straps here to apply ❤️",
     icon: "❤️",
     theme: "delicate",
   },
@@ -928,6 +998,8 @@ export default function App() {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
   const [isClosetOpen, setIsClosetOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
   const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
   const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
@@ -972,12 +1044,14 @@ export default function App() {
   const [chipBalanceOverride, setChipBalanceOverride] = useState<string | null>(
     null
   );
+  const [shopRiseKey, setShopRiseKey] = useState(0);
   const rollAnimationRef = useRef<number | null>(null);
   const rollAnimationEndRef = useRef<number>(0);
   const rollAnimationOriginRef = useRef<Roll | null>(null);
   const rollAnimationOriginCountRef = useRef<number>(0);
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
+  const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
   const [expandedOrigin, setExpandedOrigin] = useState<{
@@ -1009,6 +1083,7 @@ export default function App() {
   const [knownStraps, setKnownStraps] = useState<StrapMetadata[]>([]);
   const [ownedStraps, setOwnedStraps] = useState<OwnedStrap[]>([]);
   const [gameHistory, setGameHistory] = useState<HistoryEntry[]>([]);
+  const tutorialStorageKey = "strapped_tutorial_seen";
   const snapshot = data?.snapshot ?? null;
   const walletStatus: "idle" | "connecting" | "connected" | "error" = walletError
     ? "error"
@@ -1078,6 +1153,32 @@ export default function App() {
       setWalletError(null);
     }
   }, [isConnected]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const hasSeenTutorial =
+      window.localStorage.getItem(tutorialStorageKey) === "true";
+    if (!hasSeenTutorial) {
+      setTutorialStepIndex(0);
+      setIsTutorialOpen(true);
+      window.localStorage.setItem(tutorialStorageKey, "true");
+    }
+  }, [tutorialStorageKey]);
+
+  useEffect(() => {
+    if (!isTutorialOpen) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsTutorialOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isTutorialOpen]);
 
   useEffect(() => {
     if (betKind !== "strap") {
@@ -1655,6 +1756,11 @@ export default function App() {
     const level = strap.level;
     return `${modifierEmoji}${strapEmoji}${level}`;
   };
+  const formatRewardEmojiOnly = (strap: Strap) => {
+    const modifierEmoji = modifierEmojis[strap.modifier] ?? "";
+    const strapEmoji = strapEmojis[strap.kind] ?? "🎽";
+    return `${modifierEmoji}${strapEmoji}`;
+  };
 
   const formatNumber = (value: number | null | undefined) =>
     value === null || value === undefined ? "—" : value.toLocaleString();
@@ -1675,6 +1781,9 @@ export default function App() {
   }, [snapshot]);
   const lastRoll = diceRolls[0] ?? null;
   const rollCount = snapshot?.rolls.length ?? 0;
+  const isNight = (snapshot?.game_id ?? 0) % 2 === 1;
+  const betTargetIndex = betTargetRoll ? rollOrder.indexOf(betTargetRoll) : -1;
+  const betTargetVariant = betTargetIndex >= 0 ? betTargetIndex % 5 : 0;
   const baseFallbackRoll =
     snapshot && snapshot.rolls.length === 0 ? "Seven" : rollFallbackFace;
   const displayedRoll =
@@ -1690,6 +1799,10 @@ export default function App() {
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
 
+  const triggerShopRise = useCallback(() => {
+    setShopRiseKey((previous) => previous + 1);
+  }, []);
+
   const buildShopClasses = (options: {
     hasReward: boolean;
     hasTableBets: boolean;
@@ -1702,6 +1815,7 @@ export default function App() {
     }
     if (options.hasTableBets) {
       base.push("shop-tile--table");
+      base.push("shop-tile--active-bets");
     }
     if (options.modifier) {
       const modifierClass = modifierClassNames[options.modifier];
@@ -2046,6 +2160,165 @@ export default function App() {
     [gameHistory]
   );
 
+  const tutorialSteps: TutorialStep[] = [
+    {
+      id: "welcome",
+      title: "Welcome to Strapped",
+      eyebrow: "How to play",
+      body: "Strapped is a dice-roll betting game where you bet chips and the clothes off your back. Bet chips to earn more clothes, bet clothes to make them more valuable.",
+      nextLabel: "Next: Shops",
+    },
+    {
+      id: "shops",
+      title: "Shops",
+      eyebrow: "How to play",
+      body: "Each roll has a shop. You can win chips and straps by betting on the shops.",
+      images: [
+        {
+          src: "/tutorial/shop.png",
+          alt: "Shops overview",
+        },
+        {
+          src: "/tutorial/shop_empty.png",
+          alt: "Shop without strap rewards",
+        },
+      ],
+      backLabel: "Back: Welcome",
+      nextLabel: "Next: Shop Details",
+    },
+    {
+      id: "shop-details",
+      title: "Shop Details",
+      eyebrow: "How to play",
+      body: "Click a shop to expand it and see rewards, modifiers, and table bets in detail.",
+      images: [
+        {
+          src: "/tutorial/shop_expanded.png",
+          alt: "Expanded shop view",
+        },
+      ],
+      backLabel: "Back: Shops",
+      nextLabel: "Next: Placing Bets",
+    },
+    {
+      id: "placing-bets",
+      title: "Placing Bets",
+      eyebrow: "How to play",
+      body: "Use shop door to place bets. Each shop has a different payout based on the frequency of the roll.",
+      images: [
+        {
+          src: "/tutorial/bet_chips.png",
+          alt: "Placing a chip bet",
+        },
+      ],
+      backLabel: "Back: Shops",
+      nextLabel: "Next: Strap Bets",
+    },
+    {
+      id: "strap-bets",
+      title: "Strap Bets",
+      eyebrow: "How to play",
+      body: "Betting a strap upgrades it to the next level if the roll hits.",
+      images: [
+        {
+          src: "/tutorial/bet_pants.png",
+          alt: "Placing a strap bet",
+        },
+      ],
+      backLabel: "Back: Placing Bets",
+      nextLabel: "Next: Strap Rewards",
+    },
+    {
+      id: "strap-rewards",
+      title: "Strap Rewards",
+      eyebrow: "How to play",
+      body: "This EIGHT shop has a 👟 reward for every 10 chips bet, i.e. a bet of 50 chips will reward 5 👟 for each hit.",
+      images: [
+        {
+          src: "/tutorial/shop_reward.png",
+          alt: "Shop with strap rewards",
+        },
+      ],
+      backLabel: "Back: Placing Bets",
+      nextLabel: "Next: Rolling Dice",
+    },
+    {
+      id: "rolling-dice",
+      title: "Rolling Dice",
+      eyebrow: "How to play",
+      body: "Roll the dice to advance the round. As you can see, we had a bet on eight, so when eight was rolled the bet was hit. Claim your winnings when the game has ended!",
+      images: [
+        {
+          src: "/tutorial/roll_eight.png",
+          alt: "Rolling an eight",
+        },
+        {
+          src: "/tutorial/eight_bets.png",
+          alt: "Eight bets hitting",
+        },
+      ],
+      backLabel: "Back: Strap Rewards",
+      nextLabel: "Next: Claiming Winnings",
+    },
+    {
+      id: "claiming-winnings",
+      title: "Claiming Winnings",
+      eyebrow: "How to play",
+      body: "The game ends when a 7 is rolled! Unclaimed games show up in the PREVIOUS GAMES tab.",
+      images: [
+        {
+          src: "/tutorial/roll_seven.png",
+          alt: "Seven ends the game",
+        },
+        {
+          src: "/tutorial/previous_games_button.png",
+          alt: "Previous games button",
+        },
+      ],
+      backLabel: "Back: Rolling Dice",
+      nextLabel: "Next: Unclaimed Games",
+    },
+    {
+      id: "unclaimed-games",
+      title: "Unclaimed Games",
+      eyebrow: "How to play",
+      body: "In game 49, we hit 8 twice so we should earn chips and 👟, but 6 was never hit so we will lose our bet 👖.",
+      images: [
+        {
+          src: "/tutorial/unclaimed_game.png",
+          alt: "Unclaimed game entry",
+        },
+      ],
+      backLabel: "Back: Claiming Winnings",
+      nextLabel: "Next: Claimed Game",
+    },
+    {
+      id: "claimed-game",
+      title: "Claimed Game",
+      eyebrow: "How to play",
+      body: "After claiming, you will see what you earned and the game is marked as claimed. Here we netted 1,400 chips and received 200 👟.",
+      images: [
+        {
+          src: "/tutorial/claimed_game.png",
+          alt: "Claimed game details",
+        },
+      ],
+      backLabel: "Back: Unclaimed Games",
+      nextLabel: "Next: Other fun features!",
+    },
+    {
+      id: "other-features",
+      title: "Other fun features!",
+      eyebrow: "How to play",
+      body: "Check your closet for all earned straps and keep an eye out for other exciting events.",
+      backLabel: "Back: Claiming Winnings",
+      nextLabel: "Done",
+    },
+  ];
+  const tutorialStep = tutorialSteps[tutorialStepIndex] ?? tutorialSteps[0];
+  const isTutorialFirstStep = tutorialStepIndex === 0;
+  const isTutorialLastStep = tutorialStepIndex === tutorialSteps.length - 1;
+
   const stopRollAnimation = (showFallback: boolean, pulse: boolean) => {
     setIsRollAnimating(false);
     setRollingFace(null);
@@ -2069,6 +2342,14 @@ export default function App() {
   }, [rollCount, lastRoll]);
 
   useEffect(() => {
+    const previousRoll = previousRollRef.current;
+    if (lastRoll === "Seven" && previousRoll !== "Seven") {
+      triggerShopRise();
+    }
+    previousRollRef.current = lastRoll;
+  }, [lastRoll, triggerShopRise]);
+
+  useEffect(() => {
     const previousCount = lastObservedRollCountRef.current;
     lastObservedRollCountRef.current = rollCount;
     if (!isRollAnimating && rollCount > previousCount) {
@@ -2085,10 +2366,20 @@ export default function App() {
     }
     const currentGameId = snapshot.game_id;
     if (lastGameIdRef.current !== null && currentGameId !== lastGameIdRef.current) {
-      setRollLandPulse(true);
+      stopRollAnimation(true, true);
+      if (lastRollRef.current !== "Seven") {
+        triggerShopRise();
+      }
     }
     lastGameIdRef.current = currentGameId;
   }, [snapshot]);
+
+  useEffect(() => {
+    document.body.classList.toggle("night", isNight);
+    return () => {
+      document.body.classList.remove("night");
+    };
+  }, [isNight]);
 
   useEffect(() => {
     if (!isRollAnimating) {
@@ -2096,7 +2387,10 @@ export default function App() {
     }
     const origin = rollAnimationOriginRef.current;
     const originCount = rollAnimationOriginCountRef.current;
-    const hasNewRoll = rollCount > originCount || (origin && lastRoll && origin !== lastRoll);
+    const hasNewRoll =
+      rollCount > originCount ||
+      rollCount < originCount ||
+      (origin && lastRoll && origin !== lastRoll);
     if (hasNewRoll) {
       stopRollAnimation(false, true);
     }
@@ -2342,7 +2636,11 @@ export default function App() {
     );
 
   return (
-    <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
+    <div
+      className={`street-app${activeRoll ? " street-app--expanded" : ""}${
+        isNight ? " street-app--night" : ""
+      }`}
+    >
       <header className="street-header">
         <h1 className="street-title">STRAPPED!</h1>
         <div className="street-meta">
@@ -2391,12 +2689,25 @@ export default function App() {
                   ? "Disconnect"
                   : "Connect"}
           </button>
+          <button
+            className="ghost-button help-button"
+            type="button"
+            aria-label="Open tutorial"
+            title="How to play"
+            onClick={() => {
+              setTutorialStepIndex(0);
+              setIsTutorialOpen(true);
+            }}
+          >
+            ?
+          </button>
         </div>
       </header>
 
       <main className="street-stage">
         <div className="sky-glow" />
         <div className="street-sun" />
+        <div className="street-moon" />
         <div className="cloud cloud--one" />
         <div className="cloud cloud--two" />
         <div className="street-ground" />
@@ -2544,7 +2855,7 @@ export default function App() {
             };
 
             return (
-              <div key={roll} className="shop-cell">
+              <div key={`${roll}-${shopRiseKey}`} className="shop-cell">
                 <div
                   className={`shop-frame${
                     isExpanded ? " shop-frame--expanded" : ""
@@ -2752,7 +3063,7 @@ export default function App() {
                             }
                           >
                             <span className="shop-dangling__emoji">
-                              {formatRewardCompact(strap)}
+                              {formatRewardEmojiOnly(strap)}
                             </span>
                             <span className="shop-dangling__price">
                               {formatNumber(amount)}
@@ -2761,8 +3072,7 @@ export default function App() {
                         ))}
                       </div>
                     ) : null}
-                    {hasChipTableBets ? <div className="bet-aura" /> : null}
-                    {modifierStory ? (
+                    {modifierStory && shouldShowModifierBanner ? (
                       <div
                         className={`modifier-aura modifier-aura--${modifierStory.theme}`}
                       />
@@ -2778,7 +3088,14 @@ export default function App() {
                         {modifierStory.icon}
                       </span>
                       <span className="modifier-banner__text">
-                        {modifierStory.applied}
+                        <span className="modifier-banner__title">
+                          {modifierStory.applied}
+                        </span>
+                        {modifierStory.appliedHint ? (
+                          <span className="modifier-banner__subtext">
+                            ({modifierStory.appliedHint})
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                   ) : null}
@@ -2851,9 +3168,71 @@ export default function App() {
         />
       ) : null}
 
+      {isTutorialOpen ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tutorial">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">{tutorialStep.eyebrow}</div>
+                <h2 className="modal__title">{tutorialStep.title}</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsTutorialOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--single">
+              <div className="tutorial-copy">
+                <p>{tutorialStep.body}</p>
+                {tutorialStep.images && tutorialStep.images.length > 0 ? (
+                  <div className="tutorial-media-grid">
+                    {tutorialStep.images.map((image) => (
+                      <div key={image.src} className="tutorial-media">
+                        <img src={image.src} alt={image.alt} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="tutorial-actions">
+                {isTutorialFirstStep ? null : (
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() =>
+                      setTutorialStepIndex((index) => Math.max(index - 1, 0))
+                    }
+                  >
+                    {tutorialStep.backLabel ?? "Back"}
+                  </button>
+                )}
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => {
+                    if (isTutorialLastStep) {
+                      setIsTutorialOpen(false);
+                      return;
+                    }
+                    setTutorialStepIndex((index) =>
+                      Math.min(index + 1, tutorialSteps.length - 1)
+                    );
+                  }}
+                >
+                  {tutorialStep.nextLabel ?? "Next"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {betTargetRoll ? (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal modal--games">
+          <div className={`modal modal--games modal--shop-${betTargetVariant}`}>
             <div className="modal__header">
               <div>
                 <div className="modal__eyebrow">Bet slip</div>
@@ -2932,9 +3311,7 @@ export default function App() {
                               onClick={() => setIsStrapKindPickerOpen(true)}
                               disabled={closetGroups.length === 0}
                             >
-                              {selectedBetGroup
-                                ? `${selectedBetGroup.emoji} ${selectedBetGroup.kind}`
-                                : "Choose type"}
+                              {selectedBetGroup ? `${selectedBetGroup.emoji}` : "Choose type"}
                             </button>
                             <button
                               type="button"
@@ -3034,7 +3411,6 @@ export default function App() {
                         <div className="bet-kind__icon" aria-hidden="true">
                           {group.emoji}
                         </div>
-                        <div className="bet-kind__label">{group.kind}</div>
                         <div className="bet-kind__meta">
                           {group.entries.length} variants
                         </div>
@@ -3073,7 +3449,6 @@ export default function App() {
                     <div className="closet-kind__icon" aria-hidden="true">
                       {selectedBetGroup.emoji}
                     </div>
-                    <div>{selectedBetGroup.kind}</div>
                   </div>
                   <div className="closet-kind__items">
                     {selectedBetGroup.entries.map((entry) => {
@@ -3436,32 +3811,10 @@ export default function App() {
               <div className="modal-card modal-card--wide">
                 <div className="modal-stack">
                   <div className="modal-row">
-                    <span>Chips won</span>
-                    <span>
-                      {claimResult.chipWon === null
-                        ? "Awaiting indexer"
-                        : formatNumber(claimResult.chipWon)}
-                    </span>
-                  </div>
-                  <div className="modal-row">
-                    <span>Bet total</span>
-                    <span>{formatNumber(claimResult.chipBet)}</span>
-                  </div>
-                  <div className="modal-row">
-                    <span>Net</span>
-                    <span>
-                      {claimResult.chipWon === null || claimResult.netChip === null
-                        ? "—"
-                        : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
-                            Math.abs(claimResult.netChip)
-                          )}`}
-                    </span>
-                  </div>
-                  <div className="modal-row">
                     <span>Your bets</span>
                     <span>
                       {claimResult.betDetails.length > 0
-                        ? "See list"
+                        ? " "
                         : "No bets recorded."}
                     </span>
                   </div>
@@ -3493,6 +3846,28 @@ export default function App() {
                       })}
                     </div>
                   ) : null}
+                  <div className="modal-row">
+                    <span>Chips won</span>
+                    <span>
+                      {claimResult.chipWon === null
+                        ? "Awaiting indexer"
+                        : formatNumber(claimResult.chipWon)}
+                    </span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Bet total</span>
+                    <span>{formatNumber(claimResult.chipBet)}</span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Net</span>
+                    <span>
+                      {claimResult.chipWon === null || claimResult.netChip === null
+                        ? "—"
+                        : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
+                            Math.abs(claimResult.netChip)
+                          )}`}
+                    </span>
+                  </div>
                   <div className="modal-row">
                     <span>Straps</span>
                     <span>
