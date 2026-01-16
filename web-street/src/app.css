@@ -135,6 +135,17 @@ button {
   box-shadow: 0 8px 16px rgba(31, 22, 18, 0.15);
 }
 
+.help-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+}
+
 .wallet-pill {
   display: inline-flex;
   align-items: center;
@@ -1350,6 +1361,12 @@ button {
   gap: 14px;
 }
 
+.modal__body--single {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .modal__body--scroll {
   max-height: 60vh;
   overflow-y: auto;
@@ -1836,6 +1853,50 @@ button {
 .modal-muted {
   color: var(--ink-soft);
   font-size: 13px;
+}
+
+.tutorial-copy {
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.tutorial-copy p {
+  margin: 0;
+}
+
+.tutorial-media {
+  border-radius: 14px;
+  border: 2px solid var(--tile-border);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 8px;
+  display: flex;
+  justify-content: center;
+}
+
+.tutorial-media-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.tutorial-media img {
+  width: 100%;
+  height: auto;
+  max-height: 30vh;
+  object-fit: contain;
+  border-radius: 10px;
+  display: block;
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
+.tutorial-actions .ghost-button {
+  margin-right: auto;
 }
 
 .primary-button {

@@ -132,6 +132,19 @@ type AccountBetDetail =
   | { amount: number; kind: "chip"; betRollIndex?: number }
   | { amount: number; kind: "strap"; strap: Strap; betRollIndex?: number };
 
+type TutorialStep = {
+  id: string;
+  title: string;
+  eyebrow: string;
+  body: string;
+  images?: Array<{
+    src: string;
+    alt: string;
+  }>;
+  backLabel?: string;
+  nextLabel?: string;
+};
+
 const rollOrder: Roll[] = [
   "Two",
   "Three",
@@ -928,6 +941,8 @@ export default function App() {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
   const [isClosetOpen, setIsClosetOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
   const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
   const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
@@ -1009,6 +1024,7 @@ export default function App() {
   const [knownStraps, setKnownStraps] = useState<StrapMetadata[]>([]);
   const [ownedStraps, setOwnedStraps] = useState<OwnedStrap[]>([]);
   const [gameHistory, setGameHistory] = useState<HistoryEntry[]>([]);
+  const tutorialStorageKey = "strapped_tutorial_seen";
   const snapshot = data?.snapshot ?? null;
   const walletStatus: "idle" | "connecting" | "connected" | "error" = walletError
     ? "error"
@@ -1078,6 +1094,32 @@ export default function App() {
       setWalletError(null);
     }
   }, [isConnected]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const hasSeenTutorial =
+      window.localStorage.getItem(tutorialStorageKey) === "true";
+    if (!hasSeenTutorial) {
+      setTutorialStepIndex(0);
+      setIsTutorialOpen(true);
+      window.localStorage.setItem(tutorialStorageKey, "true");
+    }
+  }, [tutorialStorageKey]);
+
+  useEffect(() => {
+    if (!isTutorialOpen) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsTutorialOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isTutorialOpen]);
 
   useEffect(() => {
     if (betKind !== "strap") {
@@ -2046,6 +2088,165 @@ export default function App() {
     [gameHistory]
   );
 
+  const tutorialSteps: TutorialStep[] = [
+    {
+      id: "welcome",
+      title: "Welcome to Strapped",
+      eyebrow: "How to play",
+      body: "Strapped is a dice-roll betting game where you bet chips and the clothes off your back. Bet chips to earn more clothes, bet clothes to make them more valuable.",
+      nextLabel: "Next: Shops",
+    },
+    {
+      id: "shops",
+      title: "Shops",
+      eyebrow: "How to play",
+      body: "Each roll has a shop. You can win chips and straps by betting on the shops.",
+      images: [
+        {
+          src: "/tutorial/shop.png",
+          alt: "Shops overview",
+        },
+        {
+          src: "/tutorial/shop_empty.png",
+          alt: "Shop without strap rewards",
+        },
+      ],
+      backLabel: "Back: Welcome",
+      nextLabel: "Next: Shop Details",
+    },
+    {
+      id: "shop-details",
+      title: "Shop Details",
+      eyebrow: "How to play",
+      body: "Click a shop to expand it and see rewards, modifiers, and table bets in detail.",
+      images: [
+        {
+          src: "/tutorial/shop_expanded.png",
+          alt: "Expanded shop view",
+        },
+      ],
+      backLabel: "Back: Shops",
+      nextLabel: "Next: Placing Bets",
+    },
+    {
+      id: "placing-bets",
+      title: "Placing Bets",
+      eyebrow: "How to play",
+      body: "Use shop door to place bets. Each shop has a different payout based on the frequency of the roll.",
+      images: [
+        {
+          src: "/tutorial/bet_chips.png",
+          alt: "Placing a chip bet",
+        },
+      ],
+      backLabel: "Back: Shops",
+      nextLabel: "Next: Strap Bets",
+    },
+    {
+      id: "strap-bets",
+      title: "Strap Bets",
+      eyebrow: "How to play",
+      body: "Betting a strap upgrades it to the next level when the roll hits.",
+      images: [
+        {
+          src: "/tutorial/bet_pants.png",
+          alt: "Placing a strap bet",
+        },
+      ],
+      backLabel: "Back: Placing Bets",
+      nextLabel: "Next: Strap Rewards",
+    },
+    {
+      id: "strap-rewards",
+      title: "Strap Rewards",
+      eyebrow: "How to play",
+      body: "This EIGHT shop has a 👟 reward for every 10 chips bet, i.e. a bet of 50 chips will reward 5 👟 for each hit.",
+      images: [
+        {
+          src: "/tutorial/shop_reward.png",
+          alt: "Shop with strap rewards",
+        },
+      ],
+      backLabel: "Back: Placing Bets",
+      nextLabel: "Next: Rolling Dice",
+    },
+    {
+      id: "rolling-dice",
+      title: "Rolling Dice",
+      eyebrow: "How to play",
+      body: "Roll the dice to advance the round. As you can see, we had a bet on eight, so when eight was rolled the bet was hit. Claim your winnings when the game has ended!",
+      images: [
+        {
+          src: "/tutorial/roll_eight.png",
+          alt: "Rolling an eight",
+        },
+        {
+          src: "/tutorial/eight_bets.png",
+          alt: "Eight bets hitting",
+        },
+      ],
+      backLabel: "Back: Strap Rewards",
+      nextLabel: "Next: Claiming Winnings",
+    },
+    {
+      id: "claiming-winnings",
+      title: "Claiming Winnings",
+      eyebrow: "How to play",
+      body: "The game ends when a 7 is rolled! Unclaimed games show up in the PREVIOUS GAMES tab.",
+      images: [
+        {
+          src: "/tutorial/roll_seven.png",
+          alt: "Seven ends the game",
+        },
+        {
+          src: "/tutorial/previous_games_button.png",
+          alt: "Previous games button",
+        },
+      ],
+      backLabel: "Back: Rolling Dice",
+      nextLabel: "Next: Unclaimed Games",
+    },
+    {
+      id: "unclaimed-games",
+      title: "Unclaimed Games",
+      eyebrow: "How to play",
+      body: "In game 49, we hit 8 twice so we should earn chips and 👟, but 6 was never hit so we will lose our bet 👖.",
+      images: [
+        {
+          src: "/tutorial/unclaimed_game.png",
+          alt: "Unclaimed game entry",
+        },
+      ],
+      backLabel: "Back: Claiming Winnings",
+      nextLabel: "Next: Claimed Game",
+    },
+    {
+      id: "claimed-game",
+      title: "Claimed Game",
+      eyebrow: "How to play",
+      body: "After claiming, you will see what you earned and the game is marked as claimed. Here we netted 1,400 chips and received 200 👟.",
+      images: [
+        {
+          src: "/tutorial/claimed_game.png",
+          alt: "Claimed game details",
+        },
+      ],
+      backLabel: "Back: Unclaimed Games",
+      nextLabel: "Next: Other fun features!",
+    },
+    {
+      id: "other-features",
+      title: "Other fun features!",
+      eyebrow: "How to play",
+      body: "Check your closet for all earned straps and keep an eye out for other exciting events.",
+      backLabel: "Back: Claiming Winnings",
+      nextLabel: "Done",
+    },
+  ];
+  const tutorialStep = tutorialSteps[tutorialStepIndex] ?? tutorialSteps[0];
+  const isTutorialFirstStep = tutorialStepIndex === 0;
+  const isTutorialLastStep = tutorialStepIndex === tutorialSteps.length - 1;
+
   const stopRollAnimation = (showFallback: boolean, pulse: boolean) => {
     setIsRollAnimating(false);
     setRollingFace(null);
@@ -2390,6 +2591,18 @@ export default function App() {
                 : isConnected
                   ? "Disconnect"
                   : "Connect"}
+          </button>
+          <button
+            className="ghost-button help-button"
+            type="button"
+            aria-label="Open tutorial"
+            title="How to play"
+            onClick={() => {
+              setTutorialStepIndex(0);
+              setIsTutorialOpen(true);
+            }}
+          >
+            ?
           </button>
         </div>
       </header>
@@ -2849,6 +3062,68 @@ export default function App() {
           aria-label="Close shop"
           onClick={() => setActiveRoll(null)}
         />
+      ) : null}
+
+      {isTutorialOpen ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tutorial">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">{tutorialStep.eyebrow}</div>
+                <h2 className="modal__title">{tutorialStep.title}</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsTutorialOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--single">
+              <div className="tutorial-copy">
+                <p>{tutorialStep.body}</p>
+                {tutorialStep.images && tutorialStep.images.length > 0 ? (
+                  <div className="tutorial-media-grid">
+                    {tutorialStep.images.map((image) => (
+                      <div key={image.src} className="tutorial-media">
+                        <img src={image.src} alt={image.alt} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="tutorial-actions">
+                {isTutorialFirstStep ? null : (
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() =>
+                      setTutorialStepIndex((index) => Math.max(index - 1, 0))
+                    }
+                  >
+                    {tutorialStep.backLabel ?? "Back"}
+                  </button>
+                )}
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => {
+                    if (isTutorialLastStep) {
+                      setIsTutorialOpen(false);
+                      return;
+                    }
+                    setTutorialStepIndex((index) =>
+                      Math.min(index + 1, tutorialSteps.length - 1)
+                    );
+                  }}
+                >
+                  {tutorialStep.nextLabel ?? "Next"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {betTargetRoll ? (
