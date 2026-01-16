@@ -659,55 +659,73 @@ button {
   transition: transform 0.25s ease, box-shadow 0.25s ease;
   transform-origin: bottom center;
   animation: shopRise 0.6s ease;
+  animation-delay: var(--shop-rise-delay, 0s);
 }
 
-.shop-tile:nth-child(1) {
-  animation-delay: 0.05s;
+.shop-cell:nth-child(1) .shop-tile {
+  --shop-rise-delay: 0.05s;
+  --shop-jiggle-delay: 0s;
 }
 
-.shop-tile:nth-child(2) {
-  animation-delay: 0.1s;
+.shop-cell:nth-child(2) .shop-tile {
+  --shop-rise-delay: 0.1s;
+  --shop-jiggle-delay: 0.16s;
 }
 
-.shop-tile:nth-child(3) {
-  animation-delay: 0.15s;
+.shop-cell:nth-child(3) .shop-tile {
+  --shop-rise-delay: 0.15s;
+  --shop-jiggle-delay: 0.32s;
 }
 
-.shop-tile:nth-child(4) {
-  animation-delay: 0.2s;
+.shop-cell:nth-child(4) .shop-tile {
+  --shop-rise-delay: 0.2s;
+  --shop-jiggle-delay: 0.48s;
 }
 
-.shop-tile:nth-child(5) {
-  animation-delay: 0.25s;
+.shop-cell:nth-child(5) .shop-tile {
+  --shop-rise-delay: 0.25s;
+  --shop-jiggle-delay: 0.64s;
 }
 
-.shop-tile:nth-child(6) {
-  animation-delay: 0.3s;
+.shop-cell:nth-child(6) .shop-tile {
+  --shop-rise-delay: 0.3s;
+  --shop-jiggle-delay: 0.8s;
 }
 
-.shop-tile:nth-child(7) {
-  animation-delay: 0.35s;
+.shop-cell:nth-child(7) .shop-tile {
+  --shop-rise-delay: 0.35s;
+  --shop-jiggle-delay: 0.96s;
 }
 
-.shop-tile:nth-child(8) {
-  animation-delay: 0.4s;
+.shop-cell:nth-child(8) .shop-tile {
+  --shop-rise-delay: 0.4s;
+  --shop-jiggle-delay: 1.12s;
 }
 
-.shop-tile:nth-child(9) {
-  animation-delay: 0.45s;
+.shop-cell:nth-child(9) .shop-tile {
+  --shop-rise-delay: 0.45s;
+  --shop-jiggle-delay: 1.28s;
 }
 
-.shop-tile:nth-child(10) {
-  animation-delay: 0.5s;
+.shop-cell:nth-child(10) .shop-tile {
+  --shop-rise-delay: 0.5s;
+  --shop-jiggle-delay: 1.44s;
 }
 
-.shop-tile:nth-child(11) {
-  animation-delay: 0.55s;
+.shop-cell:nth-child(11) .shop-tile {
+  --shop-rise-delay: 0.55s;
+  --shop-jiggle-delay: 1.6s;
 }
 
 .shop-tile:hover {
   box-shadow: 0 20px 32px rgba(31, 22, 18, 0.28);
   z-index: 2;
+}
+
+.shop-tile--active-bets:not(.shop-tile--expanded) {
+  transform-origin: 0% 100%;
+  animation: shopRise 0.6s ease, shopJiggle 1.8s ease-in-out infinite;
+  animation-delay: var(--shop-rise-delay, 0s), var(--shop-jiggle-delay, 0s);
 }
 
 .shop-tile--expanded {
@@ -1119,7 +1137,7 @@ button {
 
 .modifier-aura {
   position: absolute;
-  inset: -26px;
+  inset: -14px;
   border-radius: 54px;
   opacity: 0.95;
   z-index: -1;
@@ -2002,6 +2020,25 @@ button {
   }
   50% {
     transform: translateX(-50%) translateY(6px);
+  }
+}
+
+@keyframes shopJiggle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  20% {
+    transform: translateY(1px) rotate(-1.2deg);
+  }
+  40% {
+    transform: translateY(-1px) rotate(1.2deg);
+  }
+  60% {
+    transform: translateY(1px) rotate(-0.8deg);
+  }
+  80% {
+    transform: translateY(-1px) rotate(0.8deg);
   }
 }
 

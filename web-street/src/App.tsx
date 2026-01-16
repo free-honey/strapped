@@ -1744,6 +1744,7 @@ export default function App() {
     }
     if (options.hasTableBets) {
       base.push("shop-tile--table");
+      base.push("shop-tile--active-bets");
     }
     if (options.modifier) {
       const modifierClass = modifierClassNames[options.modifier];
@@ -2977,7 +2978,6 @@ export default function App() {
                         ))}
                       </div>
                     ) : null}
-                    {hasTableBets ? <div className="bet-aura" /> : null}
                     {modifierStory && shouldShowModifierBanner ? (
                       <div
                         className={`modifier-aura modifier-aura--${modifierStory.theme}`}
