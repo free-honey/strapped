@@ -1228,7 +1228,7 @@ body.night .shop-door {
   left: 0;
   right: 0;
   margin: 0 auto;
-  transform: translateX(28%);
+  transform: translateX(16%);
   display: flex;
   flex-direction: column;
   align-items: center;
