@@ -2,10 +2,16 @@
 
 #### massively-multiplayer online strip-craps game 😈
 
+
+Try the Web UI on testnet now:
+https://strapped-ui.up.railway.app/
+
+<img width="1696" height="960" alt="image" src="https://github.com/user-attachments/assets/a9fb8766-f771-4a4d-9064-c375e6b7994d" />
+
+
+## Play locally
+
 <img width="1728" height="1077" alt="image" src="https://github.com/user-attachments/assets/7545a9a1-a212-4810-b94c-225b0ab6af6c" />
-
-
-## Requirements
 
 ### Forc
 
