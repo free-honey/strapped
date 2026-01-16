@@ -1717,6 +1717,9 @@ export default function App() {
   }, [snapshot]);
   const lastRoll = diceRolls[0] ?? null;
   const rollCount = snapshot?.rolls.length ?? 0;
+  const isNight = (snapshot?.game_id ?? 0) % 2 === 1;
+  const betTargetIndex = betTargetRoll ? rollOrder.indexOf(betTargetRoll) : -1;
+  const betTargetVariant = betTargetIndex >= 0 ? betTargetIndex % 5 : 0;
   const baseFallbackRoll =
     snapshot && snapshot.rolls.length === 0 ? "Seven" : rollFallbackFace;
   const displayedRoll =
@@ -2293,6 +2296,13 @@ export default function App() {
   }, [snapshot]);
 
   useEffect(() => {
+    document.body.classList.toggle("night", isNight);
+    return () => {
+      document.body.classList.remove("night");
+    };
+  }, [isNight]);
+
+  useEffect(() => {
     if (!isRollAnimating) {
       return;
     }
@@ -2547,7 +2557,11 @@ export default function App() {
     );
 
   return (
-    <div className={`street-app${activeRoll ? " street-app--expanded" : ""}`}>
+    <div
+      className={`street-app${activeRoll ? " street-app--expanded" : ""}${
+        isNight ? " street-app--night" : ""
+      }`}
+    >
       <header className="street-header">
         <h1 className="street-title">STRAPPED!</h1>
         <div className="street-meta">
@@ -2614,6 +2628,7 @@ export default function App() {
       <main className="street-stage">
         <div className="sky-glow" />
         <div className="street-sun" />
+        <div className="street-moon" />
         <div className="cloud cloud--one" />
         <div className="cloud cloud--two" />
         <div className="street-ground" />
@@ -3131,7 +3146,7 @@ export default function App() {
 
       {betTargetRoll ? (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal modal--games">
+          <div className={`modal modal--games modal--shop-${betTargetVariant}`}>
             <div className="modal__header">
               <div>
                 <div className="modal__eyebrow">Bet slip</div>
