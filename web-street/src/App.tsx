@@ -231,29 +231,86 @@ const modifierOrder = Object.keys(modifierEmojis);
 type ModifierStory = {
   cta: string;
   applied: string;
+  appliedHint?: string;
   icon: string;
   theme: string;
 };
 
 const modifierStories: Record<string, ModifierStory> = {
-  Burnt: { cta: "commit arson", applied: "ablaze", icon: "🧯", theme: "burnt" },
-  Lucky: { cta: "bury gold", applied: "charmed", icon: "🍀", theme: "lucky" },
-  Holy: { cta: "buy indulgences", applied: "blessed", icon: "👼", theme: "holy" },
-  Holey: { cta: "release moths", applied: "overrun", icon: "🫥", theme: "holey" },
-  Scotch: { cta: "play bagpipes", applied: "bagpipes playing softly", icon: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", theme: "scotch" },
-  Soaked: { cta: "open hydrant", applied: "flooded", icon: "🌊", theme: "soaked" },
+  Burnt: {
+    cta: "commit arson",
+    applied: "ablaze",
+    appliedHint: "bet your straps here to apply 🧯",
+    icon: "🧯",
+    theme: "burnt",
+  },
+  Lucky: {
+    cta: "bury gold",
+    applied: "charmed",
+    appliedHint: "bet your straps here to apply 🍀",
+    icon: "🍀",
+    theme: "lucky",
+  },
+  Holy: {
+    cta: "buy indulgences",
+    applied: "blessed",
+    appliedHint: "bet your straps here to apply 👼",
+    icon: "👼",
+    theme: "holy",
+  },
+  Holey: {
+    cta: "release moths",
+    applied: "overrun",
+    appliedHint: "bet your straps here to apply 🫥",
+    icon: "🫥",
+    theme: "holey",
+  },
+  Scotch: {
+    cta: "play bagpipes",
+    applied: "bagpipes playing softly",
+    appliedHint: "bet your straps here to apply 🏴",
+    icon: "🏴",
+    theme: "scotch",
+  },
+  Soaked: {
+    cta: "open hydrant",
+    applied: "flooded",
+    appliedHint: "bet your straps here to apply 🌊",
+    icon: "🌊",
+    theme: "soaked",
+  },
   Moldy: {
     cta: "leave clothes in washer",
     applied: "mildewed",
+    appliedHint: "bet your straps here to apply 🍄",
     icon: "🍄",
     theme: "moldy",
   },
-  Starched: { cta: "dump flour", applied: "dusted", icon: "🏳️", theme: "starched" },
-  Evil: { cta: "curse shop", applied: "cursed", icon: "😈", theme: "evil" },
-  Groovy: { cta: "dump paint", applied: "splattered", icon: "✌️", theme: "groovy" },
+  Starched: {
+    cta: "dump flour",
+    applied: "dusted",
+    appliedHint: "bet your straps here to apply 🏳️",
+    icon: "🏳️",
+    theme: "starched",
+  },
+  Evil: {
+    cta: "curse shop",
+    applied: "cursed",
+    appliedHint: "bet your straps here to apply 😈",
+    icon: "😈",
+    theme: "evil",
+  },
+  Groovy: {
+    cta: "dump paint",
+    applied: "splattered",
+    appliedHint: "bet your straps here to apply ✌️",
+    icon: "✌️",
+    theme: "groovy",
+  },
   Delicate: {
     cta: "handle with care",
     applied: "caressed",
+    appliedHint: "bet your straps here to apply ❤️",
     icon: "❤️",
     theme: "delicate",
   },
@@ -987,12 +1044,14 @@ export default function App() {
   const [chipBalanceOverride, setChipBalanceOverride] = useState<string | null>(
     null
   );
+  const [shopRiseKey, setShopRiseKey] = useState(0);
   const rollAnimationRef = useRef<number | null>(null);
   const rollAnimationEndRef = useRef<number>(0);
   const rollAnimationOriginRef = useRef<Roll | null>(null);
   const rollAnimationOriginCountRef = useRef<number>(0);
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
+  const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
   const [expandedOrigin, setExpandedOrigin] = useState<{
@@ -1697,6 +1756,11 @@ export default function App() {
     const level = strap.level;
     return `${modifierEmoji}${strapEmoji}${level}`;
   };
+  const formatRewardEmojiOnly = (strap: Strap) => {
+    const modifierEmoji = modifierEmojis[strap.modifier] ?? "";
+    const strapEmoji = strapEmojis[strap.kind] ?? "🎽";
+    return `${modifierEmoji}${strapEmoji}`;
+  };
 
   const formatNumber = (value: number | null | undefined) =>
     value === null || value === undefined ? "—" : value.toLocaleString();
@@ -1734,6 +1798,10 @@ export default function App() {
   }, [snapshot]);
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
+
+  const triggerShopRise = useCallback(() => {
+    setShopRiseKey((previous) => previous + 1);
+  }, []);
 
   const buildShopClasses = (options: {
     hasReward: boolean;
@@ -2274,6 +2342,14 @@ export default function App() {
   }, [rollCount, lastRoll]);
 
   useEffect(() => {
+    const previousRoll = previousRollRef.current;
+    if (lastRoll === "Seven" && previousRoll !== "Seven") {
+      triggerShopRise();
+    }
+    previousRollRef.current = lastRoll;
+  }, [lastRoll, triggerShopRise]);
+
+  useEffect(() => {
     const previousCount = lastObservedRollCountRef.current;
     lastObservedRollCountRef.current = rollCount;
     if (!isRollAnimating && rollCount > previousCount) {
@@ -2291,6 +2367,9 @@ export default function App() {
     const currentGameId = snapshot.game_id;
     if (lastGameIdRef.current !== null && currentGameId !== lastGameIdRef.current) {
       stopRollAnimation(true, true);
+      if (lastRollRef.current !== "Seven") {
+        triggerShopRise();
+      }
     }
     lastGameIdRef.current = currentGameId;
   }, [snapshot]);
@@ -2776,7 +2855,7 @@ export default function App() {
             };
 
             return (
-              <div key={roll} className="shop-cell">
+              <div key={`${roll}-${shopRiseKey}`} className="shop-cell">
                 <div
                   className={`shop-frame${
                     isExpanded ? " shop-frame--expanded" : ""
@@ -2984,7 +3063,7 @@ export default function App() {
                             }
                           >
                             <span className="shop-dangling__emoji">
-                              {formatRewardCompact(strap)}
+                              {formatRewardEmojiOnly(strap)}
                             </span>
                             <span className="shop-dangling__price">
                               {formatNumber(amount)}
@@ -3009,7 +3088,14 @@ export default function App() {
                         {modifierStory.icon}
                       </span>
                       <span className="modifier-banner__text">
-                        {modifierStory.applied}
+                        <span className="modifier-banner__title">
+                          {modifierStory.applied}
+                        </span>
+                        {modifierStory.appliedHint ? (
+                          <span className="modifier-banner__subtext">
+                            ({modifierStory.appliedHint})
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                   ) : null}
@@ -3225,9 +3311,7 @@ export default function App() {
                               onClick={() => setIsStrapKindPickerOpen(true)}
                               disabled={closetGroups.length === 0}
                             >
-                              {selectedBetGroup
-                                ? `${selectedBetGroup.emoji} ${selectedBetGroup.kind}`
-                                : "Choose type"}
+                              {selectedBetGroup ? `${selectedBetGroup.emoji}` : "Choose type"}
                             </button>
                             <button
                               type="button"
@@ -3327,7 +3411,6 @@ export default function App() {
                         <div className="bet-kind__icon" aria-hidden="true">
                           {group.emoji}
                         </div>
-                        <div className="bet-kind__label">{group.kind}</div>
                         <div className="bet-kind__meta">
                           {group.entries.length} variants
                         </div>
@@ -3366,7 +3449,6 @@ export default function App() {
                     <div className="closet-kind__icon" aria-hidden="true">
                       {selectedBetGroup.emoji}
                     </div>
-                    <div>{selectedBetGroup.kind}</div>
                   </div>
                   <div className="closet-kind__items">
                     {selectedBetGroup.entries.map((entry) => {
@@ -3729,32 +3811,10 @@ export default function App() {
               <div className="modal-card modal-card--wide">
                 <div className="modal-stack">
                   <div className="modal-row">
-                    <span>Chips won</span>
-                    <span>
-                      {claimResult.chipWon === null
-                        ? "Awaiting indexer"
-                        : formatNumber(claimResult.chipWon)}
-                    </span>
-                  </div>
-                  <div className="modal-row">
-                    <span>Bet total</span>
-                    <span>{formatNumber(claimResult.chipBet)}</span>
-                  </div>
-                  <div className="modal-row">
-                    <span>Net</span>
-                    <span>
-                      {claimResult.chipWon === null || claimResult.netChip === null
-                        ? "—"
-                        : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
-                            Math.abs(claimResult.netChip)
-                          )}`}
-                    </span>
-                  </div>
-                  <div className="modal-row">
                     <span>Your bets</span>
                     <span>
                       {claimResult.betDetails.length > 0
-                        ? "See list"
+                        ? " "
                         : "No bets recorded."}
                     </span>
                   </div>
@@ -3786,6 +3846,28 @@ export default function App() {
                       })}
                     </div>
                   ) : null}
+                  <div className="modal-row">
+                    <span>Chips won</span>
+                    <span>
+                      {claimResult.chipWon === null
+                        ? "Awaiting indexer"
+                        : formatNumber(claimResult.chipWon)}
+                    </span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Bet total</span>
+                    <span>{formatNumber(claimResult.chipBet)}</span>
+                  </div>
+                  <div className="modal-row">
+                    <span>Net</span>
+                    <span>
+                      {claimResult.chipWon === null || claimResult.netChip === null
+                        ? "—"
+                        : `${claimResult.netChip >= 0 ? "+" : "-"}${formatNumber(
+                            Math.abs(claimResult.netChip)
+                          )}`}
+                    </span>
+                  </div>
                   <div className="modal-row">
                     <span>Straps</span>
                     <span>

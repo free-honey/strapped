@@ -612,6 +612,24 @@ body.night .shops-row::before {
   line-height: 1;
 }
 
+.modifier-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+}
+
+.modifier-banner__title {
+  line-height: 1;
+}
+
+.modifier-banner__subtext {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: none;
+}
+
 .modifier-banner--evil,
 .modifier-action--evil {
   background: rgba(248, 230, 255, 0.95);
@@ -1478,7 +1496,11 @@ body.night .shop-door {
 
 .modal--claim-result .modal-bets,
 .modal--claim-result .modal-muted {
-  font-size: 14px;
+  font-size: 16px;
+}
+
+.modal--claim-result .modal-bet-line {
+  font-size: 15px;
 }
 
 .modal--tall {
