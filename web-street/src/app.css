@@ -722,6 +722,11 @@ button {
   z-index: 2;
 }
 
+.shop-tile:focus,
+.shop-tile:focus-visible {
+  outline: none;
+}
+
 .shop-tile--active-bets:not(.shop-tile--expanded) {
   transform-origin: 0% 100%;
   animation: shopRise 0.6s ease, shopJiggle 1.8s ease-in-out infinite;
