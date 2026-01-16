@@ -6,7 +6,7 @@
 Try the Web UI on testnet now:
 https://strapped-ui.up.railway.app/
 
-<img width="1696" height="960" alt="image" src="https://github.com/user-attachments/assets/a9fb8766-f771-4a4d-9064-c375e6b7994d" />
+<img width="1696" height="960" alt="image" src="https://github.com/user-attachments/assets/31069733-dd91-47d0-8206-0fa664a53969" />
 
 
 ## Play locally
