@@ -32,7 +32,9 @@ body {
   min-height: 100vh;
   background: linear-gradient(180deg, var(--sky-top), var(--sky-mid) 58%, var(--sky-bottom));
   color: var(--ink);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-attachment: fixed;
 }
 
 body.night {
@@ -72,6 +74,11 @@ button {
   background: rgba(255, 255, 255, 0.75);
   box-shadow: 0 10px 24px rgba(31, 22, 18, 0.12);
   position: relative;
+  z-index: 4;
+}
+
+.street-header__menu-button {
+  display: none;
 }
 
 .street-title {
@@ -81,7 +88,8 @@ button {
   margin: 0;
   position: absolute;
   left: 50%;
-  transform: translateX(-50%);
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .chips-banner {
@@ -208,6 +216,120 @@ button {
   overflow: visible;
 }
 
+.mobile-nav {
+  display: none;
+}
+
+.mobile-nav__overlay {
+  display: none;
+}
+
+.mobile-nav__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 2px solid rgba(60, 45, 34, 0.6);
+  background: linear-gradient(180deg, #a6df8b, var(--ground));
+  box-shadow: 0 10px 24px rgba(31, 22, 18, 0.2);
+}
+
+.mobile-nav__chips {
+  font-family: "Press Start 2P", "VT323", monospace;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #1f160f;
+  white-space: nowrap;
+  min-width: 84px;
+}
+
+.mobile-nav__chips-value {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #f6d657;
+  text-shadow: -2px -2px 0 #1f160f, 2px -2px 0 #1f160f, -2px 2px 0 #1f160f,
+    2px 2px 0 #1f160f, 0 3px 8px rgba(31, 22, 18, 0.4);
+}
+
+.mobile-nav__chips-label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(31, 22, 18, 0.7);
+}
+
+.mobile-nav__last {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.mobile-nav__dice {
+  width: 64px;
+  height: 64px;
+  margin: 0;
+}
+
+.mobile-nav__roll {
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  padding: 0;
+  font-size: 12px;
+  border-radius: 14px;
+}
+
+.mobile-nav__menu-toggle {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.mobile-nav__dice .dice-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.mobile-nav__dice .dice-face {
+  font-size: 28px;
+}
+
+.mobile-nav__menu {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 70px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 2px solid rgba(60, 45, 34, 0.6);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 16px 30px rgba(31, 22, 18, 0.25);
+  z-index: 11;
+}
+
+.mobile-nav__action {
+  border: 2px solid var(--tile-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .sky-glow {
   display: none;
 }
@@ -217,7 +339,7 @@ button {
 }
 
 .street-sun {
-  position: absolute;
+  position: fixed;
   top: 6%;
   right: 14%;
   width: 190px;
@@ -231,7 +353,7 @@ button {
 }
 
 .street-moon {
-  position: absolute;
+  position: fixed;
   top: 8%;
   right: 16%;
   width: 150px;
@@ -926,6 +1048,20 @@ body.night .shop-awning {
   margin-bottom: 2px;
 }
 
+.shop-sign__close {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  border: none;
+  background: transparent;
+  font-family: "Press Start 2P", "VT323", monospace;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
 .shop-sign__roll {
   font-size: 28px;
   font-weight: 700;
@@ -1154,6 +1290,7 @@ body.night .shop-door {
 .shop-window__muted {
   color: var(--ink-soft);
 }
+
 
 .shop-window__section--wide {
   grid-column: 1 / -1;
@@ -2306,5 +2443,250 @@ body.night .modal--shop-4 {
 
   .roll-history-grid {
     grid-template-rows: repeat(4, auto);
+  }
+}
+
+@media (max-width: 520px) {
+  .street-header {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  .street-header__menu-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 12px;
+    min-width: 52px;
+    min-height: 52px;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background: transparent;
+    font-size: 22px;
+  }
+
+  .street-header__title {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .street-title {
+    position: static;
+    transform: none;
+    margin: 0;
+  }
+
+  .street-app {
+    padding-bottom: 80px;
+  }
+
+  .street-meta {
+    display: none;
+  }
+
+  .street-header.street-header--open .street-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    width: 100%;
+    margin-top: 12px;
+    padding: 14px;
+    border-radius: 14px;
+    border: 2px solid rgba(60, 45, 34, 0.4);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 14px 30px rgba(31, 22, 18, 0.25);
+  }
+
+  .street-header.street-header--open .street-meta > * {
+    width: 100%;
+  }
+
+  .street-header.street-header--open .street-meta .wallet-pill {
+    justify-content: center;
+  }
+
+  .street-header.street-header--open .street-meta .ghost-button,
+  .street-header.street-header--open .street-meta .help-button {
+    width: 100%;
+    text-align: center;
+  }
+
+  .street-header.street-header--open .street-meta .network-picker,
+  .street-header.street-header--open .street-meta .network-picker__select {
+    width: 100%;
+  }
+
+  .roll-panel {
+    display: none;
+    position: static;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 auto 8px;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    border-radius: 10px;
+  }
+
+  .roll-panel__row--main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .roll-panel__actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .roll-panel__actions button {
+    width: 100%;
+  }
+
+  .shops-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 0 4px 24px;
+    margin-bottom: 24px;
+  }
+
+  .street-ground {
+    display: none;
+  }
+
+  .street-footer {
+    display: none;
+  }
+
+  .mobile-nav {
+    display: block;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 12;
+  }
+
+  .mobile-nav__overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    z-index: 10;
+  }
+
+  .shop-tile {
+    height: auto;
+  }
+
+  .shop-window__details {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .shop-meta {
+    display: none;
+  }
+
+  .street-app:not(.street-app--expanded) .shop-frame:hover {
+    transform: none;
+    z-index: 1;
+  }
+
+  .street-app:not(.street-app--expanded) .shop-frame:hover .shop-tile {
+    box-shadow: var(--tile-shadow);
+    z-index: 2;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .street-app:not(.street-app--expanded) .shops-row:hover .shop-tile:not(:hover) {
+    transform: none;
+    opacity: 1;
+  }
+
+  .shops-row > .shop-cell:nth-child(5) {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .shops-row > .shop-cell:nth-child(7) {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .shops-row > .shop-cell:nth-child(4) {
+    grid-row: 2;
+    grid-column: 1;
+  }
+
+  .shops-row > .shop-cell:nth-child(8) {
+    grid-row: 2;
+    grid-column: 2;
+  }
+
+  .shops-row > .shop-cell:nth-child(3) {
+    grid-row: 3;
+    grid-column: 1;
+  }
+
+  .shops-row > .shop-cell:nth-child(9) {
+    grid-row: 3;
+    grid-column: 2;
+  }
+
+  .shops-row > .shop-cell:nth-child(2) {
+    grid-row: 4;
+    grid-column: 1;
+  }
+
+  .shops-row > .shop-cell:nth-child(10) {
+    grid-row: 4;
+    grid-column: 2;
+  }
+
+  .shops-row > .shop-cell:nth-child(1) {
+    grid-row: 5;
+    grid-column: 1;
+  }
+
+  .shops-row > .shop-cell:nth-child(11) {
+    grid-row: 5;
+    grid-column: 2;
+  }
+
+  .shops-row > .shop-cell:nth-child(6) {
+    grid-row: 6;
+    grid-column: 1 / span 2;
+    justify-self: center;
+    width: min(220px, 90%);
+  }
+
+  .shop-window {
+    padding-top: 16px;
+  }
+
+  .shop-dangling-stack {
+    top: 68%;
+    left: 45%;
+    transform: translate(-50%, -50%);
+    width: min(200px, 90%);
+    margin: 0;
+    opacity: 0.78;
+    filter: saturate(0.85);
+  }
+
+  .shop-dangling-stack--raised {
+    top: 68%;
+  }
+
+  .shop-dangling__price {
+    display: none;
   }
 }
