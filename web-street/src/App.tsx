@@ -3655,9 +3655,19 @@ export default function App() {
             </span>
             <span className="mobile-nav__chips-label">Chips</span>
           </div>
-          <div className="mobile-nav__last" aria-label="Last roll">
+          <button
+            className="mobile-nav__last mobile-nav__last-button"
+            type="button"
+            aria-label={rollButtonLabel}
+            onClick={handleRoll}
+            disabled={!isConnected || isRolling || walletStatus === "connecting"}
+          >
             {displayedRoll ? (
-              <div className="dice-card dice-card--single mobile-nav__dice">
+              <div
+                className={`dice-card dice-card--single mobile-nav__dice${
+                  rollLandPulse ? " dice-card--land" : ""
+                }`}
+              >
                 <div className="dice-face">{rollNumbers[displayedRoll]}</div>
                 <div className="dice-label">
                   {lastRoll ? rollLabels[displayedRoll] : "NEW GAME :)"}
@@ -3666,14 +3676,6 @@ export default function App() {
             ) : (
               <div className="dice-placeholder mobile-nav__dice">—</div>
             )}
-          </div>
-          <button
-            className="primary-button mobile-nav__roll"
-            type="button"
-            onClick={handleRoll}
-            disabled={!isConnected || isRolling || walletStatus === "connecting"}
-          >
-            {rollButtonLabel}
           </button>
           <button
             className="mobile-nav__menu-toggle"
