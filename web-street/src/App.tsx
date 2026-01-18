@@ -1310,14 +1310,20 @@ export default function App() {
       const touch = nativeEvent.changedTouches[0];
       return { x: touch.clientX, y: touch.clientY };
     }
-    if (typeof nativeEvent.clientX === "number") {
+    if (
+      typeof nativeEvent.clientX === "number" &&
+      typeof nativeEvent.clientY === "number"
+    ) {
       return { x: nativeEvent.clientX, y: nativeEvent.clientY };
     }
     return null;
   };
-  const startPress = (event: SyntheticEvent, handler: (event: SyntheticEvent) => void) => {
+  const startPress = (
+    event: SyntheticEvent,
+    handler: (event: SyntheticEvent) => void
+  ) => {
     const point = getPressPoint(event);
-    if (!point) {
+    if (!point || typeof point.y !== "number" || typeof point.x !== "number") {
       return;
     }
     event.persist?.();
@@ -1327,7 +1333,7 @@ export default function App() {
       time: Date.now(),
       moved: false,
       fired: false,
-      timerId: null,
+      timerId: null as number | null,
     };
     state.timerId = window.setTimeout(() => {
       const current = pressStateRef.current;
@@ -1349,7 +1355,7 @@ export default function App() {
       return;
     }
     const point = getPressPoint(event);
-    if (!point) {
+    if (!point || typeof point.y !== "number" || typeof point.x !== "number") {
       return;
     }
     const dx = point.x - state.x;
