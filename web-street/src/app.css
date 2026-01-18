@@ -1490,8 +1490,8 @@ body.night .shop-door {
 
 .modifier-aura {
   position: absolute;
-  inset: -14px;
-  border-radius: 54px;
+  inset: 0;
+  border-radius: 16px 16px 10px 10px;
   opacity: 0.95;
   z-index: -1;
   pointer-events: none;
@@ -1499,8 +1499,8 @@ body.night .shop-door {
 
 .bet-aura {
   position: absolute;
-  inset: -14px;
-  border-radius: 46px;
+  inset: 0;
+  border-radius: 16px 16px 10px 10px;
   opacity: 0.9;
   z-index: -2;
   pointer-events: none;
