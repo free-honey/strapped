@@ -1123,6 +1123,10 @@ export default function App() {
   const lastPanAtRef = useRef<number>(0);
   const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
   const hasSelectedNetworkRef = useRef(false);
+  const getNetworkSelectionKey = useCallback(
+    () => `strapped_network_selected_${networkKey}`,
+    [networkKey]
+  );
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1525,21 +1529,31 @@ export default function App() {
 
   useEffect(() => {
     if (!isConnected) {
-      hasSelectedNetworkRef.current = false;
       return;
     }
     if (hasSelectedNetworkRef.current) {
       return;
     }
+    if (typeof window !== "undefined") {
+      const stored = window.sessionStorage.getItem(getNetworkSelectionKey());
+      if (stored === "true") {
+        hasSelectedNetworkRef.current = true;
+        return;
+      }
+    }
     hasSelectedNetworkRef.current = true;
-    selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl }).catch(
-      (err) => {
+    selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl })
+      .then(() => {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(getNetworkSelectionKey(), "true");
+        }
+      })
+      .catch((err) => {
         const message =
           err instanceof Error ? err.message : "Wallet network error";
         setWalletError(message);
-      }
-    );
-  }, [isConnected, networkKey, selectNetworkAsync]);
+      });
+  }, [isConnected, networkKey, selectNetworkAsync, getNetworkSelectionKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2221,6 +2235,12 @@ export default function App() {
     }
     try {
       await selectNetworkAsync({ url: FUEL_NETWORKS[nextNetwork].graphqlUrl });
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(
+          `strapped_network_selected_${nextNetwork}`,
+          "true"
+        );
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Wallet network error";
