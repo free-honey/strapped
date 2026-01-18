@@ -9,7 +9,15 @@ import {
   useSelectNetwork,
   useWallet,
 } from "@fuels/react";
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CSSProperties,
+  SyntheticEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
@@ -1103,6 +1111,7 @@ export default function App() {
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
   const debugBodyRef = useRef<HTMLDivElement | null>(null);
+  const lastPointerUpAtRef = useRef<number>(0);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1275,6 +1284,15 @@ export default function App() {
   const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
   const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
   const baseAssetTicker = FUEL_NETWORKS[networkKey].baseAssetTicker;
+  const shouldHandlePress = useCallback((event: SyntheticEvent) => {
+    if (event.type === "click") {
+      return Date.now() - lastPointerUpAtRef.current >= 400;
+    }
+    if (event.type === "pointerup" || event.type === "touchend") {
+      lastPointerUpAtRef.current = Date.now();
+    }
+    return true;
+  }, []);
   const { balance: chipBalance } = useBalance({
     account: walletAddress,
     assetId: chipAssetId,
@@ -2078,6 +2096,13 @@ export default function App() {
     }
   };
 
+  const handleRollPress = (event: SyntheticEvent) => {
+    if (!shouldHandlePress(event)) {
+      return;
+    }
+    void handleRoll();
+  };
+
   const handlePlaceBet = async () => {
     setBetError(null);
     setBetTxId(null);
@@ -2844,6 +2869,8 @@ export default function App() {
               className="debug-console__clear"
               onClick={() => setDebugEntries([])}
               onPointerDown={() => setDebugEntries([])}
+              onPointerUp={() => setDebugEntries([])}
+              onTouchEnd={() => setDebugEntries([])}
             >
               Clear
             </button>
@@ -2960,7 +2987,9 @@ export default function App() {
               <button
                 className="primary-button roll-button"
                 type="button"
-                onClick={handleRoll}
+                onClick={handleRollPress}
+                onPointerUp={handleRollPress}
+                onTouchEnd={handleRollPress}
                 disabled={!isConnected || isRolling || walletStatus === "connecting"}
               >
                 {rollButtonLabel}
@@ -3097,7 +3126,24 @@ export default function App() {
                     role="button"
                     tabIndex={0}
                     aria-expanded={isExpanded}
-                    onClick={(event) => openExpandedShop(roll, event.currentTarget)}
+                    onClick={(event) => {
+                      if (!shouldHandlePress(event)) {
+                        return;
+                      }
+                      openExpandedShop(roll, event.currentTarget);
+                    }}
+                    onPointerUp={(event) => {
+                      if (!shouldHandlePress(event)) {
+                        return;
+                      }
+                      openExpandedShop(roll, event.currentTarget);
+                    }}
+                    onTouchEnd={(event) => {
+                      if (!shouldHandlePress(event)) {
+                        return;
+                      }
+                      openExpandedShop(roll, event.currentTarget);
+                    }}
                     onKeyDown={handleShopKeyDown}
                     style={expandedStyle}
                   >
@@ -3831,7 +3877,9 @@ export default function App() {
             className="mobile-nav__last mobile-nav__last-button"
             type="button"
             aria-label={rollButtonLabel}
-            onClick={handleRoll}
+            onClick={handleRollPress}
+            onPointerUp={handleRollPress}
+            onTouchEnd={handleRollPress}
             disabled={!isConnected || isRolling || walletStatus === "connecting"}
           >
             {displayedRoll ? (
