@@ -1123,10 +1123,6 @@ export default function App() {
   const lastPanAtRef = useRef<number>(0);
   const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
   const hasSelectedNetworkRef = useRef(false);
-  const getNetworkSelectionKey = useCallback(
-    () => `strapped_network_selected_${networkKey}`,
-    [networkKey]
-  );
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1153,6 +1149,10 @@ export default function App() {
   const { account } = useAccount();
   const { provider } = useProvider();
   const { selectNetworkAsync } = useSelectNetwork();
+  const getNetworkSelectionKey = useCallback(
+    () => `strapped_network_selected_${networkKey}`,
+    [networkKey]
+  );
   const [baseAssetId, setBaseAssetId] = useState<string | null>(null);
   const [accountSnapshot, setAccountSnapshot] = useState<AccountSnapshot | null>(
     null
