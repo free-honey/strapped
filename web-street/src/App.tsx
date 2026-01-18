@@ -1930,13 +1930,25 @@ export default function App() {
       Boolean(claimModifierEntry) ||
       Boolean(claimResult)
   );
+  const isBlockingModalOpen = Boolean(
+    isGamesOpen ||
+      isInfoOpen ||
+      isDiceHistoryOpen ||
+      isClosetOpen ||
+      isTutorialOpen ||
+      betTargetRoll ||
+      isStrapKindPickerOpen ||
+      isStrapPickerOpen ||
+      Boolean(claimModifierEntry) ||
+      Boolean(claimResult)
+  );
 
   useEffect(() => {
-    document.body.classList.toggle("modal-open", isAnyModalOpen);
+    document.body.classList.toggle("modal-open", isBlockingModalOpen);
     return () => {
       document.body.classList.remove("modal-open");
     };
-  }, [isAnyModalOpen]);
+  }, [isBlockingModalOpen]);
 
   useEffect(() => {
     if (!isAnyModalOpen) {
