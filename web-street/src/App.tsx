@@ -2,7 +2,7 @@ import {
   useAccount,
   useBalance,
   useConnect,
-  useConnectors,
+  useConnectUI,
   useDisconnect,
   useIsConnected,
   useProvider,
@@ -1122,6 +1122,7 @@ export default function App() {
   } | null>(null);
   const lastPanAtRef = useRef<number>(0);
   const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
+  const hasSelectedNetworkRef = useRef(false);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1140,10 +1141,10 @@ export default function App() {
   const [networkKey, setNetworkKey] =
     useState<FuelNetworkKey>(DEFAULT_NETWORK);
   const [walletError, setWalletError] = useState<string | null>(null);
-  const { connectAsync, isPending: isConnecting } = useConnect();
-  const { connectors, isLoading: isLoadingConnectors } = useConnectors();
+  const { isPending: isConnecting } = useConnect();
   const { disconnect, isPending: isDisconnecting } = useDisconnect();
   const { isConnected } = useIsConnected();
+  const connectUI = useConnectUI();
   const { wallet } = useWallet();
   const { account } = useAccount();
   const { provider } = useProvider();
@@ -1521,6 +1522,24 @@ export default function App() {
       setWalletError(null);
     }
   }, [isConnected]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      hasSelectedNetworkRef.current = false;
+      return;
+    }
+    if (hasSelectedNetworkRef.current) {
+      return;
+    }
+    hasSelectedNetworkRef.current = true;
+    selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl }).catch(
+      (err) => {
+        const message =
+          err instanceof Error ? err.message : "Wallet network error";
+        setWalletError(message);
+      }
+    );
+  }, [isConnected, networkKey, selectNetworkAsync]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2187,36 +2206,9 @@ export default function App() {
     return base.join(" ");
   };
 
-  const connectWallet = async () => {
+  const connectWallet = () => {
     setWalletError(null);
-
-    try {
-      if (isConnected) {
-        return true;
-      }
-      if (isLoadingConnectors) {
-        setWalletError("Loading wallet connectors...");
-        return false;
-      }
-      const fueletConnector = connectors.find(
-        (connector) => connector.name === "Fuelet Wallet"
-      );
-      if (!fueletConnector) {
-        setWalletError("Fuelet Wallet connector not available.");
-        return false;
-      }
-      if (!fueletConnector.installed) {
-        setWalletError("Install the Fuelet Wallet extension to connect.");
-        return false;
-      }
-      await connectAsync(fueletConnector.name);
-      await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Wallet error";
-      setWalletError(message);
-      return false;
-    }
+    connectUI.connect();
   };
 
   const handleNetworkChange = async (
