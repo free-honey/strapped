@@ -1,14 +1,22 @@
 import {
   useAccount,
   useBalance,
+  useConnect,
   useConnectUI,
   useDisconnect,
   useIsConnected,
   useProvider,
-  useSelectNetwork,
   useWallet,
 } from "@fuels/react";
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CSSProperties,
+  SyntheticEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createStrappedContract } from "./fuel/client";
 import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
 
@@ -623,6 +631,46 @@ const formatChipUnits = (value: unknown) => {
   }
 };
 
+const formatChipCompact = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  const record = value as { toString?: () => string };
+  if (typeof record.toString !== "function") {
+    return "—";
+  }
+  try {
+    const raw = BigInt(record.toString());
+    const thousand = 1_000n;
+    const million = 1_000_000n;
+    const billion = 1_000_000_000n;
+    const trillion = 1_000_000_000_000n;
+    const formatWithUnit = (divisor: bigint, suffix: string) => {
+      const whole = raw / divisor;
+      const remainder = raw % divisor;
+      const decimal = (remainder * 10n) / divisor;
+      const showDecimal = whole < 100n && decimal > 0n;
+      return `${whole.toString()}${showDecimal ? `.${decimal}` : ""}${suffix}`;
+    };
+
+    if (raw >= trillion) {
+      return formatWithUnit(trillion, "T");
+    }
+    if (raw >= billion) {
+      return formatWithUnit(billion, "B");
+    }
+    if (raw >= million) {
+      return formatWithUnit(million, "M");
+    }
+    if (raw >= thousand) {
+      return formatWithUnit(thousand, "K");
+    }
+    return raw.toString();
+  } catch (err) {
+    return record.toString();
+  }
+};
+
 const formatQuantity = (value: unknown) => {
   if (value === null || value === undefined) {
     return "—";
@@ -989,6 +1037,14 @@ export default function App() {
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
     []
   );
+  const showDebugConsole = import.meta.env.VITE_DEBUG_CONSOLE === "true";
+  const [debugEntries, setDebugEntries] = useState<string[]>([]);
+  const appendDebugEntry = useCallback((message: string) => {
+    setDebugEntries((prev) => {
+      const next = [...prev, message];
+      return next.length > 200 ? next.slice(next.length - 200) : next;
+    });
+  }, []);
   const [status, setStatus] = useState<FetchStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SnapshotResponse | null>(null);
@@ -999,6 +1055,8 @@ export default function App() {
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
   const [isClosetOpen, setIsClosetOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
   const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
@@ -1051,6 +1109,18 @@ export default function App() {
   const rollAnimationOriginCountRef = useRef<number>(0);
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
+  const debugBodyRef = useRef<HTMLDivElement | null>(null);
+  const lastPressAtRef = useRef<number>(0);
+  const pressStateRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    moved: boolean;
+    fired: boolean;
+    timerId: number | null;
+  } | null>(null);
+  const lastPanAtRef = useRef<number>(0);
+  const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1069,13 +1139,13 @@ export default function App() {
   const [networkKey, setNetworkKey] =
     useState<FuelNetworkKey>(DEFAULT_NETWORK);
   const [walletError, setWalletError] = useState<string | null>(null);
-  const { connect, isConnecting } = useConnectUI();
+  const { isPending: isConnecting } = useConnect();
   const { disconnect, isPending: isDisconnecting } = useDisconnect();
   const { isConnected } = useIsConnected();
+  const connectUI = useConnectUI();
   const { wallet } = useWallet();
   const { account } = useAccount();
   const { provider } = useProvider();
-  const { selectNetworkAsync } = useSelectNetwork();
   const [baseAssetId, setBaseAssetId] = useState<string | null>(null);
   const [accountSnapshot, setAccountSnapshot] = useState<AccountSnapshot | null>(
     null
@@ -1092,10 +1162,306 @@ export default function App() {
       : isConnected
         ? "connected"
         : "idle";
+
+  useEffect(() => {
+    if (!showDebugConsole) {
+      return;
+    }
+
+    const formatArg = (arg: unknown) => {
+      if (arg instanceof Error) {
+        return arg.stack ?? arg.message;
+      }
+      if (typeof arg === "string") {
+        return arg;
+      }
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    };
+
+    const capture = (level: string, ...args: unknown[]) => {
+      const stamp = new Date().toISOString();
+      appendDebugEntry(
+        `[${stamp}] ${level}: ${args.map((arg) => formatArg(arg)).join(" ")}`
+      );
+    };
+
+    const originalConsole = {
+      log: console.log,
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+      debug: console.debug,
+    };
+
+    console.log = (...args) => {
+      capture("log", ...args);
+      originalConsole.log(...args);
+    };
+    console.info = (...args) => {
+      capture("info", ...args);
+      originalConsole.info(...args);
+    };
+    console.warn = (...args) => {
+      capture("warn", ...args);
+      originalConsole.warn(...args);
+    };
+    console.error = (...args) => {
+      capture("error", ...args);
+      originalConsole.error(...args);
+    };
+    console.debug = (...args) => {
+      capture("debug", ...args);
+      originalConsole.debug(...args);
+    };
+
+    const handleError = (event: ErrorEvent) => {
+      if (event.error) {
+        capture("error", event.error);
+        return;
+      }
+      capture("error", event.message);
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      capture("unhandledrejection", event.reason);
+    };
+
+    const describeTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) {
+        return "unknown";
+      }
+      const id = target.id ? `#${target.id}` : "";
+      const className =
+        typeof target.className === "string" && target.className.length > 0
+          ? `.${target.className.split(" ").join(".")}`
+          : "";
+      return `${target.tagName.toLowerCase()}${id}${className}`;
+    };
+
+    const handleInput = (event: Event) => {
+      capture(event.type, describeTarget(event.target));
+    };
+
+    const handleVisibility = () => {
+      capture("visibility", document.visibilityState);
+    };
+
+    appendDebugEntry(`[${new Date().toISOString()}] debug: console started`);
+
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
+    window.addEventListener("click", handleInput, true);
+    window.addEventListener("pointerdown", handleInput, true);
+    window.addEventListener("touchstart", handleInput, true);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    const heartbeatId = window.setInterval(() => {
+      capture("tick", "alive");
+    }, 2000);
+
+    return () => {
+      console.log = originalConsole.log;
+      console.info = originalConsole.info;
+      console.warn = originalConsole.warn;
+      console.error = originalConsole.error;
+      console.debug = originalConsole.debug;
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+      window.removeEventListener("click", handleInput, true);
+      window.removeEventListener("pointerdown", handleInput, true);
+      window.removeEventListener("touchstart", handleInput, true);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(heartbeatId);
+    };
+  }, [showDebugConsole, appendDebugEntry]);
+
+  useEffect(() => {
+    if (!showDebugConsole) {
+      return;
+    }
+    const debugBody = debugBodyRef.current;
+    if (debugBody) {
+      debugBody.scrollTop = debugBody.scrollHeight;
+    }
+  }, [debugEntries, showDebugConsole]);
   const walletAddress = account ?? null;
   const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
   const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
   const baseAssetTicker = FUEL_NETWORKS[networkKey].baseAssetTicker;
+  const shouldHandlePress = useCallback(() => {
+    return Date.now() - lastPressAtRef.current >= 350;
+  }, []);
+  const isRecentPan = useCallback(() => {
+    return Date.now() - lastPanAtRef.current < 220;
+  }, []);
+  const getPressPoint = (event: SyntheticEvent) => {
+    const nativeEvent = event.nativeEvent as {
+      clientX?: number;
+      clientY?: number;
+      touches?: Array<{ clientX: number; clientY: number }>;
+      changedTouches?: Array<{ clientX: number; clientY: number }>;
+    };
+    if (nativeEvent.touches && nativeEvent.touches.length > 0) {
+      const touch = nativeEvent.touches[0];
+      return { x: touch.clientX, y: touch.clientY };
+    }
+    if (nativeEvent.changedTouches && nativeEvent.changedTouches.length > 0) {
+      const touch = nativeEvent.changedTouches[0];
+      return { x: touch.clientX, y: touch.clientY };
+    }
+    if (
+      typeof nativeEvent.clientX === "number" &&
+      typeof nativeEvent.clientY === "number"
+    ) {
+      return { x: nativeEvent.clientX, y: nativeEvent.clientY };
+    }
+    return null;
+  };
+  const startPress = (
+    event: SyntheticEvent,
+    handler: (event: SyntheticEvent) => void
+  ) => {
+    if (isRecentPan()) {
+      return;
+    }
+    const point = getPressPoint(event);
+    if (!point || typeof point.y !== "number" || typeof point.x !== "number") {
+      return;
+    }
+    event.persist?.();
+    const state = {
+      x: point.x,
+      y: point.y,
+      time: Date.now(),
+      moved: false,
+      fired: false,
+      timerId: null as number | null,
+    };
+    state.timerId = window.setTimeout(() => {
+      const current = pressStateRef.current;
+      if (!current || current !== state || current.moved || current.fired) {
+        return;
+      }
+      if (!shouldHandlePress()) {
+        return;
+      }
+      lastPressAtRef.current = Date.now();
+      current.fired = true;
+      handler(event);
+    }, 350);
+    pressStateRef.current = state;
+  };
+  const movePress = (event: SyntheticEvent) => {
+    const state = pressStateRef.current;
+    if (!state || state.moved) {
+      return;
+    }
+    const point = getPressPoint(event);
+    if (!point || typeof point.y !== "number" || typeof point.x !== "number") {
+      return;
+    }
+    const dx = point.x - state.x;
+    const dy = point.y - state.y;
+    if (Math.hypot(dx, dy) > 12) {
+      state.moved = true;
+      if (state.timerId !== null) {
+        window.clearTimeout(state.timerId);
+      }
+    }
+  };
+  const endPress = (event: SyntheticEvent, handler: (event: SyntheticEvent) => void) => {
+    const state = pressStateRef.current;
+    if (state && state.timerId !== null) {
+      window.clearTimeout(state.timerId);
+    }
+    const moved = state?.moved ?? false;
+    const fired = state?.fired ?? false;
+    const duration = state ? Date.now() - state.time : 0;
+    pressStateRef.current = null;
+    if (moved || fired || duration > 600 || isRecentPan()) {
+      return;
+    }
+    if (!shouldHandlePress()) {
+      return;
+    }
+    lastPressAtRef.current = Date.now();
+    handler(event);
+  };
+  const createPressHandlers = useCallback(
+    (handler: (event: SyntheticEvent) => void) => ({
+      onClick: (event: SyntheticEvent) => {
+        endPress(event, handler);
+      },
+      onPointerDown: (event: SyntheticEvent) => {
+        startPress(event, handler);
+      },
+      onPointerMove: (event: SyntheticEvent) => {
+        movePress(event);
+      },
+      onPointerUp: (event: SyntheticEvent) => {
+        endPress(event, handler);
+      },
+      onPointerCancel: () => {
+        pressStateRef.current = null;
+      },
+      onTouchStart: (event: SyntheticEvent) => {
+        startPress(event, handler);
+      },
+      onTouchMove: (event: SyntheticEvent) => {
+        movePress(event);
+      },
+      onTouchEnd: (event: SyntheticEvent) => {
+        endPress(event, handler);
+      },
+      onTouchCancel: () => {
+        pressStateRef.current = null;
+      },
+    }),
+    [shouldHandlePress, isRecentPan]
+  );
+
+  useEffect(() => {
+    const handlePanMove = (event: Event) => {
+      const point = getPressPoint({ nativeEvent: event } as SyntheticEvent);
+      if (!point) {
+        return;
+      }
+      const lastPoint = lastPanPointRef.current;
+      if (lastPoint) {
+        const dx = point.x - lastPoint.x;
+        const dy = point.y - lastPoint.y;
+        if (Math.hypot(dx, dy) > 8) {
+          lastPanAtRef.current = Date.now();
+        }
+      } else {
+        lastPanAtRef.current = Date.now();
+      }
+      lastPanPointRef.current = { x: point.x, y: point.y };
+    };
+    const clearPanPoint = () => {
+      lastPanPointRef.current = null;
+    };
+
+    window.addEventListener("touchmove", handlePanMove, true);
+    window.addEventListener("pointermove", handlePanMove, true);
+    window.addEventListener("touchend", clearPanPoint, true);
+    window.addEventListener("pointerup", clearPanPoint, true);
+    window.addEventListener("touchcancel", clearPanPoint, true);
+    window.addEventListener("pointercancel", clearPanPoint, true);
+
+    return () => {
+      window.removeEventListener("touchmove", handlePanMove, true);
+      window.removeEventListener("pointermove", handlePanMove, true);
+      window.removeEventListener("touchend", clearPanPoint, true);
+      window.removeEventListener("pointerup", clearPanPoint, true);
+      window.removeEventListener("touchcancel", clearPanPoint, true);
+      window.removeEventListener("pointercancel", clearPanPoint, true);
+    };
+  }, []);
   const { balance: chipBalance } = useBalance({
     account: walletAddress,
     assetId: chipAssetId,
@@ -1153,6 +1519,7 @@ export default function App() {
       setWalletError(null);
     }
   }, [isConnected]);
+
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1230,32 +1597,6 @@ export default function App() {
       cancelled = true;
     };
   }, [provider, isConnected]);
-
-  useEffect(() => {
-    if (!isConnected) {
-      return;
-    }
-
-    let cancelled = false;
-    const selectNetwork = async () => {
-      try {
-        await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        const message =
-          err instanceof Error ? err.message : "Wallet network error";
-        setWalletError(message);
-      }
-    };
-
-    selectNetwork();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, networkKey, selectNetworkAsync]);
 
   const fetchStraps = useCallback(async () => {
     if (!baseUrl) {
@@ -1588,6 +1929,25 @@ export default function App() {
       Boolean(claimModifierEntry) ||
       Boolean(claimResult)
   );
+  const isBlockingModalOpen = Boolean(
+    isGamesOpen ||
+      isInfoOpen ||
+      isDiceHistoryOpen ||
+      isClosetOpen ||
+      isTutorialOpen ||
+      betTargetRoll ||
+      isStrapKindPickerOpen ||
+      isStrapPickerOpen ||
+      Boolean(claimModifierEntry) ||
+      Boolean(claimResult)
+  );
+
+  useEffect(() => {
+    document.body.classList.toggle("modal-open", isBlockingModalOpen);
+    return () => {
+      document.body.classList.remove("modal-open");
+    };
+  }, [isBlockingModalOpen]);
 
   useEffect(() => {
     if (!isAnyModalOpen) {
@@ -1826,20 +2186,20 @@ export default function App() {
     return base.join(" ");
   };
 
-  const connectWallet = async () => {
+  const connectWallet = () => {
     setWalletError(null);
+    connectUI.connect();
+  };
 
-    try {
-      if (isConnected) {
-        return true;
-      }
-      await connect();
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Wallet error";
-      setWalletError(message);
-      return false;
+  const handleNetworkChange = async (
+    event: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    const nextNetwork = event.target.value as FuelNetworkKey;
+    setNetworkKey(nextNetwork);
+    if (!isConnected) {
+      return;
     }
+    setWalletError(null);
   };
 
   const handleRoll = async () => {
@@ -1882,6 +2242,10 @@ export default function App() {
       setRollError(message);
       setRollStatus("error");
     }
+  };
+
+  const handleRollPress = () => {
+    void handleRoll();
   };
 
   const handlePlaceBet = async () => {
@@ -2502,7 +2866,7 @@ export default function App() {
                   className="primary-button"
                   type="button"
                   disabled={claimDisabled}
-                  onClick={handleClaimClick}
+                  {...createPressHandlers(() => handleClaimClick())}
                   title={
                     isClaimingGame && claimStatus === "error"
                       ? claimError ?? undefined
@@ -2641,8 +3005,40 @@ export default function App() {
         isNight ? " street-app--night" : ""
       }`}
     >
-      <header className="street-header">
-        <h1 className="street-title">STRAPPED!</h1>
+      {showDebugConsole ? (
+        <div className="debug-console">
+          <div className="debug-console__header">
+            <span>Debug console ({debugEntries.length})</span>
+            <button
+              type="button"
+              className="debug-console__clear"
+              {...createPressHandlers(() => setDebugEntries([]))}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="debug-console__body" ref={debugBodyRef}>
+            {debugEntries.length > 0
+              ? debugEntries.join("\n")
+              : "Debug console enabled."}
+          </div>
+        </div>
+      ) : null}
+      <header
+        className={`street-header${isHeaderMenuOpen ? " street-header--open" : ""}`}
+      >
+        <div className="street-header__title">
+          <button
+            type="button"
+            className="street-header__menu-button"
+            aria-label={isHeaderMenuOpen ? "Close header menu" : "Open header menu"}
+            aria-expanded={isHeaderMenuOpen}
+            {...createPressHandlers(() => setIsHeaderMenuOpen((prev) => !prev))}
+          >
+            <span aria-hidden="true">{isHeaderMenuOpen ? "✕" : "☰"}</span>
+          </button>
+          <h1 className="street-title">STRAPPED!</h1>
+        </div>
         <div className="street-meta">
           <span className={`status-chip status-chip--${status}`}>{status}</span>
           <div className="wallet-pill">
@@ -2657,9 +3053,7 @@ export default function App() {
               id="network-select"
               className="network-picker__select"
               value={networkKey}
-              onChange={(event) =>
-                setNetworkKey(event.target.value as FuelNetworkKey)
-              }
+              onChange={handleNetworkChange}
               disabled={walletStatus === "connecting"}
             >
               {Object.entries(FUEL_NETWORKS).map(([key, network]) => (
@@ -2672,13 +3066,13 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            onClick={() => {
+            {...createPressHandlers(() => {
               if (isConnected) {
                 disconnect();
               } else {
                 connectWallet();
               }
-            }}
+            })}
             disabled={walletStatus === "connecting" || isDisconnecting}
           >
             {walletStatus === "connecting"
@@ -2694,10 +3088,10 @@ export default function App() {
             type="button"
             aria-label="Open tutorial"
             title="How to play"
-            onClick={() => {
+            {...createPressHandlers(() => {
               setTutorialStepIndex(0);
               setIsTutorialOpen(true);
-            }}
+            })}
           >
             ?
           </button>
@@ -2733,7 +3127,7 @@ export default function App() {
               <button
                 className="primary-button roll-button"
                 type="button"
-                onClick={handleRoll}
+                {...createPressHandlers(handleRollPress)}
                 disabled={!isConnected || isRolling || walletStatus === "connecting"}
               >
                 {rollButtonLabel}
@@ -2741,7 +3135,7 @@ export default function App() {
               <button
                 className="ghost-button roll-history-button"
                 type="button"
-                onClick={() => setIsDiceHistoryOpen(true)}
+                {...createPressHandlers(() => setIsDiceHistoryOpen(true))}
                 disabled={diceRolls.length === 0}
               >
                 History
@@ -2870,16 +3264,31 @@ export default function App() {
                     role="button"
                     tabIndex={0}
                     aria-expanded={isExpanded}
-                    onClick={(event) => openExpandedShop(roll, event.currentTarget)}
+                    {...createPressHandlers((event) =>
+                      openExpandedShop(roll, event.currentTarget as HTMLElement)
+                    )}
                     onKeyDown={handleShopKeyDown}
                     style={expandedStyle}
                   >
                     <div className="shop-sign">
                       <span className="shop-sign__label">{rollLabels[roll]}</span>
+                      {isExpanded ? (
+                        <button
+                          type="button"
+                          className="shop-sign__close"
+                          aria-label="Close shop"
+                          {...createPressHandlers((event) => {
+                            event.stopPropagation();
+                            setActiveRoll(null);
+                          })}
+                        >
+                          x
+                        </button>
+                      ) : null}
                     </div>
                     <div className="shop-awning" />
                     <div className="shop-facade">
-                      <div className="shop-window">
+                    <div className="shop-window">
                         {!isExpanded ? (
                           <div className="shop-meta">
                             <div className="shop-meta__section">
@@ -2911,137 +3320,143 @@ export default function App() {
                           </div>
                         ) : null}
                         {isExpanded ? (
-                          <div className="shop-window__details">
-                            <div className="shop-window__section">
-                              <h3>Rewards</h3>
-                              {rewards.length > 0 ? (
-                                <div className="shop-window__stack">
-                                  {rewards.map(([strap, amount], rewardIndex) => (
-                                    <div key={`${roll}-reward-${rewardIndex}`}>
-                                      {formatRewardCompact(strap)} ·{" "}
-                                      {formatNumber(amount)}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="shop-window__muted">
-                                  None for this shop.
-                                </div>
-                              )}
-                            </div>
-                            <div className="shop-window__section">
-                              <h3>Your bets</h3>
-                              {accountBetDetails.length > 0 ? (
-                                <div className="shop-window__stack">
-                                  {accountBetDetails.map((detail, detailIndex) => (
-                                    <div key={`account-bet-${roll}-${detailIndex}`}>
-                                      {detail.kind === "chip"
-                                        ? `Chip x${formatNumber(detail.amount)}`
-                                        : `${formatRewardCompact(detail.strap)} x${formatNumber(
-                                            detail.amount
-                                          )}`}
-                                      {typeof detail.betRollIndex === "number"
-                                        ? ` @${detail.betRollIndex}`
-                                        : ""}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="shop-window__muted">
-                                  No bets yet.
-                                </div>
-                              )}
-                            </div>
-                            <div className="shop-window__section">
-                              <h3>Modifiers</h3>
-                              {modifier ? (
-                                <div className="shop-window__stack">
-                                  <div>
-                                    {modifierEmojis[modifier] ?? ""} {modifier}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="shop-window__muted">
-                                  None active.
-                                </div>
-                              )}
-                            </div>
-                            <div className="shop-window__section shop-window__section--wide">
-                              <h3>Table bets</h3>
-                              <div className="shop-window__table-summary">
-                                <span>
-                                  Chips: {formatNumber(totalChips ?? 0)}
-                                </span>
-                                {tableStrapTotals.length > 0 ? (
-                                  <div className="shop-window__table-straps">
-                                    {tableStrapTotals.map(({ strap, amount }) => (
-                                      <span key={`strap-summary-${strapKey(strap)}`}>
+                          <>
+                            <div className="shop-window__details">
+                              <div className="shop-window__section">
+                                <h3>Rewards</h3>
+                                {rewards.length > 0 ? (
+                                  <div className="shop-window__stack">
+                                    {rewards.map(([strap, amount], rewardIndex) => (
+                                      <div key={`${roll}-reward-${rewardIndex}`}>
                                         {formatRewardCompact(strap)} ·{" "}
                                         {formatNumber(amount)}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span>Straps: {formatNumber(totalStrapBets)}</span>
-                                )}
-                              </div>
-                              {tableBetsForRoll.length > 0 ? (
-                                <div className="shop-window__table-scroll">
-                                  <div className="shop-window__table">
-                                    {tableBetsForRoll.map((entry, tableIndex) => (
-                                      <div
-                                        key={`${roll}-table-${tableIndex}`}
-                                        className="shop-window__table-entry"
-                                      >
-                                        <div className="shop-window__address">
-                                          address:{" "}
-                                          {formatIdentity(entry.identity).toLowerCase()}
-                                        </div>
-                                        <div className="shop-window__stack">
-                                          <div>
-                                            Chip bets:{" "}
-                                            {formatNumber(entry.chipTotal)}
-                                          </div>
-                                          {entry.straps.length > 0 ? (
-                                            <div className="shop-window__stack">
-                                              {entry.straps.map(
-                                                ([strap, amount], strapIndex) => (
-                                                  <div
-                                                    key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
-                                                  >
-                                                    {formatRewardCompact(strap)} ·{" "}
-                                                    {formatNumber(amount)}
-                                                  </div>
-                                                )
-                                              )}
-                                            </div>
-                                          ) : (
-                                            <div className="shop-window__muted">
-                                              No strap bets.
-                                            </div>
-                                          )}
-                                        </div>
                                       </div>
                                     ))}
                                   </div>
+                                ) : (
+                                  <div className="shop-window__muted">
+                                    None for this shop.
+                                  </div>
+                                )}
+                              </div>
+                              <div className="shop-window__section">
+                                <h3>Your bets</h3>
+                                {accountBetDetails.length > 0 ? (
+                                  <div className="shop-window__stack">
+                                    {accountBetDetails.map((detail, detailIndex) => (
+                                      <div key={`account-bet-${roll}-${detailIndex}`}>
+                                        {detail.kind === "chip"
+                                          ? `Chip x${formatNumber(detail.amount)}`
+                                          : `${formatRewardCompact(
+                                              detail.strap
+                                            )} x${formatNumber(detail.amount)}`}
+                                        {typeof detail.betRollIndex === "number"
+                                          ? ` @${detail.betRollIndex}`
+                                          : ""}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="shop-window__muted">
+                                    No bets yet.
+                                  </div>
+                                )}
+                              </div>
+                              <div className="shop-window__section">
+                                <h3>Modifiers</h3>
+                                {modifier ? (
+                                  <div className="shop-window__stack">
+                                    <div>
+                                      {modifierEmojis[modifier] ?? ""} {modifier}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="shop-window__muted">
+                                    None active.
+                                  </div>
+                                )}
+                              </div>
+                              <div className="shop-window__section shop-window__section--wide">
+                                <h3>Table bets</h3>
+                                <div className="shop-window__table-summary">
+                                  <span>
+                                    Chips: {formatNumber(totalChips ?? 0)}
+                                  </span>
+                                  {tableStrapTotals.length > 0 ? (
+                                    <div className="shop-window__table-straps">
+                                      {tableStrapTotals.map(({ strap, amount }) => (
+                                        <span
+                                          key={`strap-summary-${strapKey(strap)}`}
+                                        >
+                                          {formatRewardCompact(strap)} ·{" "}
+                                          {formatNumber(amount)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span>
+                                      Straps: {formatNumber(totalStrapBets)}
+                                    </span>
+                                  )}
                                 </div>
-                              ) : (
-                                <div className="shop-window__muted">
-                                  No table bets yet.
-                                </div>
-                              )}
+                                {tableBetsForRoll.length > 0 ? (
+                                  <div className="shop-window__table-scroll">
+                                    <div className="shop-window__table">
+                                      {tableBetsForRoll.map((entry, tableIndex) => (
+                                        <div
+                                          key={`${roll}-table-${tableIndex}`}
+                                          className="shop-window__table-entry"
+                                        >
+                                          <div className="shop-window__address">
+                                            address:{" "}
+                                            {formatIdentity(entry.identity).toLowerCase()}
+                                          </div>
+                                          <div className="shop-window__stack">
+                                            <div>
+                                              Chip bets:{" "}
+                                              {formatNumber(entry.chipTotal)}
+                                            </div>
+                                            {entry.straps.length > 0 ? (
+                                              <div className="shop-window__stack">
+                                                {entry.straps.map(
+                                                  ([strap, amount], strapIndex) => (
+                                                    <div
+                                                      key={`${roll}-table-${tableIndex}-strap-${strapIndex}`}
+                                                    >
+                                                      {formatRewardCompact(strap)} ·{" "}
+                                                      {formatNumber(amount)}
+                                                    </div>
+                                                  )
+                                                )}
+                                              </div>
+                                            ) : (
+                                              <div className="shop-window__muted">
+                                                No strap bets.
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="shop-window__muted">
+                                    No table bets yet.
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
+                          </>
                         ) : null}
                       </div>
                       <button
                         type="button"
                         className="shop-door"
                         aria-label={`Place bet on ${rollLabels[roll]}`}
-                        onClick={(event) => {
+                        {...createPressHandlers((event) => {
                           event.stopPropagation();
                           openBetModal(roll);
-                        }}
+                        })}
                       >
                         <span className="shop-door__label">Bet</span>
                       </button>
@@ -3141,7 +3556,9 @@ export default function App() {
                         type="button"
                         className={`modifier-action modifier-action--${story.theme}`}
                         disabled={isPurchasing}
-                        onClick={() => handlePurchaseModifier(roll, entry, entryKey)}
+                        {...createPressHandlers(() =>
+                          handlePurchaseModifier(roll, entry, entryKey)
+                        )}
                       >
                         <span className="modifier-action__icon" aria-hidden="true">
                           {story.icon}
@@ -3164,7 +3581,7 @@ export default function App() {
           type="button"
           className="shop-overlay"
           aria-label="Close shop"
-          onClick={() => setActiveRoll(null)}
+          {...createPressHandlers(() => setActiveRoll(null))}
         />
       ) : null}
 
@@ -3179,7 +3596,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsTutorialOpen(false)}
+                {...createPressHandlers(() => setIsTutorialOpen(false))}
               >
                 Close
               </button>
@@ -3202,9 +3619,9 @@ export default function App() {
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={() =>
+                    {...createPressHandlers(() =>
                       setTutorialStepIndex((index) => Math.max(index - 1, 0))
-                    }
+                    )}
                   >
                     {tutorialStep.backLabel ?? "Back"}
                   </button>
@@ -3212,7 +3629,7 @@ export default function App() {
                 <button
                   className="primary-button"
                   type="button"
-                  onClick={() => {
+                  {...createPressHandlers(() => {
                     if (isTutorialLastStep) {
                       setIsTutorialOpen(false);
                       return;
@@ -3220,7 +3637,7 @@ export default function App() {
                     setTutorialStepIndex((index) =>
                       Math.min(index + 1, tutorialSteps.length - 1)
                     );
-                  }}
+                  })}
                 >
                   {tutorialStep.nextLabel ?? "Next"}
                 </button>
@@ -3240,7 +3657,11 @@ export default function App() {
                   Bet on {rollLabels[betTargetRoll]}
                 </h2>
               </div>
-              <button className="ghost-button" type="button" onClick={closeBetModal}>
+              <button
+                className="ghost-button"
+                type="button"
+                {...createPressHandlers(() => closeBetModal())}
+              >
                 Close
               </button>
             </div>
@@ -3269,7 +3690,7 @@ export default function App() {
                       <button
                         className="primary-button"
                         type="button"
-                        onClick={closeBetModal}
+                        {...createPressHandlers(() => closeBetModal())}
                       >
                         Done
                       </button>
@@ -3285,7 +3706,7 @@ export default function App() {
                           className={`bet-toggle__button${
                             betKind === "chip" ? " bet-toggle__button--active" : ""
                           }`}
-                          onClick={() => setBetKind("chip")}
+                          {...createPressHandlers(() => setBetKind("chip"))}
                         >
                           Chip
                         </button>
@@ -3294,7 +3715,7 @@ export default function App() {
                           className={`bet-toggle__button${
                             betKind === "strap" ? " bet-toggle__button--active" : ""
                           }`}
-                          onClick={() => setBetKind("strap")}
+                          {...createPressHandlers(() => setBetKind("strap"))}
                         >
                           Strap
                         </button>
@@ -3308,7 +3729,9 @@ export default function App() {
                             <button
                               type="button"
                               className="bet-variant-button"
-                              onClick={() => setIsStrapKindPickerOpen(true)}
+                              {...createPressHandlers(() =>
+                                setIsStrapKindPickerOpen(true)
+                              )}
                               disabled={closetGroups.length === 0}
                             >
                               {selectedBetGroup ? `${selectedBetGroup.emoji}` : "Choose type"}
@@ -3316,7 +3739,9 @@ export default function App() {
                             <button
                               type="button"
                               className="bet-variant-button"
-                              onClick={() => setIsStrapPickerOpen(true)}
+                              {...createPressHandlers(() =>
+                                setIsStrapPickerOpen(true)
+                              )}
                               disabled={!selectedBetGroup}
                             >
                               {selectedBetStrap
@@ -3360,7 +3785,7 @@ export default function App() {
                       <button
                         className="primary-button"
                         type="button"
-                        onClick={handlePlaceBet}
+                        {...createPressHandlers(() => handlePlaceBet())}
                         disabled={
                           isBetBusy ||
                           (betKind === "strap" && ownedStraps.length === 0)
@@ -3388,7 +3813,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsStrapKindPickerOpen(false)}
+                {...createPressHandlers(() => setIsStrapKindPickerOpen(false))}
               >
                 Close
               </button>
@@ -3403,10 +3828,10 @@ export default function App() {
                         key={`bet-kind-${group.kind}`}
                         type="button"
                         className={`bet-kind${isActive ? " bet-kind--active" : ""}`}
-                        onClick={() => {
+                        {...createPressHandlers(() => {
                           setBetStrapKind(group.kind);
                           setIsStrapKindPickerOpen(false);
-                        }}
+                        })}
                       >
                         <div className="bet-kind__icon" aria-hidden="true">
                           {group.emoji}
@@ -3437,7 +3862,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsStrapPickerOpen(false)}
+                {...createPressHandlers(() => setIsStrapPickerOpen(false))}
               >
                 Close
               </button>
@@ -3460,10 +3885,10 @@ export default function App() {
                           className={`bet-variant${
                             isActive ? " bet-variant--active" : ""
                           }`}
-                          onClick={() => {
+                          {...createPressHandlers(() => {
                             setBetStrapAssetId(entry.assetId);
                             setIsStrapPickerOpen(false);
-                          }}
+                          })}
                         >
                           <div className="bet-variant__title">
                             {formatRewardCompact(entry.strap)}
@@ -3498,7 +3923,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsClosetOpen(false)}
+                {...createPressHandlers(() => setIsClosetOpen(false))}
               >
                 Close
               </button>
@@ -3548,21 +3973,21 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsClosetOpen(true)}
+            {...createPressHandlers(() => setIsClosetOpen(true))}
           >
             STRAPS CLOSET
           </button>
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsGamesOpen(true)}
+            {...createPressHandlers(() => setIsGamesOpen(true))}
           >
             Previous games
           </button>
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsInfoOpen(true)}
+            {...createPressHandlers(() => setIsInfoOpen(true))}
           >
             Game info
           </button>
@@ -3572,6 +3997,101 @@ export default function App() {
           {error ? ` · ⚠️ ${error}` : ""}
         </div>
       </footer>
+
+      <div className={`mobile-nav${isMobileMenuOpen ? " mobile-nav--open" : ""}`}>
+        <div className="mobile-nav__bar">
+          <div className="mobile-nav__chips">
+            <span className="mobile-nav__chips-value">
+              {formatChipCompact(displayChipBalance)}
+            </span>
+            <span className="mobile-nav__chips-label">Chips</span>
+          </div>
+          <button
+            className="mobile-nav__last mobile-nav__last-button"
+            type="button"
+            aria-label={rollButtonLabel}
+            {...createPressHandlers(handleRollPress)}
+            disabled={!isConnected || isRolling || walletStatus === "connecting"}
+          >
+            {displayedRoll ? (
+              <div
+                className={`dice-card dice-card--single mobile-nav__dice${
+                  rollLandPulse ? " dice-card--land" : ""
+                }`}
+              >
+                <div className="dice-face">{rollNumbers[displayedRoll]}</div>
+                <div className="dice-label">
+                  {lastRoll ? rollLabels[displayedRoll] : "NEW GAME :)"}
+                </div>
+              </div>
+            ) : (
+              <div className="dice-placeholder mobile-nav__dice">—</div>
+            )}
+          </button>
+          <button
+            className="mobile-nav__menu-toggle"
+            type="button"
+            aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={isMobileMenuOpen}
+            {...createPressHandlers(() => setIsMobileMenuOpen((prev) => !prev))}
+          >
+            {isMobileMenuOpen ? "✕" : "☰"}
+          </button>
+        </div>
+        {isMobileMenuOpen ? (
+          <>
+            <button
+              type="button"
+              className="mobile-nav__overlay"
+              aria-label="Close menu"
+              {...createPressHandlers(() => setIsMobileMenuOpen(false))}
+            />
+            <div className="mobile-nav__menu">
+              <button
+                className="mobile-nav__action"
+                type="button"
+                {...createPressHandlers(() => {
+                  setIsDiceHistoryOpen(true);
+                  setIsMobileMenuOpen(false);
+                })}
+                disabled={diceRolls.length === 0}
+              >
+                Roll history
+              </button>
+              <button
+                className="mobile-nav__action"
+                type="button"
+                {...createPressHandlers(() => {
+                  setIsClosetOpen(true);
+                  setIsMobileMenuOpen(false);
+                })}
+              >
+                Closet
+              </button>
+              <button
+                className="mobile-nav__action"
+                type="button"
+                {...createPressHandlers(() => {
+                  setIsGamesOpen(true);
+                  setIsMobileMenuOpen(false);
+                })}
+              >
+                Previous games
+              </button>
+              <button
+                className="mobile-nav__action"
+                type="button"
+                {...createPressHandlers(() => {
+                  setIsInfoOpen(true);
+                  setIsMobileMenuOpen(false);
+                })}
+              >
+                Game info
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
 
       {isGamesOpen && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
@@ -3584,7 +4104,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsGamesOpen(false)}
+                {...createPressHandlers(() => setIsGamesOpen(false))}
               >
                 Close
               </button>
@@ -3597,7 +4117,7 @@ export default function App() {
                     className={`modal-tab${
                       gamesTab === "recent" ? " modal-tab--active" : ""
                     }`}
-                    onClick={() => setGamesTab("recent")}
+                    {...createPressHandlers(() => setGamesTab("recent"))}
                   >
                     Recent games
                   </button>
@@ -3606,7 +4126,7 @@ export default function App() {
                     className={`modal-tab${
                       gamesTab === "unclaimed" ? " modal-tab--active" : ""
                     }`}
-                    onClick={() => setGamesTab("unclaimed")}
+                    {...createPressHandlers(() => setGamesTab("unclaimed"))}
                   >
                     Unclaimed games
                   </button>
@@ -3631,7 +4151,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsInfoOpen(false)}
+                {...createPressHandlers(() => setIsInfoOpen(false))}
               >
                 Close
               </button>
@@ -3716,7 +4236,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={closeClaimModifier}
+                {...createPressHandlers(() => closeClaimModifier())}
               >
                 Close
               </button>
@@ -3758,14 +4278,14 @@ export default function App() {
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={closeClaimModifier}
+                    {...createPressHandlers(() => closeClaimModifier())}
                   >
                     Cancel
                   </button>
                   <button
                     className="primary-button"
                     type="button"
-                    onClick={() => {
+                    {...createPressHandlers(() => {
                       const enabledModifiers = claimModifierOptions
                         .filter((modifier) =>
                           claimModifierSelection.includes(
@@ -3778,7 +4298,7 @@ export default function App() {
                         ]) as Array<[Roll, string]>;
                       closeClaimModifier();
                       handleClaimRewards(claimModifierEntry, enabledModifiers);
-                    }}
+                    })}
                   >
                     Claim rewards
                   </button>
@@ -3802,7 +4322,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={closeClaimResult}
+                {...createPressHandlers(() => closeClaimResult())}
               >
                 Close
               </button>
@@ -3896,7 +4416,7 @@ export default function App() {
                   <button
                     className="primary-button"
                     type="button"
-                    onClick={closeClaimResult}
+                    {...createPressHandlers(() => closeClaimResult())}
                   >
                     Done
                   </button>
@@ -3918,7 +4438,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsDiceHistoryOpen(false)}
+                {...createPressHandlers(() => setIsDiceHistoryOpen(false))}
               >
                 Close
               </button>
