@@ -15,20 +15,6 @@ import { FUEL_NETWORKS } from "./fuel/config";
 const rootElement = document.getElementById("root");
 const queryClient = new QueryClient();
 
-class FueletExtensionConnector extends FueletWalletConnector {
-  isMobile() {
-    return false;
-  }
-
-  isFueletWebView() {
-    return false;
-  }
-
-  isMobileNativeBrowser() {
-    return false;
-  }
-}
-
 if (!rootElement) {
   throw new Error("Missing root element");
 }
@@ -41,7 +27,7 @@ createRoot(rootElement).render(
           connectors: [
             new FuelWalletConnector(),
             new FuelWalletDevelopmentConnector(),
-            new FueletExtensionConnector(),
+            new FueletWalletConnector(),
           ],
         }}
         networks={[
