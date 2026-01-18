@@ -1,7 +1,8 @@
 import {
   useAccount,
   useBalance,
-  useConnectUI,
+  useConnect,
+  useConnectors,
   useDisconnect,
   useIsConnected,
   useProvider,
@@ -1111,7 +1112,8 @@ export default function App() {
   const [networkKey, setNetworkKey] =
     useState<FuelNetworkKey>(DEFAULT_NETWORK);
   const [walletError, setWalletError] = useState<string | null>(null);
-  const { connect, isConnecting } = useConnectUI();
+  const { connectAsync, isPending: isConnecting } = useConnect();
+  const { connectors, isLoading: isLoadingConnectors } = useConnectors();
   const { disconnect, isPending: isDisconnecting } = useDisconnect();
   const { isConnected } = useIsConnected();
   const { wallet } = useWallet();
@@ -1875,7 +1877,22 @@ export default function App() {
       if (isConnected) {
         return true;
       }
-      await connect();
+      if (isLoadingConnectors) {
+        setWalletError("Loading wallet connectors...");
+        return false;
+      }
+      const fueletConnector = connectors.find(
+        (connector) => connector.name === "Fuelet Wallet"
+      );
+      if (!fueletConnector) {
+        setWalletError("Fuelet Wallet connector not available.");
+        return false;
+      }
+      if (!fueletConnector.installed) {
+        setWalletError("Install the Fuelet Wallet extension to connect.");
+        return false;
+      }
+      await connectAsync(fueletConnector.name);
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Wallet error";
