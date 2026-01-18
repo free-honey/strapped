@@ -1212,8 +1212,38 @@ export default function App() {
       capture("unhandledrejection", event.reason);
     };
 
+    const describeTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) {
+        return "unknown";
+      }
+      const id = target.id ? `#${target.id}` : "";
+      const className =
+        typeof target.className === "string" && target.className.length > 0
+          ? `.${target.className.split(" ").join(".")}`
+          : "";
+      return `${target.tagName.toLowerCase()}${id}${className}`;
+    };
+
+    const handleInput = (event: Event) => {
+      capture(event.type, describeTarget(event.target));
+    };
+
+    const handleVisibility = () => {
+      capture("visibility", document.visibilityState);
+    };
+
+    appendDebugEntry(`[${new Date().toISOString()}] debug: console started`);
+
     window.addEventListener("error", handleError);
     window.addEventListener("unhandledrejection", handleRejection);
+    window.addEventListener("click", handleInput, true);
+    window.addEventListener("pointerdown", handleInput, true);
+    window.addEventListener("touchstart", handleInput, true);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    const heartbeatId = window.setInterval(() => {
+      capture("tick", "alive");
+    }, 2000);
 
     return () => {
       console.log = originalConsole.log;
@@ -1223,6 +1253,11 @@ export default function App() {
       console.debug = originalConsole.debug;
       window.removeEventListener("error", handleError);
       window.removeEventListener("unhandledrejection", handleRejection);
+      window.removeEventListener("click", handleInput, true);
+      window.removeEventListener("pointerdown", handleInput, true);
+      window.removeEventListener("touchstart", handleInput, true);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(heartbeatId);
     };
   }, [showDebugConsole, appendDebugEntry]);
   const walletAddress = account ?? null;
