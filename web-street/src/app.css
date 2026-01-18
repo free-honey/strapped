@@ -77,6 +77,50 @@ button {
   z-index: 4;
 }
 
+.debug-console {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 2px solid rgba(60, 45, 34, 0.6);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 24px rgba(31, 22, 18, 0.15);
+  font-size: 12px;
+  line-height: 1.35;
+  max-height: 200px;
+  overflow: hidden;
+  z-index: 5;
+}
+
+.debug-console__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: "Press Start 2P", "VT323", monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.debug-console__clear {
+  border: 2px solid var(--tile-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: #fff7;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.debug-console__body {
+  font-family: "VT323", "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .street-header__menu-button {
   display: none;
 }

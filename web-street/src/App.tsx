@@ -1030,6 +1030,14 @@ export default function App() {
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
     []
   );
+  const showDebugConsole = import.meta.env.VITE_DEBUG_CONSOLE === "true";
+  const [debugEntries, setDebugEntries] = useState<string[]>([]);
+  const appendDebugEntry = useCallback((message: string) => {
+    setDebugEntries((prev) => {
+      const next = [...prev, message];
+      return next.length > 200 ? next.slice(next.length - 200) : next;
+    });
+  }, []);
   const [status, setStatus] = useState<FetchStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SnapshotResponse | null>(null);
@@ -1136,6 +1144,87 @@ export default function App() {
       : isConnected
         ? "connected"
         : "idle";
+
+  useEffect(() => {
+    if (!showDebugConsole) {
+      return;
+    }
+
+    const formatArg = (arg: unknown) => {
+      if (arg instanceof Error) {
+        return arg.stack ?? arg.message;
+      }
+      if (typeof arg === "string") {
+        return arg;
+      }
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    };
+
+    const capture = (level: string, ...args: unknown[]) => {
+      const stamp = new Date().toISOString();
+      appendDebugEntry(
+        `[${stamp}] ${level}: ${args.map((arg) => formatArg(arg)).join(" ")}`
+      );
+    };
+
+    const originalConsole = {
+      log: console.log,
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+      debug: console.debug,
+    };
+
+    console.log = (...args) => {
+      capture("log", ...args);
+      originalConsole.log(...args);
+    };
+    console.info = (...args) => {
+      capture("info", ...args);
+      originalConsole.info(...args);
+    };
+    console.warn = (...args) => {
+      capture("warn", ...args);
+      originalConsole.warn(...args);
+    };
+    console.error = (...args) => {
+      capture("error", ...args);
+      originalConsole.error(...args);
+    };
+    console.debug = (...args) => {
+      capture("debug", ...args);
+      originalConsole.debug(...args);
+    };
+
+    const handleError = (event: ErrorEvent) => {
+      if (event.error) {
+        capture("error", event.error);
+        return;
+      }
+      capture("error", event.message);
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      capture("unhandledrejection", event.reason);
+    };
+
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
+
+    return () => {
+      console.log = originalConsole.log;
+      console.info = originalConsole.info;
+      console.warn = originalConsole.warn;
+      console.error = originalConsole.error;
+      console.debug = originalConsole.debug;
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+    };
+  }, [showDebugConsole, appendDebugEntry]);
   const walletAddress = account ?? null;
   const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
   const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
@@ -2700,6 +2789,25 @@ export default function App() {
         isNight ? " street-app--night" : ""
       }`}
     >
+      {showDebugConsole ? (
+        <div className="debug-console">
+          <div className="debug-console__header">
+            <span>Debug console</span>
+            <button
+              type="button"
+              className="debug-console__clear"
+              onClick={() => setDebugEntries([])}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="debug-console__body">
+            {debugEntries.length > 0
+              ? debugEntries.join("\n")
+              : "Debug console enabled."}
+          </div>
+        </div>
+      ) : null}
       <header
         className={`street-header${isHeaderMenuOpen ? " street-header--open" : ""}`}
       >
