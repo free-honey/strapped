@@ -1120,6 +1120,8 @@ export default function App() {
     fired: boolean;
     timerId: number | null;
   } | null>(null);
+  const lastPanAtRef = useRef<number>(0);
+  const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1295,6 +1297,9 @@ export default function App() {
   const shouldHandlePress = useCallback(() => {
     return Date.now() - lastPressAtRef.current >= 350;
   }, []);
+  const isRecentPan = useCallback(() => {
+    return Date.now() - lastPanAtRef.current < 220;
+  }, []);
   const getPressPoint = (event: SyntheticEvent) => {
     const nativeEvent = event.nativeEvent as {
       clientX?: number;
@@ -1322,6 +1327,9 @@ export default function App() {
     event: SyntheticEvent,
     handler: (event: SyntheticEvent) => void
   ) => {
+    if (isRecentPan()) {
+      return;
+    }
     const point = getPressPoint(event);
     if (!point || typeof point.y !== "number" || typeof point.x !== "number") {
       return;
@@ -1376,7 +1384,7 @@ export default function App() {
     const fired = state?.fired ?? false;
     const duration = state ? Date.now() - state.time : 0;
     pressStateRef.current = null;
-    if (moved || fired || duration > 600) {
+    if (moved || fired || duration > 600 || isRecentPan()) {
       return;
     }
     if (!shouldHandlePress()) {
@@ -1415,8 +1423,47 @@ export default function App() {
         pressStateRef.current = null;
       },
     }),
-    [shouldHandlePress]
+    [shouldHandlePress, isRecentPan]
   );
+
+  useEffect(() => {
+    const handlePanMove = (event: Event) => {
+      const point = getPressPoint({ nativeEvent: event } as SyntheticEvent);
+      if (!point) {
+        return;
+      }
+      const lastPoint = lastPanPointRef.current;
+      if (lastPoint) {
+        const dx = point.x - lastPoint.x;
+        const dy = point.y - lastPoint.y;
+        if (Math.hypot(dx, dy) > 8) {
+          lastPanAtRef.current = Date.now();
+        }
+      } else {
+        lastPanAtRef.current = Date.now();
+      }
+      lastPanPointRef.current = { x: point.x, y: point.y };
+    };
+    const clearPanPoint = () => {
+      lastPanPointRef.current = null;
+    };
+
+    window.addEventListener("touchmove", handlePanMove, true);
+    window.addEventListener("pointermove", handlePanMove, true);
+    window.addEventListener("touchend", clearPanPoint, true);
+    window.addEventListener("pointerup", clearPanPoint, true);
+    window.addEventListener("touchcancel", clearPanPoint, true);
+    window.addEventListener("pointercancel", clearPanPoint, true);
+
+    return () => {
+      window.removeEventListener("touchmove", handlePanMove, true);
+      window.removeEventListener("pointermove", handlePanMove, true);
+      window.removeEventListener("touchend", clearPanPoint, true);
+      window.removeEventListener("pointerup", clearPanPoint, true);
+      window.removeEventListener("touchcancel", clearPanPoint, true);
+      window.removeEventListener("pointercancel", clearPanPoint, true);
+    };
+  }, []);
   const { balance: chipBalance } = useBalance({
     account: walletAddress,
     assetId: chipAssetId,
