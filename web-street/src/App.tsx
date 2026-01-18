@@ -1111,7 +1111,7 @@ export default function App() {
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
   const debugBodyRef = useRef<HTMLDivElement | null>(null);
-  const lastPointerUpAtRef = useRef<number>(0);
+  const lastPressAtRef = useRef<number>(0);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1285,14 +1285,62 @@ export default function App() {
   const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
   const baseAssetTicker = FUEL_NETWORKS[networkKey].baseAssetTicker;
   const shouldHandlePress = useCallback((event: SyntheticEvent) => {
+    const now = Date.now();
+    const pressWindowMs = 450;
+
     if (event.type === "click") {
-      return Date.now() - lastPointerUpAtRef.current >= 400;
+      return now - lastPressAtRef.current >= pressWindowMs;
     }
-    if (event.type === "pointerup" || event.type === "touchend") {
-      lastPointerUpAtRef.current = Date.now();
+
+    if (
+      event.type === "pointerdown" ||
+      event.type === "pointerup" ||
+      event.type === "touchstart" ||
+      event.type === "touchend"
+    ) {
+      if (now - lastPressAtRef.current < pressWindowMs) {
+        return false;
+      }
+      lastPressAtRef.current = now;
     }
+
     return true;
   }, []);
+  const createPressHandlers = useCallback(
+    (handler: (event: SyntheticEvent) => void) => ({
+      onClick: (event: SyntheticEvent) => {
+        if (!shouldHandlePress(event)) {
+          return;
+        }
+        handler(event);
+      },
+      onPointerDown: (event: SyntheticEvent) => {
+        if (!shouldHandlePress(event)) {
+          return;
+        }
+        handler(event);
+      },
+      onPointerUp: (event: SyntheticEvent) => {
+        if (!shouldHandlePress(event)) {
+          return;
+        }
+        handler(event);
+      },
+      onTouchStart: (event: SyntheticEvent) => {
+        if (!shouldHandlePress(event)) {
+          return;
+        }
+        handler(event);
+      },
+      onTouchEnd: (event: SyntheticEvent) => {
+        if (!shouldHandlePress(event)) {
+          return;
+        }
+        handler(event);
+      },
+    }),
+    [shouldHandlePress]
+  );
   const { balance: chipBalance } = useBalance({
     account: walletAddress,
     assetId: chipAssetId,
@@ -2096,10 +2144,7 @@ export default function App() {
     }
   };
 
-  const handleRollPress = (event: SyntheticEvent) => {
-    if (!shouldHandlePress(event)) {
-      return;
-    }
+  const handleRollPress = () => {
     void handleRoll();
   };
 
@@ -2721,7 +2766,7 @@ export default function App() {
                   className="primary-button"
                   type="button"
                   disabled={claimDisabled}
-                  onClick={handleClaimClick}
+                  {...createPressHandlers(() => handleClaimClick())}
                   title={
                     isClaimingGame && claimStatus === "error"
                       ? claimError ?? undefined
@@ -2867,10 +2912,8 @@ export default function App() {
             <button
               type="button"
               className="debug-console__clear"
-              onClick={() => setDebugEntries([])}
               onPointerDown={() => setDebugEntries([])}
-              onPointerUp={() => setDebugEntries([])}
-              onTouchEnd={() => setDebugEntries([])}
+              {...createPressHandlers(() => setDebugEntries([]))}
             >
               Clear
             </button>
@@ -2891,7 +2934,7 @@ export default function App() {
             className="street-header__menu-button"
             aria-label={isHeaderMenuOpen ? "Close header menu" : "Open header menu"}
             aria-expanded={isHeaderMenuOpen}
-            onClick={() => setIsHeaderMenuOpen((prev) => !prev)}
+            {...createPressHandlers(() => setIsHeaderMenuOpen((prev) => !prev))}
           >
             <span aria-hidden="true">{isHeaderMenuOpen ? "✕" : "☰"}</span>
           </button>
@@ -2926,13 +2969,13 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            onClick={() => {
+            {...createPressHandlers(() => {
               if (isConnected) {
                 disconnect();
               } else {
                 connectWallet();
               }
-            }}
+            })}
             disabled={walletStatus === "connecting" || isDisconnecting}
           >
             {walletStatus === "connecting"
@@ -2948,10 +2991,10 @@ export default function App() {
             type="button"
             aria-label="Open tutorial"
             title="How to play"
-            onClick={() => {
+            {...createPressHandlers(() => {
               setTutorialStepIndex(0);
               setIsTutorialOpen(true);
-            }}
+            })}
           >
             ?
           </button>
@@ -2987,9 +3030,7 @@ export default function App() {
               <button
                 className="primary-button roll-button"
                 type="button"
-                onClick={handleRollPress}
-                onPointerUp={handleRollPress}
-                onTouchEnd={handleRollPress}
+                {...createPressHandlers(handleRollPress)}
                 disabled={!isConnected || isRolling || walletStatus === "connecting"}
               >
                 {rollButtonLabel}
@@ -2997,7 +3038,7 @@ export default function App() {
               <button
                 className="ghost-button roll-history-button"
                 type="button"
-                onClick={() => setIsDiceHistoryOpen(true)}
+                {...createPressHandlers(() => setIsDiceHistoryOpen(true))}
                 disabled={diceRolls.length === 0}
               >
                 History
@@ -3126,24 +3167,9 @@ export default function App() {
                     role="button"
                     tabIndex={0}
                     aria-expanded={isExpanded}
-                    onClick={(event) => {
-                      if (!shouldHandlePress(event)) {
-                        return;
-                      }
-                      openExpandedShop(roll, event.currentTarget);
-                    }}
-                    onPointerUp={(event) => {
-                      if (!shouldHandlePress(event)) {
-                        return;
-                      }
-                      openExpandedShop(roll, event.currentTarget);
-                    }}
-                    onTouchEnd={(event) => {
-                      if (!shouldHandlePress(event)) {
-                        return;
-                      }
-                      openExpandedShop(roll, event.currentTarget);
-                    }}
+                    {...createPressHandlers((event) =>
+                      openExpandedShop(roll, event.currentTarget as HTMLElement)
+                    )}
                     onKeyDown={handleShopKeyDown}
                     style={expandedStyle}
                   >
@@ -3154,10 +3180,10 @@ export default function App() {
                           type="button"
                           className="shop-sign__close"
                           aria-label="Close shop"
-                          onClick={(event) => {
+                          {...createPressHandlers((event) => {
                             event.stopPropagation();
                             setActiveRoll(null);
-                          }}
+                          })}
                         >
                           x
                         </button>
@@ -3330,10 +3356,10 @@ export default function App() {
                         type="button"
                         className="shop-door"
                         aria-label={`Place bet on ${rollLabels[roll]}`}
-                        onClick={(event) => {
+                        {...createPressHandlers((event) => {
                           event.stopPropagation();
                           openBetModal(roll);
-                        }}
+                        })}
                       >
                         <span className="shop-door__label">Bet</span>
                       </button>
@@ -3433,7 +3459,9 @@ export default function App() {
                         type="button"
                         className={`modifier-action modifier-action--${story.theme}`}
                         disabled={isPurchasing}
-                        onClick={() => handlePurchaseModifier(roll, entry, entryKey)}
+                        {...createPressHandlers(() =>
+                          handlePurchaseModifier(roll, entry, entryKey)
+                        )}
                       >
                         <span className="modifier-action__icon" aria-hidden="true">
                           {story.icon}
@@ -3456,7 +3484,7 @@ export default function App() {
           type="button"
           className="shop-overlay"
           aria-label="Close shop"
-          onClick={() => setActiveRoll(null)}
+          {...createPressHandlers(() => setActiveRoll(null))}
         />
       ) : null}
 
@@ -3471,7 +3499,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsTutorialOpen(false)}
+                {...createPressHandlers(() => setIsTutorialOpen(false))}
               >
                 Close
               </button>
@@ -3494,9 +3522,9 @@ export default function App() {
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={() =>
+                    {...createPressHandlers(() =>
                       setTutorialStepIndex((index) => Math.max(index - 1, 0))
-                    }
+                    )}
                   >
                     {tutorialStep.backLabel ?? "Back"}
                   </button>
@@ -3504,7 +3532,7 @@ export default function App() {
                 <button
                   className="primary-button"
                   type="button"
-                  onClick={() => {
+                  {...createPressHandlers(() => {
                     if (isTutorialLastStep) {
                       setIsTutorialOpen(false);
                       return;
@@ -3512,7 +3540,7 @@ export default function App() {
                     setTutorialStepIndex((index) =>
                       Math.min(index + 1, tutorialSteps.length - 1)
                     );
-                  }}
+                  })}
                 >
                   {tutorialStep.nextLabel ?? "Next"}
                 </button>
@@ -3532,7 +3560,11 @@ export default function App() {
                   Bet on {rollLabels[betTargetRoll]}
                 </h2>
               </div>
-              <button className="ghost-button" type="button" onClick={closeBetModal}>
+              <button
+                className="ghost-button"
+                type="button"
+                {...createPressHandlers(() => closeBetModal())}
+              >
                 Close
               </button>
             </div>
@@ -3561,7 +3593,7 @@ export default function App() {
                       <button
                         className="primary-button"
                         type="button"
-                        onClick={closeBetModal}
+                        {...createPressHandlers(() => closeBetModal())}
                       >
                         Done
                       </button>
@@ -3577,7 +3609,7 @@ export default function App() {
                           className={`bet-toggle__button${
                             betKind === "chip" ? " bet-toggle__button--active" : ""
                           }`}
-                          onClick={() => setBetKind("chip")}
+                          {...createPressHandlers(() => setBetKind("chip"))}
                         >
                           Chip
                         </button>
@@ -3586,7 +3618,7 @@ export default function App() {
                           className={`bet-toggle__button${
                             betKind === "strap" ? " bet-toggle__button--active" : ""
                           }`}
-                          onClick={() => setBetKind("strap")}
+                          {...createPressHandlers(() => setBetKind("strap"))}
                         >
                           Strap
                         </button>
@@ -3600,7 +3632,9 @@ export default function App() {
                             <button
                               type="button"
                               className="bet-variant-button"
-                              onClick={() => setIsStrapKindPickerOpen(true)}
+                              {...createPressHandlers(() =>
+                                setIsStrapKindPickerOpen(true)
+                              )}
                               disabled={closetGroups.length === 0}
                             >
                               {selectedBetGroup ? `${selectedBetGroup.emoji}` : "Choose type"}
@@ -3608,7 +3642,9 @@ export default function App() {
                             <button
                               type="button"
                               className="bet-variant-button"
-                              onClick={() => setIsStrapPickerOpen(true)}
+                              {...createPressHandlers(() =>
+                                setIsStrapPickerOpen(true)
+                              )}
                               disabled={!selectedBetGroup}
                             >
                               {selectedBetStrap
@@ -3652,7 +3688,7 @@ export default function App() {
                       <button
                         className="primary-button"
                         type="button"
-                        onClick={handlePlaceBet}
+                        {...createPressHandlers(() => handlePlaceBet())}
                         disabled={
                           isBetBusy ||
                           (betKind === "strap" && ownedStraps.length === 0)
@@ -3680,7 +3716,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsStrapKindPickerOpen(false)}
+                {...createPressHandlers(() => setIsStrapKindPickerOpen(false))}
               >
                 Close
               </button>
@@ -3695,10 +3731,10 @@ export default function App() {
                         key={`bet-kind-${group.kind}`}
                         type="button"
                         className={`bet-kind${isActive ? " bet-kind--active" : ""}`}
-                        onClick={() => {
+                        {...createPressHandlers(() => {
                           setBetStrapKind(group.kind);
                           setIsStrapKindPickerOpen(false);
-                        }}
+                        })}
                       >
                         <div className="bet-kind__icon" aria-hidden="true">
                           {group.emoji}
@@ -3729,7 +3765,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsStrapPickerOpen(false)}
+                {...createPressHandlers(() => setIsStrapPickerOpen(false))}
               >
                 Close
               </button>
@@ -3752,10 +3788,10 @@ export default function App() {
                           className={`bet-variant${
                             isActive ? " bet-variant--active" : ""
                           }`}
-                          onClick={() => {
+                          {...createPressHandlers(() => {
                             setBetStrapAssetId(entry.assetId);
                             setIsStrapPickerOpen(false);
-                          }}
+                          })}
                         >
                           <div className="bet-variant__title">
                             {formatRewardCompact(entry.strap)}
@@ -3790,7 +3826,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsClosetOpen(false)}
+                {...createPressHandlers(() => setIsClosetOpen(false))}
               >
                 Close
               </button>
@@ -3840,21 +3876,21 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsClosetOpen(true)}
+            {...createPressHandlers(() => setIsClosetOpen(true))}
           >
             STRAPS CLOSET
           </button>
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsGamesOpen(true)}
+            {...createPressHandlers(() => setIsGamesOpen(true))}
           >
             Previous games
           </button>
           <button
             className="ghost-button"
             type="button"
-            onClick={() => setIsInfoOpen(true)}
+            {...createPressHandlers(() => setIsInfoOpen(true))}
           >
             Game info
           </button>
@@ -3877,9 +3913,7 @@ export default function App() {
             className="mobile-nav__last mobile-nav__last-button"
             type="button"
             aria-label={rollButtonLabel}
-            onClick={handleRollPress}
-            onPointerUp={handleRollPress}
-            onTouchEnd={handleRollPress}
+            {...createPressHandlers(handleRollPress)}
             disabled={!isConnected || isRolling || walletStatus === "connecting"}
           >
             {displayedRoll ? (
@@ -3902,7 +3936,7 @@ export default function App() {
             type="button"
             aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
             aria-expanded={isMobileMenuOpen}
-            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+            {...createPressHandlers(() => setIsMobileMenuOpen((prev) => !prev))}
           >
             {isMobileMenuOpen ? "✕" : "☰"}
           </button>
@@ -3913,16 +3947,16 @@ export default function App() {
               type="button"
               className="mobile-nav__overlay"
               aria-label="Close menu"
-              onClick={() => setIsMobileMenuOpen(false)}
+              {...createPressHandlers(() => setIsMobileMenuOpen(false))}
             />
             <div className="mobile-nav__menu">
               <button
                 className="mobile-nav__action"
                 type="button"
-                onClick={() => {
+                {...createPressHandlers(() => {
                   setIsDiceHistoryOpen(true);
                   setIsMobileMenuOpen(false);
-                }}
+                })}
                 disabled={diceRolls.length === 0}
               >
                 Roll history
@@ -3930,30 +3964,30 @@ export default function App() {
               <button
                 className="mobile-nav__action"
                 type="button"
-                onClick={() => {
+                {...createPressHandlers(() => {
                   setIsClosetOpen(true);
                   setIsMobileMenuOpen(false);
-                }}
+                })}
               >
                 Closet
               </button>
               <button
                 className="mobile-nav__action"
                 type="button"
-                onClick={() => {
+                {...createPressHandlers(() => {
                   setIsGamesOpen(true);
                   setIsMobileMenuOpen(false);
-                }}
+                })}
               >
                 Previous games
               </button>
               <button
                 className="mobile-nav__action"
                 type="button"
-                onClick={() => {
+                {...createPressHandlers(() => {
                   setIsInfoOpen(true);
                   setIsMobileMenuOpen(false);
-                }}
+                })}
               >
                 Game info
               </button>
@@ -3973,7 +4007,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsGamesOpen(false)}
+                {...createPressHandlers(() => setIsGamesOpen(false))}
               >
                 Close
               </button>
@@ -3986,7 +4020,7 @@ export default function App() {
                     className={`modal-tab${
                       gamesTab === "recent" ? " modal-tab--active" : ""
                     }`}
-                    onClick={() => setGamesTab("recent")}
+                    {...createPressHandlers(() => setGamesTab("recent"))}
                   >
                     Recent games
                   </button>
@@ -3995,7 +4029,7 @@ export default function App() {
                     className={`modal-tab${
                       gamesTab === "unclaimed" ? " modal-tab--active" : ""
                     }`}
-                    onClick={() => setGamesTab("unclaimed")}
+                    {...createPressHandlers(() => setGamesTab("unclaimed"))}
                   >
                     Unclaimed games
                   </button>
@@ -4020,7 +4054,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsInfoOpen(false)}
+                {...createPressHandlers(() => setIsInfoOpen(false))}
               >
                 Close
               </button>
@@ -4105,7 +4139,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={closeClaimModifier}
+                {...createPressHandlers(() => closeClaimModifier())}
               >
                 Close
               </button>
@@ -4147,14 +4181,14 @@ export default function App() {
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={closeClaimModifier}
+                    {...createPressHandlers(() => closeClaimModifier())}
                   >
                     Cancel
                   </button>
                   <button
                     className="primary-button"
                     type="button"
-                    onClick={() => {
+                    {...createPressHandlers(() => {
                       const enabledModifiers = claimModifierOptions
                         .filter((modifier) =>
                           claimModifierSelection.includes(
@@ -4167,7 +4201,7 @@ export default function App() {
                         ]) as Array<[Roll, string]>;
                       closeClaimModifier();
                       handleClaimRewards(claimModifierEntry, enabledModifiers);
-                    }}
+                    })}
                   >
                     Claim rewards
                   </button>
@@ -4191,7 +4225,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={closeClaimResult}
+                {...createPressHandlers(() => closeClaimResult())}
               >
                 Close
               </button>
@@ -4285,7 +4319,7 @@ export default function App() {
                   <button
                     className="primary-button"
                     type="button"
-                    onClick={closeClaimResult}
+                    {...createPressHandlers(() => closeClaimResult())}
                   >
                     Done
                   </button>
@@ -4307,7 +4341,7 @@ export default function App() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => setIsDiceHistoryOpen(false)}
+                {...createPressHandlers(() => setIsDiceHistoryOpen(false))}
               >
                 Close
               </button>
