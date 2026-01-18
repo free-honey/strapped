@@ -1346,19 +1346,6 @@ export default function App() {
     assetId: chipAssetId,
   });
   const displayChipBalance = chipBalanceOverride ?? chipBalance;
-  const ensureNetworkSelected = useCallback(async () => {
-    if (!isConnected) {
-      return;
-    }
-    try {
-      await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Wallet network error";
-      setWalletError(message);
-      throw err;
-    }
-  }, [isConnected, networkKey, selectNetworkAsync]);
   const closetGroups = useMemo(() => {
     if (ownedStraps.length === 0) {
       return [];
@@ -2143,7 +2130,6 @@ export default function App() {
     }, 90);
 
     try {
-      await ensureNetworkSelected();
       const contract = createStrappedContract(wallet, networkKey);
       const response = await contract.functions.roll_dice().call();
       setRollTxId(response.transactionId);
@@ -2195,7 +2181,6 @@ export default function App() {
     setBetStatus("signing");
 
     try {
-      await ensureNetworkSelected();
       const contract = createStrappedContract(wallet, networkKey);
       const bet =
         betKind === "chip"
@@ -2247,7 +2232,6 @@ export default function App() {
     setModifierPurchaseStatus("signing");
 
     try {
-      await ensureNetworkSelected();
       const contract = createStrappedContract(wallet, networkKey);
       const response = await contract.functions
         .purchase_modifier(roll, entry.modifier)
@@ -2287,7 +2271,6 @@ export default function App() {
     setClaimStatus("signing");
 
     try {
-      await ensureNetworkSelected();
       let preChipBalance: bigint | null = null;
       try {
         const balance = await wallet.getBalance(chipAssetId);
