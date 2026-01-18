@@ -1476,32 +1476,6 @@ export default function App() {
     };
   }, [provider, isConnected]);
 
-  useEffect(() => {
-    if (!isConnected) {
-      return;
-    }
-
-    let cancelled = false;
-    const selectNetwork = async () => {
-      try {
-        await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        const message =
-          err instanceof Error ? err.message : "Wallet network error";
-        setWalletError(message);
-      }
-    };
-
-    selectNetwork();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, networkKey, selectNetworkAsync]);
-
   const fetchStraps = useCallback(async () => {
     if (!baseUrl) {
       setKnownStraps([]);
@@ -2094,11 +2068,29 @@ export default function App() {
         return false;
       }
       await connectAsync(fueletConnector.name);
+      await selectNetworkAsync({ url: FUEL_NETWORKS[networkKey].graphqlUrl });
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Wallet error";
       setWalletError(message);
       return false;
+    }
+  };
+
+  const handleNetworkChange = async (
+    event: React.ChangeEvent<HTMLSelectElement>
+  ) => {
+    const nextNetwork = event.target.value as FuelNetworkKey;
+    setNetworkKey(nextNetwork);
+    if (!isConnected) {
+      return;
+    }
+    try {
+      await selectNetworkAsync({ url: FUEL_NETWORKS[nextNetwork].graphqlUrl });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Wallet network error";
+      setWalletError(message);
     }
   };
 
@@ -2953,9 +2945,7 @@ export default function App() {
               id="network-select"
               className="network-picker__select"
               value={networkKey}
-              onChange={(event) =>
-                setNetworkKey(event.target.value as FuelNetworkKey)
-              }
+              onChange={handleNetworkChange}
               disabled={walletStatus === "connecting"}
             >
               {Object.entries(FUEL_NETWORKS).map(([key, network]) => (
