@@ -2912,7 +2912,6 @@ export default function App() {
             <button
               type="button"
               className="debug-console__clear"
-              onPointerDown={() => setDebugEntries([])}
               {...createPressHandlers(() => setDebugEntries([]))}
             >
               Clear
