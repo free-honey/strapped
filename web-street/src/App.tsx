@@ -1112,6 +1112,14 @@ export default function App() {
   const lastRollRef = useRef<Roll | null>(null);
   const debugBodyRef = useRef<HTMLDivElement | null>(null);
   const lastPressAtRef = useRef<number>(0);
+  const pressStateRef = useRef<{
+    x: number;
+    y: number;
+    time: number;
+    moved: boolean;
+    fired: boolean;
+    timerId: number | null;
+  } | null>(null);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1284,59 +1292,121 @@ export default function App() {
   const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
   const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
   const baseAssetTicker = FUEL_NETWORKS[networkKey].baseAssetTicker;
-  const shouldHandlePress = useCallback((event: SyntheticEvent) => {
-    const now = Date.now();
-    const pressWindowMs = 450;
-
-    if (event.type === "click") {
-      return now - lastPressAtRef.current >= pressWindowMs;
-    }
-
-    if (
-      event.type === "pointerdown" ||
-      event.type === "pointerup" ||
-      event.type === "touchstart" ||
-      event.type === "touchend"
-    ) {
-      if (now - lastPressAtRef.current < pressWindowMs) {
-        return false;
-      }
-      lastPressAtRef.current = now;
-    }
-
-    return true;
+  const shouldHandlePress = useCallback(() => {
+    return Date.now() - lastPressAtRef.current >= 350;
   }, []);
+  const getPressPoint = (event: SyntheticEvent) => {
+    const nativeEvent = event.nativeEvent as {
+      clientX?: number;
+      clientY?: number;
+      touches?: Array<{ clientX: number; clientY: number }>;
+      changedTouches?: Array<{ clientX: number; clientY: number }>;
+    };
+    if (nativeEvent.touches && nativeEvent.touches.length > 0) {
+      const touch = nativeEvent.touches[0];
+      return { x: touch.clientX, y: touch.clientY };
+    }
+    if (nativeEvent.changedTouches && nativeEvent.changedTouches.length > 0) {
+      const touch = nativeEvent.changedTouches[0];
+      return { x: touch.clientX, y: touch.clientY };
+    }
+    if (typeof nativeEvent.clientX === "number") {
+      return { x: nativeEvent.clientX, y: nativeEvent.clientY };
+    }
+    return null;
+  };
+  const startPress = (event: SyntheticEvent, handler: (event: SyntheticEvent) => void) => {
+    const point = getPressPoint(event);
+    if (!point) {
+      return;
+    }
+    event.persist?.();
+    const state = {
+      x: point.x,
+      y: point.y,
+      time: Date.now(),
+      moved: false,
+      fired: false,
+      timerId: null,
+    };
+    state.timerId = window.setTimeout(() => {
+      const current = pressStateRef.current;
+      if (!current || current !== state || current.moved || current.fired) {
+        return;
+      }
+      if (!shouldHandlePress()) {
+        return;
+      }
+      lastPressAtRef.current = Date.now();
+      current.fired = true;
+      handler(event);
+    }, 350);
+    pressStateRef.current = state;
+  };
+  const movePress = (event: SyntheticEvent) => {
+    const state = pressStateRef.current;
+    if (!state || state.moved) {
+      return;
+    }
+    const point = getPressPoint(event);
+    if (!point) {
+      return;
+    }
+    const dx = point.x - state.x;
+    const dy = point.y - state.y;
+    if (Math.hypot(dx, dy) > 12) {
+      state.moved = true;
+      if (state.timerId !== null) {
+        window.clearTimeout(state.timerId);
+      }
+    }
+  };
+  const endPress = (event: SyntheticEvent, handler: (event: SyntheticEvent) => void) => {
+    const state = pressStateRef.current;
+    if (state && state.timerId !== null) {
+      window.clearTimeout(state.timerId);
+    }
+    const moved = state?.moved ?? false;
+    const fired = state?.fired ?? false;
+    const duration = state ? Date.now() - state.time : 0;
+    pressStateRef.current = null;
+    if (moved || fired || duration > 600) {
+      return;
+    }
+    if (!shouldHandlePress()) {
+      return;
+    }
+    lastPressAtRef.current = Date.now();
+    handler(event);
+  };
   const createPressHandlers = useCallback(
     (handler: (event: SyntheticEvent) => void) => ({
       onClick: (event: SyntheticEvent) => {
-        if (!shouldHandlePress(event)) {
-          return;
-        }
-        handler(event);
+        endPress(event, handler);
       },
       onPointerDown: (event: SyntheticEvent) => {
-        if (!shouldHandlePress(event)) {
-          return;
-        }
-        handler(event);
+        startPress(event, handler);
+      },
+      onPointerMove: (event: SyntheticEvent) => {
+        movePress(event);
       },
       onPointerUp: (event: SyntheticEvent) => {
-        if (!shouldHandlePress(event)) {
-          return;
-        }
-        handler(event);
+        endPress(event, handler);
+      },
+      onPointerCancel: () => {
+        pressStateRef.current = null;
       },
       onTouchStart: (event: SyntheticEvent) => {
-        if (!shouldHandlePress(event)) {
-          return;
-        }
-        handler(event);
+        startPress(event, handler);
+      },
+      onTouchMove: (event: SyntheticEvent) => {
+        movePress(event);
       },
       onTouchEnd: (event: SyntheticEvent) => {
-        if (!shouldHandlePress(event)) {
-          return;
-        }
-        handler(event);
+        endPress(event, handler);
+      },
+      onTouchCancel: () => {
+        pressStateRef.current = null;
       },
     }),
     [shouldHandlePress]
@@ -1807,6 +1877,13 @@ export default function App() {
       Boolean(claimModifierEntry) ||
       Boolean(claimResult)
   );
+
+  useEffect(() => {
+    document.body.classList.toggle("modal-open", isAnyModalOpen);
+    return () => {
+      document.body.classList.remove("modal-open");
+    };
+  }, [isAnyModalOpen]);
 
   useEffect(() => {
     if (!isAnyModalOpen) {

@@ -37,6 +37,22 @@ body {
   background-attachment: fixed;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
+body.modal-open .street-header,
+body.modal-open .street-stage,
+body.modal-open .street-footer,
+body.modal-open .mobile-nav {
+  pointer-events: none;
+}
+
+body.modal-open .modal-overlay,
+body.modal-open .shop-overlay {
+  pointer-events: auto;
+}
+
 body.night {
   --sky-top: #0b1a3a;
   --sky-mid: #142b59;
@@ -53,6 +69,11 @@ button {
   border: none;
   background: none;
   cursor: pointer;
+}
+
+button,
+[role="button"] {
+  touch-action: manipulation;
 }
 
 .street-app {
@@ -1735,6 +1756,7 @@ body.night .shop-door {
   max-height: 60vh;
   overflow-y: auto;
   padding-right: 6px;
+  overscroll-behavior: contain;
 }
 
 .modal--games .modal__body--scroll {
@@ -2744,5 +2766,33 @@ body.night .modal--shop-4 {
 
   .shop-dangling__price {
     display: none;
+  }
+
+  .ghost-button,
+  .primary-button,
+  .mobile-nav__action,
+  .mobile-nav__menu-toggle,
+  .bet-toggle__button,
+  .bet-variant-button,
+  .bet-kind,
+  .bet-variant {
+    min-height: 44px;
+  }
+
+  .shop-sign__close {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .shop-facade {
+    --door-width: 54px;
+  }
+
+  .shop-door {
+    min-height: 96px;
   }
 }
