@@ -1102,6 +1102,7 @@ export default function App() {
   const rollAnimationOriginCountRef = useRef<number>(0);
   const rollCountRef = useRef<number>(0);
   const lastRollRef = useRef<Roll | null>(null);
+  const debugBodyRef = useRef<HTMLDivElement | null>(null);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
   const lastObservedRollCountRef = useRef<number>(0);
@@ -1260,6 +1261,16 @@ export default function App() {
       window.clearInterval(heartbeatId);
     };
   }, [showDebugConsole, appendDebugEntry]);
+
+  useEffect(() => {
+    if (!showDebugConsole) {
+      return;
+    }
+    const debugBody = debugBodyRef.current;
+    if (debugBody) {
+      debugBody.scrollTop = debugBody.scrollHeight;
+    }
+  }, [debugEntries, showDebugConsole]);
   const walletAddress = account ?? null;
   const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
   const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
@@ -2827,16 +2838,17 @@ export default function App() {
       {showDebugConsole ? (
         <div className="debug-console">
           <div className="debug-console__header">
-            <span>Debug console</span>
+            <span>Debug console ({debugEntries.length})</span>
             <button
               type="button"
               className="debug-console__clear"
               onClick={() => setDebugEntries([])}
+              onPointerDown={() => setDebugEntries([])}
             >
               Clear
             </button>
           </div>
-          <div className="debug-console__body">
+          <div className="debug-console__body" ref={debugBodyRef}>
             {debugEntries.length > 0
               ? debugEntries.join("\n")
               : "Debug console enabled."}

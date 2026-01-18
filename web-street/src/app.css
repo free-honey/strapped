@@ -89,7 +89,6 @@ button {
   font-size: 12px;
   line-height: 1.35;
   max-height: 200px;
-  overflow: hidden;
   z-index: 5;
 }
 
@@ -119,6 +118,7 @@ button {
   word-break: break-word;
   overflow-y: auto;
   padding-right: 4px;
+  max-height: 150px;
 }
 
 .street-header__menu-button {
