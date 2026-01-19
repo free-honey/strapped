@@ -351,9 +351,10 @@ button,
 }
 
 .mobile-nav__dice {
-  width: 64px;
+  width: 72px;
   height: 64px;
   margin: 0;
+  padding: 6px;
 }
 
 .mobile-nav__menu-toggle {
@@ -373,12 +374,27 @@ button,
 
 .mobile-nav__dice .dice-label {
   display: block;
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.08em;
 }
 
-.mobile-nav__dice .dice-face {
-  font-size: 28px;
+.mobile-nav__dice .roll-total {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 20px;
+  color: #fff;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.mobile-nav__dice .dice-pair {
+  gap: 4px;
+}
+
+.mobile-nav__dice .dice-image {
+  width: 24px;
+  height: 24px;
 }
 
 .mobile-nav__menu {
@@ -480,7 +496,7 @@ body.night .street-ground {
   border: 2px solid #2e221a;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 12px 30px rgba(27, 18, 12, 0.18);
-  min-width: 240px;
+  min-width: 260px;
 }
 
 .roll-panel__row {
@@ -618,23 +634,53 @@ body.night .street-ground {
   image-rendering: pixelated;
 }
 
-.dice-card--single {
+.dice-card--pair {
   position: relative;
   left: auto;
   top: auto;
   transform: none;
-  width: 104px;
-  height: 116px;
+  width: 190px;
+  height: 150px;
+  padding: 10px 12px;
+  gap: 6px;
 }
 
 .dice-card--land {
   animation: rollLand 0.45s ease-out;
 }
 
-.dice-face {
+.roll-total {
   font-size: 36px;
   font-weight: 700;
   color: #1e1510;
+  line-height: 1;
+}
+
+.roll-total--pulse {
+  animation: rollPulse 0.45s ease-out;
+}
+
+.dice-pair {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.dice-image {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+}
+
+.dice-image--pulse {
+  animation: rollPulse 0.45s ease-out;
+}
+
+.dice-card.mobile-nav__dice {
+  width: 72px;
+  height: 64px;
+  padding: 6px;
 }
 
 .dice-label {
@@ -2421,6 +2467,18 @@ body.night .modal--shop-4 {
   }
 }
 
+@keyframes rollPulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 @keyframes bob {
   0%,
   100% {
@@ -2459,6 +2517,11 @@ body.night .modal--shop-4 {
   .dice-card {
     width: 92px;
     height: 104px;
+  }
+
+  .dice-card--pair {
+    width: 170px;
+    height: 136px;
   }
 
   .roll-panel {
