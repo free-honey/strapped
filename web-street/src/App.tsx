@@ -4198,13 +4198,7 @@ export default function App() {
                   rollLandPulse ? " dice-card--land" : ""
                 }`}
               >
-                <div
-                  className={`roll-total${
-                    rollLandPulse ? " roll-total--pulse" : ""
-                  }`}
-                >
-                  {liveTotal}
-                </div>
+                <div className="roll-total">{liveTotal}</div>
                 <div className="dice-pair">
                   <img
                     className={`dice-image${

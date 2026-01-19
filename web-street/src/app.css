@@ -379,13 +379,7 @@ button,
 }
 
 .mobile-nav__dice .roll-total {
-  position: absolute;
-  top: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 20px;
-  color: #fff;
-  text-shadow: 0 0 6px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+  display: none;
 }
 
 .mobile-nav__dice .dice-pair {
