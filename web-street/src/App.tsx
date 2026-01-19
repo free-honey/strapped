@@ -195,6 +195,107 @@ const rollNumbers: Record<Roll, number> = {
   Twelve: 12,
 };
 
+const rollByNumber: Record<number, Roll> = {
+  2: "Two",
+  3: "Three",
+  4: "Four",
+  5: "Five",
+  6: "Six",
+  7: "Seven",
+  8: "Eight",
+  9: "Nine",
+  10: "Ten",
+  11: "Eleven",
+  12: "Twelve",
+};
+
+const diceFaceAssets: Record<number, string> = {
+  1: "/dice/dice-six-faces-one.svg",
+  2: "/dice/dice-six-faces-two.svg",
+  3: "/dice/dice-six-faces-three.svg",
+  4: "/dice/dice-six-faces-four.svg",
+  5: "/dice/dice-six-faces-five.svg",
+  6: "/dice/dice-six-faces-six.svg",
+};
+
+const diceCombosByTotal: Record<number, [number, number][]> = {
+  2: [[1, 1]],
+  3: [
+    [1, 2],
+    [2, 1],
+  ],
+  4: [
+    [1, 3],
+    [2, 2],
+    [3, 1],
+  ],
+  5: [
+    [1, 4],
+    [2, 3],
+    [3, 2],
+    [4, 1],
+  ],
+  6: [
+    [1, 5],
+    [2, 4],
+    [3, 3],
+    [4, 2],
+    [5, 1],
+  ],
+  7: [
+    [1, 6],
+    [2, 5],
+    [3, 4],
+    [4, 3],
+    [5, 2],
+    [6, 1],
+  ],
+  8: [
+    [2, 6],
+    [3, 5],
+    [4, 4],
+    [5, 3],
+    [6, 2],
+  ],
+  9: [
+    [3, 6],
+    [4, 5],
+    [5, 4],
+    [6, 3],
+  ],
+  10: [
+    [4, 6],
+    [5, 5],
+    [6, 4],
+  ],
+  11: [
+    [5, 6],
+    [6, 5],
+  ],
+  12: [[6, 6]],
+};
+
+const fallbackDicePair: [number, number] = [3, 4];
+
+const randomDieFace = () => Math.floor(Math.random() * 6) + 1;
+
+const pickDicePairForTotal = (total: number): [number, number] => {
+  const options = diceCombosByTotal[total];
+  if (!options || options.length === 0) {
+    return fallbackDicePair;
+  }
+  const index = Math.floor(Math.random() * options.length);
+  return options[index] ?? fallbackDicePair;
+};
+
+const pickDicePairForRoll = (roll: Roll) => pickDicePairForTotal(rollNumbers[roll]);
+
+const sampleDiceSettleMs = () => {
+  const min = 500;
+  const max = 2500;
+  return Math.round(min + Math.random() * (max - min));
+};
+
 const strapEmojis: Record<string, string> = {
   Shirt: "👕",
   Pants: "👖",
@@ -1095,8 +1196,7 @@ export default function App() {
   const [claimModifierSelection, setClaimModifierSelection] = useState<string[]>(
     []
   );
-  const [isRollAnimating, setIsRollAnimating] = useState(false);
-  const [rollingFace, setRollingFace] = useState<Roll | null>(null);
+  const [diceFaces, setDiceFaces] = useState<[number, number]>(fallbackDicePair);
   const [rollLandPulse, setRollLandPulse] = useState(false);
   const [rollFallbackFace, setRollFallbackFace] = useState<Roll | null>("Seven");
   const [chipBalanceOverride, setChipBalanceOverride] = useState<string | null>(
@@ -1104,10 +1204,11 @@ export default function App() {
   );
   const [shopRiseKey, setShopRiseKey] = useState(0);
   const rollAnimationRef = useRef<number | null>(null);
-  const rollAnimationEndRef = useRef<number>(0);
-  const rollAnimationOriginRef = useRef<Roll | null>(null);
-  const rollAnimationOriginCountRef = useRef<number>(0);
-  const rollCountRef = useRef<number>(0);
+  const diceTargetRef = useRef<[number, number] | null>(null);
+  const diceSettledRef = useRef<[boolean, boolean]>([true, true]);
+  const diceStopTimeoutsRef = useRef<number[]>([]);
+  const rollDicePairCountRef = useRef<number>(0);
+  const hasInitializedRollRef = useRef(false);
   const lastRollRef = useRef<Roll | null>(null);
   const debugBodyRef = useRef<HTMLDivElement | null>(null);
   const lastPressAtRef = useRef<number>(0);
@@ -1123,7 +1224,6 @@ export default function App() {
   const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
   const previousRollRef = useRef<Roll | null>(null);
   const lastGameIdRef = useRef<number | null>(null);
-  const lastObservedRollCountRef = useRef<number>(0);
   const [expandedOrigin, setExpandedOrigin] = useState<{
     roll: Roll;
     originLeft: number;
@@ -2146,8 +2246,12 @@ export default function App() {
   const betTargetVariant = betTargetIndex >= 0 ? betTargetIndex % 5 : 0;
   const baseFallbackRoll =
     snapshot && snapshot.rolls.length === 0 ? "Seven" : rollFallbackFace;
-  const displayedRoll =
-    isRollAnimating && rollingFace ? rollingFace : lastRoll ?? baseFallbackRoll;
+  const displayedRoll = lastRoll ?? baseFallbackRoll;
+  const liveTotal = diceFaces[0] + diceFaces[1];
+  const liveRoll = rollByNumber[liveTotal];
+  const isFreshGame = snapshot ? snapshot.rolls.length === 0 : false;
+  const displayLabel =
+    liveTotal === 7 ? (isFreshGame ? "NEW GAME :)" : "SEVEN") : rollLabels[liveRoll];
   const availableBetCapacity = useMemo(() => {
     if (!snapshot) {
       return null;
@@ -2158,6 +2262,85 @@ export default function App() {
   }, [snapshot]);
 
   const getRollIndex = (roll: Roll) => rollOrder.indexOf(roll);
+
+  const clearDiceTimers = useCallback(() => {
+    diceStopTimeoutsRef.current.forEach((timeoutId) => {
+      window.clearTimeout(timeoutId);
+    });
+    diceStopTimeoutsRef.current = [];
+  }, []);
+
+  const stopRollAnimation = useCallback(
+    (showFallback: boolean, pulse: boolean) => {
+      diceTargetRef.current = null;
+      diceSettledRef.current = [true, true];
+      clearDiceTimers();
+      if (rollAnimationRef.current !== null) {
+        window.clearInterval(rollAnimationRef.current);
+        rollAnimationRef.current = null;
+      }
+      if (showFallback) {
+        setRollFallbackFace("Seven");
+        setDiceFaces(fallbackDicePair);
+      }
+      if (pulse) {
+        setRollLandPulse(true);
+      }
+    },
+    [clearDiceTimers]
+  );
+
+  const startRollAnimation = useCallback(() => {
+    diceSettledRef.current = [false, false];
+    diceTargetRef.current = null;
+    clearDiceTimers();
+    if (rollAnimationRef.current !== null) {
+      window.clearInterval(rollAnimationRef.current);
+    }
+    setDiceFaces([randomDieFace(), randomDieFace()]);
+    rollAnimationRef.current = window.setInterval(() => {
+      setDiceFaces((prev) => {
+        const current = prev ?? fallbackDicePair;
+        const [leftSettled, rightSettled] = diceSettledRef.current;
+        return [
+          leftSettled ? current[0] : randomDieFace(),
+          rightSettled ? current[1] : randomDieFace(),
+        ];
+      });
+    }, 130);
+  }, [clearDiceTimers]);
+
+  const scheduleDiceSettle = useCallback(
+    (target: [number, number]) => {
+      startRollAnimation();
+      diceTargetRef.current = target;
+      diceSettledRef.current = [false, false];
+      const delays = [sampleDiceSettleMs(), sampleDiceSettleMs()];
+      delays.forEach((delay, index) => {
+        const timeoutId = window.setTimeout(() => {
+          const currentTarget = diceTargetRef.current;
+          if (!currentTarget) {
+            return;
+          }
+          diceSettledRef.current = [
+            index === 0 ? true : diceSettledRef.current[0],
+            index === 1 ? true : diceSettledRef.current[1],
+          ];
+          setDiceFaces((prev) => {
+            const current = prev ?? fallbackDicePair;
+            const next: [number, number] = [current[0], current[1]];
+            next[index] = currentTarget[index];
+            return next;
+          });
+          if (diceSettledRef.current[0] && diceSettledRef.current[1]) {
+            stopRollAnimation(false, true);
+          }
+        }, delay);
+        diceStopTimeoutsRef.current.push(timeoutId);
+      });
+    },
+    [startRollAnimation, stopRollAnimation]
+  );
 
   const triggerShopRise = useCallback(() => {
     setShopRiseKey((previous) => previous + 1);
@@ -2213,21 +2396,8 @@ export default function App() {
     }
 
     setRollStatus("signing");
-    setIsRollAnimating(true);
-    rollAnimationOriginRef.current = lastRoll;
-    rollAnimationOriginCountRef.current = rollCount;
-    rollAnimationEndRef.current = Date.now() + 1000;
+    startRollAnimation();
     setRollFallbackFace(null);
-    if (rollAnimationRef.current !== null) {
-      window.clearInterval(rollAnimationRef.current);
-    }
-    rollAnimationRef.current = window.setInterval(() => {
-      setRollingFace((prev) => {
-        const currentIndex = prev ? rollOrder.indexOf(prev) : -1;
-        const nextIndex = (currentIndex + 1) % rollOrder.length;
-        return rollOrder[nextIndex] ?? rollOrder[0];
-      });
-    }, 90);
 
     try {
       const contract = createStrappedContract(wallet, networkKey);
@@ -2683,27 +2853,9 @@ export default function App() {
   const isTutorialFirstStep = tutorialStepIndex === 0;
   const isTutorialLastStep = tutorialStepIndex === tutorialSteps.length - 1;
 
-  const stopRollAnimation = (showFallback: boolean, pulse: boolean) => {
-    setIsRollAnimating(false);
-    setRollingFace(null);
-    rollAnimationOriginRef.current = null;
-    rollAnimationOriginCountRef.current = rollCountRef.current;
-    if (rollAnimationRef.current !== null) {
-      window.clearInterval(rollAnimationRef.current);
-      rollAnimationRef.current = null;
-    }
-    if (showFallback) {
-      setRollFallbackFace("Seven");
-    }
-    if (pulse) {
-      setRollLandPulse(true);
-    }
-  };
-
   useEffect(() => {
-    rollCountRef.current = rollCount;
     lastRollRef.current = lastRoll;
-  }, [rollCount, lastRoll]);
+  }, [lastRoll]);
 
   useEffect(() => {
     const previousRoll = previousRollRef.current;
@@ -2714,12 +2866,31 @@ export default function App() {
   }, [lastRoll, triggerShopRise]);
 
   useEffect(() => {
-    const previousCount = lastObservedRollCountRef.current;
-    lastObservedRollCountRef.current = rollCount;
-    if (!isRollAnimating && rollCount > previousCount) {
-      setRollLandPulse(true);
+    if (!snapshot) {
+      return;
     }
-  }, [rollCount, isRollAnimating]);
+    if (!hasInitializedRollRef.current) {
+      hasInitializedRollRef.current = true;
+      rollDicePairCountRef.current = rollCount;
+      if (lastRoll) {
+        const target = pickDicePairForRoll(lastRoll);
+        setDiceFaces(target);
+      } else {
+        setDiceFaces(fallbackDicePair);
+      }
+      return;
+    }
+    if (rollCount === rollDicePairCountRef.current) {
+      return;
+    }
+    rollDicePairCountRef.current = rollCount;
+    if (!lastRoll) {
+      setDiceFaces(fallbackDicePair);
+      return;
+    }
+    const target = pickDicePairForRoll(lastRoll);
+    scheduleDiceSettle(target);
+  }, [lastRoll, rollCount, scheduleDiceSettle, snapshot]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -2744,21 +2915,6 @@ export default function App() {
       document.body.classList.remove("night");
     };
   }, [isNight]);
-
-  useEffect(() => {
-    if (!isRollAnimating) {
-      return;
-    }
-    const origin = rollAnimationOriginRef.current;
-    const originCount = rollAnimationOriginCountRef.current;
-    const hasNewRoll =
-      rollCount > originCount ||
-      rollCount < originCount ||
-      (origin && lastRoll && origin !== lastRoll);
-    if (hasNewRoll) {
-      stopRollAnimation(false, true);
-    }
-  }, [isRollAnimating, lastRoll, rollCount]);
 
   useEffect(() => {
     if (rollStatus !== "error") {
@@ -3109,17 +3265,40 @@ export default function App() {
         <div className="roll-panel">
           <div className="roll-panel__row roll-panel__row--main">
             <div className="roll-panel__last">
-              <span className="roll-panel__label">Last roll</span>
               {displayedRoll ? (
                 <div
-                  className={`dice-card dice-card--single${
+                  className={`dice-card dice-card--pair${
                     rollLandPulse ? " dice-card--land" : ""
                   }`}
                 >
-                  <div className="dice-face">{rollNumbers[displayedRoll]}</div>
-                  <div className="dice-label">
-                    {lastRoll ? rollLabels[displayedRoll] : "NEW GAME :)"}
+                  <div
+                    className={`roll-total${
+                      rollLandPulse ? " roll-total--pulse" : ""
+                    }`}
+                  >
+                    {liveTotal}
                   </div>
+                  <div className="dice-pair">
+                    <img
+                      className={`dice-image${
+                        rollLandPulse ? " dice-image--pulse" : ""
+                      }`}
+                      src={
+                        diceFaceAssets[diceFaces[0]] ?? diceFaceAssets[1]
+                      }
+                      alt={`Die showing ${diceFaces[0]}`}
+                    />
+                    <img
+                      className={`dice-image${
+                        rollLandPulse ? " dice-image--pulse" : ""
+                      }`}
+                      src={
+                        diceFaceAssets[diceFaces[1]] ?? diceFaceAssets[1]
+                      }
+                      alt={`Die showing ${diceFaces[1]}`}
+                    />
+                  </div>
+                  <div className="dice-label">{displayLabel}</div>
                 </div>
               ) : null}
             </div>
@@ -4015,14 +4194,28 @@ export default function App() {
           >
             {displayedRoll ? (
               <div
-                className={`dice-card dice-card--single mobile-nav__dice${
+                className={`dice-card dice-card--pair mobile-nav__dice${
                   rollLandPulse ? " dice-card--land" : ""
                 }`}
               >
-                <div className="dice-face">{rollNumbers[displayedRoll]}</div>
-                <div className="dice-label">
-                  {lastRoll ? rollLabels[displayedRoll] : "NEW GAME :)"}
+                <div className="roll-total">{liveTotal}</div>
+                <div className="dice-pair">
+                  <img
+                    className={`dice-image${
+                      rollLandPulse ? " dice-image--pulse" : ""
+                    }`}
+                    src={diceFaceAssets[diceFaces[0]] ?? diceFaceAssets[1]}
+                    alt={`Die showing ${diceFaces[0]}`}
+                  />
+                  <img
+                    className={`dice-image${
+                      rollLandPulse ? " dice-image--pulse" : ""
+                    }`}
+                    src={diceFaceAssets[diceFaces[1]] ?? diceFaceAssets[1]}
+                    alt={`Die showing ${diceFaces[1]}`}
+                  />
                 </div>
+                <div className="dice-label">{displayLabel}</div>
               </div>
             ) : (
               <div className="dice-placeholder mobile-nav__dice">—</div>
