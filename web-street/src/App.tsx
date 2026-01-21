@@ -1870,8 +1870,7 @@ export default function App() {
   }, [isClosetOpen, fetchStraps, refreshBalances]);
 
   useEffect(() => {
-    if (!baseUrl || !walletAddress || !snapshot) {
-      setGameHistory([]);
+    if (!baseUrl || !walletAddress || !snapshot || !isGamesOpen) {
       return;
     }
 
@@ -1935,7 +1934,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [baseUrl, walletAddress, snapshot]);
+  }, [baseUrl, walletAddress, snapshot?.game_id, isGamesOpen]);
   const [rollStatus, setRollStatus] = useState<
     "idle" | "signing" | "pending" | "success" | "error"
   >("idle");
@@ -2687,7 +2686,7 @@ export default function App() {
     (group) => group.kind === betStrapKind
   );
   useEffect(() => {
-    if (!baseUrl || !walletAddress) {
+    if (!baseUrl || !walletAddress || gamesTab !== "unclaimed") {
       setUnclaimedGames([]);
       return;
     }
@@ -2708,7 +2707,9 @@ export default function App() {
           query.set("cursor", String(cursor));
         }
         const response = await fetch(
-          `${baseUrl}/account/${walletAddress}/unclaimed?${query.toString()}`
+          `${baseUrl}/account/${encodeURIComponent(
+            walletAddress
+          )}/unclaimed?${query.toString()}`
         );
         if (!response.ok) {
           throw new Error(`unclaimed games responded with ${response.status}`);
@@ -2738,8 +2739,28 @@ export default function App() {
             record.historical_snapshot
           );
           if (!history) {
-            continue;
+            const rawHistory = record.historical_snapshot as
+              | Record<string, unknown>
+              | undefined;
+            const rolls = Array.isArray(rawHistory?.rolls)
+              ? (rawHistory?.rolls as Roll[])
+              : [];
+            if (rolls.length === 0) {
+              continue;
+            }
+          if (account && hasClaimableBets(rolls, account.per_roll_bets)) {
+            entries.push({
+              gameId,
+              rolls,
+              modifiers: [],
+              strapRewards: [],
+              account,
+              claimed: false,
+            });
           }
+          continue;
+        }
+        if (account && hasClaimableBets(history.rolls, account.per_roll_bets)) {
           entries.push({
             gameId,
             rolls: history.rolls,
@@ -2748,6 +2769,7 @@ export default function App() {
             account,
             claimed: false,
           });
+        }
         }
         lastCursor = cursor;
         cursor =
@@ -2776,7 +2798,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [baseUrl, walletAddress, claimStatus]);
+  }, [baseUrl, walletAddress, claimStatus, gamesTab]);
 
   const tutorialSteps: TutorialStep[] = [
     {
