@@ -15,8 +15,8 @@ use fuels::types::Identity;
 use std::{
     collections::{
         BTreeMap,
-        HashSet,
         HashMap,
+        HashSet,
     },
     sync::{
         Arc,

@@ -2287,7 +2287,9 @@ async fn snapshot_worker(
     let mut ticker = time::interval(poll_interval);
     let mut unclaimed_ticker = time::interval(Duration::from_secs(10));
     fetch_snapshot(&indexer, &identity, &snapshot_tx).await?;
-    if let Err(err) = fetch_unclaimed(&indexer, &identity, &mut shutdown_rx, &snapshot_tx).await {
+    if let Err(err) =
+        fetch_unclaimed(&indexer, &identity, &mut shutdown_rx, &snapshot_tx).await
+    {
         warn!(?err, "unclaimed snapshot fetch failed");
     }
 

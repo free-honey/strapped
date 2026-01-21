@@ -1,10 +1,12 @@
 use crate::{
     Result,
-    app::query_api::{
-        Query,
-        QueryAPI,
+    app::{
+        query_api::{
+            Query,
+            QueryAPI,
+        },
+        snapshot_storage::SortOrder,
     },
-    app::snapshot_storage::SortOrder,
     events::Strap,
     snapshot::{
         ALL_ROLLS,
@@ -287,13 +289,8 @@ async fn handle_unclaimed_games(
         .map_err(|_| UrlencodedError::Payload(PayloadError::EncodingCorrupted))?;
     let identity = Identity::Address(inner);
     let (response_sender, response_receiver) = oneshot::channel();
-    let query = Query::unclaimed_games(
-        identity,
-        order,
-        limit,
-        params.cursor,
-        response_sender,
-    );
+    let query =
+        Query::unclaimed_games(identity, order, limit, params.cursor, response_sender);
 
     sender.get_ref().clone().send(query).await.map_err(|_| {
         ErrorInternalServerError("unable to forward unclaimed games query")
@@ -339,17 +336,15 @@ async fn handle_bet_history(
         .map_err(|_| UrlencodedError::Payload(PayloadError::EncodingCorrupted))?;
     let identity = Identity::Address(inner);
     let (response_sender, response_receiver) = oneshot::channel();
-    let query = Query::bet_history(
-        identity,
-        order,
-        limit,
-        params.cursor,
-        response_sender,
-    );
+    let query =
+        Query::bet_history(identity, order, limit, params.cursor, response_sender);
 
-    sender.get_ref().clone().send(query).await.map_err(|_| {
-        ErrorInternalServerError("unable to forward bet history query")
-    })?;
+    sender
+        .get_ref()
+        .clone()
+        .send(query)
+        .await
+        .map_err(|_| ErrorInternalServerError("unable to forward bet history query"))?;
 
     let page = response_receiver
         .await

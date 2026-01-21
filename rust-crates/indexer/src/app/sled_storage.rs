@@ -259,7 +259,9 @@ impl SledSnapshotStorage {
     fn bettors_by_game_identity(key: &[u8]) -> Option<String> {
         let pos = key.iter().rposition(|byte| *byte == b'|')?;
         let suffix = &key[pos + 1..];
-        std::str::from_utf8(suffix).ok().map(|value| value.to_string())
+        std::str::from_utf8(suffix)
+            .ok()
+            .map(|value| value.to_string())
     }
 
     fn unclaimed_key(account: &Identity, game_id: u32) -> Vec<u8> {
@@ -381,11 +383,11 @@ impl SnapshotStorage for SledSnapshotStorage {
         let mut has_more = false;
 
         let iter = self.bet_history_tree.range(prefix.clone()..range_end);
-        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> = match order
-        {
-            SortOrder::Asc => Box::new(iter),
-            SortOrder::Desc => Box::new(iter.rev()),
-        };
+        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> =
+            match order {
+                SortOrder::Asc => Box::new(iter),
+                SortOrder::Desc => Box::new(iter.rev()),
+            };
 
         for entry in iter {
             let (key, _) = entry.context("iterate bet history")?;
@@ -477,11 +479,11 @@ impl SnapshotStorage for SledSnapshotStorage {
         let mut has_more = false;
 
         let iter = self.unclaimed_tree.range(prefix.clone()..range_end);
-        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> = match order
-        {
-            SortOrder::Asc => Box::new(iter),
-            SortOrder::Desc => Box::new(iter.rev()),
-        };
+        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> =
+            match order {
+                SortOrder::Asc => Box::new(iter),
+                SortOrder::Desc => Box::new(iter.rev()),
+            };
 
         for entry in iter {
             let (key, _) = entry.context("iterate unclaimed games")?;
