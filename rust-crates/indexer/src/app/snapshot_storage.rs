@@ -10,6 +10,18 @@ use fuels::{
     types::Identity,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnclaimedGameIdPage {
+    pub game_ids: Vec<u32>,
+    pub next_cursor: Option<u32>,
+}
+
 pub trait SnapshotStorage {
     /// retrieve latest snapshot along with its block height
     fn latest_snapshot(&self) -> crate::Result<(OverviewSnapshot, u32)>;
@@ -26,6 +38,26 @@ pub trait SnapshotStorage {
         account: &Identity,
         game_id: u32,
     ) -> crate::Result<Option<(AccountSnapshot, u32)>>;
+
+    /// list unclaimed game ids for the account
+    fn unclaimed_game_ids(
+        &self,
+        account: &Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> crate::Result<UnclaimedGameIdPage>;
+
+    /// mark a game as unclaimed for the account
+    fn mark_unclaimed(
+        &mut self,
+        account: &Identity,
+        game_id: u32,
+        height: u32,
+    ) -> crate::Result<()>;
+
+    /// clear the unclaimed marker for the account/game
+    fn clear_unclaimed(&mut self, account: &Identity, game_id: u32) -> crate::Result<()>;
 
     /// write or overwrite snapshot at given block height
     fn update_snapshot(

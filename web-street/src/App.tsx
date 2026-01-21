@@ -1253,6 +1253,7 @@ export default function App() {
   const [knownStraps, setKnownStraps] = useState<StrapMetadata[]>([]);
   const [ownedStraps, setOwnedStraps] = useState<OwnedStrap[]>([]);
   const [gameHistory, setGameHistory] = useState<HistoryEntry[]>([]);
+  const [unclaimedGames, setUnclaimedGames] = useState<HistoryEntry[]>([]);
   const tutorialStorageKey = "strapped_tutorial_seen";
   const snapshot = data?.snapshot ?? null;
   const walletStatus: "idle" | "connecting" | "connected" | "error" = walletError
@@ -2685,14 +2686,97 @@ export default function App() {
   const selectedBetGroup = closetGroups.find(
     (group) => group.kind === betStrapKind
   );
-  const unclaimedGames = useMemo(
-    () =>
-      gameHistory.filter((entry) => {
-        const accountBets = entry.account?.per_roll_bets ?? [];
-        return !entry.claimed && hasClaimableBets(entry.rolls, accountBets);
-      }),
-    [gameHistory]
-  );
+  useEffect(() => {
+    if (!baseUrl || !walletAddress) {
+      setUnclaimedGames([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadUnclaimed = async () => {
+      const entries: HistoryEntry[] = [];
+      let cursor: number | null = null;
+      let lastCursor: number | null = null;
+      const limit = 50;
+
+      while (!cancelled) {
+        const query = new URLSearchParams({
+          order: "desc",
+          limit: String(limit),
+        });
+        if (cursor !== null) {
+          query.set("cursor", String(cursor));
+        }
+        const response = await fetch(
+          `${baseUrl}/account/${walletAddress}/unclaimed?${query.toString()}`
+        );
+        if (!response.ok) {
+          throw new Error(`unclaimed games responded with ${response.status}`);
+        }
+        const payload = (await response.json()) as {
+          games?: unknown[];
+          next_cursor?: number | null;
+          nextCursor?: number | null;
+        };
+        const games = Array.isArray(payload.games) ? payload.games : [];
+        for (const entry of games) {
+          if (!entry || typeof entry !== "object") {
+            continue;
+          }
+          const record = entry as Record<string, unknown>;
+          const gameId =
+            typeof record.game_id === "number"
+              ? record.game_id
+              : typeof record.gameId === "number"
+                ? record.gameId
+                : null;
+          if (gameId === null) {
+            continue;
+          }
+          const account = normalizeAccountSnapshot(record.account_snapshot);
+          const history = normalizeHistoricalSnapshot(
+            record.historical_snapshot
+          );
+          if (!history) {
+            continue;
+          }
+          entries.push({
+            gameId,
+            rolls: history.rolls,
+            modifiers: history.modifiers,
+            strapRewards: history.strap_rewards,
+            account,
+            claimed: false,
+          });
+        }
+        lastCursor = cursor;
+        cursor =
+          typeof payload.next_cursor === "number"
+            ? payload.next_cursor
+            : typeof payload.nextCursor === "number"
+              ? payload.nextCursor
+              : null;
+        if (cursor === null || cursor === lastCursor) {
+          break;
+        }
+      }
+
+      if (!cancelled) {
+        entries.sort((a, b) => b.gameId - a.gameId);
+        setUnclaimedGames(entries);
+      }
+    };
+
+    loadUnclaimed().catch(() => {
+      if (!cancelled) {
+        setUnclaimedGames([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, walletAddress, claimStatus]);
 
   const tutorialSteps: TutorialStep[] = [
     {

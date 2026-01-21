@@ -3,6 +3,8 @@ use crate::{
     app::snapshot_storage::{
         MetadataStorage,
         SnapshotStorage,
+        SortOrder,
+        UnclaimedGameIdPage,
     },
     events::Strap,
     snapshot::{
@@ -41,6 +43,7 @@ pub struct SledSnapshotStorage {
     overview_meta: Tree,
     account_tree: Tree,
     historical_tree: Tree,
+    unclaimed_tree: Tree,
 }
 
 #[derive(Clone)]
@@ -68,12 +71,16 @@ impl SledSnapshotStorage {
         let historical_tree = db
             .open_tree("historical_snapshots")
             .context("open historical_snapshots tree")?;
+        let unclaimed_tree = db
+            .open_tree("unclaimed_games")
+            .context("open unclaimed_games tree")?;
 
         Ok(Self {
             overview_tree,
             overview_meta,
             account_tree,
             historical_tree,
+            unclaimed_tree,
         })
     }
 
@@ -102,6 +109,13 @@ impl SledSnapshotStorage {
             self.account_tree
                 .flush()
                 .context("flush account snapshots during prune_from(0)")?;
+
+            self.unclaimed_tree
+                .clear()
+                .context("clear unclaimed snapshots during prune_from(0)")?;
+            self.unclaimed_tree
+                .flush()
+                .context("flush unclaimed snapshots during prune_from(0)")?;
 
             self.clear_latest_height()?;
 
@@ -180,6 +194,39 @@ impl SledSnapshotStorage {
         format!("{:?}", account)
     }
 
+    fn unclaimed_prefix(account: &Identity) -> Vec<u8> {
+        let mut prefix = Self::identity_key(account).into_bytes();
+        prefix.push(b'|');
+        prefix
+    }
+
+    fn unclaimed_key(account: &Identity, game_id: u32) -> Vec<u8> {
+        let mut key = Self::unclaimed_prefix(account);
+        key.extend_from_slice(&game_id.to_be_bytes());
+        key
+    }
+
+    fn unclaimed_game_id(key: &[u8]) -> Option<u32> {
+        if key.len() < 4 {
+            return None;
+        }
+        let tail = &key[key.len().saturating_sub(4)..];
+        let arr: [u8; 4] = tail.try_into().ok()?;
+        Some(u32::from_be_bytes(arr))
+    }
+
+    fn next_prefix(prefix: &[u8]) -> Option<Vec<u8>> {
+        let mut next = prefix.to_vec();
+        for idx in (0..next.len()).rev() {
+            if next[idx] < 0xFF {
+                next[idx] += 1;
+                next.truncate(idx + 1);
+                return Some(next);
+            }
+        }
+        None
+    }
+
     fn serialize_record<T: Serialize>(value: &T, label: &str) -> crate::Result<Vec<u8>> {
         serde_json::to_vec(value).with_context(|| format!("serialize {label}"))
     }
@@ -254,6 +301,82 @@ impl SnapshotStorage for SledSnapshotStorage {
         Ok(Some((record.snapshot, record.height)))
     }
 
+    fn unclaimed_game_ids(
+        &self,
+        account: &Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> crate::Result<UnclaimedGameIdPage> {
+        let prefix = Self::unclaimed_prefix(account);
+        let range_end = Self::next_prefix(&prefix).unwrap_or_else(|| {
+            let mut end = prefix.clone();
+            end.push(0xFF);
+            end
+        });
+        let mut game_ids = Vec::new();
+        let mut last_game_id = None;
+        let mut has_more = false;
+
+        let iter = self.unclaimed_tree.range(prefix.clone()..range_end);
+        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> = match order
+        {
+            SortOrder::Asc => Box::new(iter),
+            SortOrder::Desc => Box::new(iter.rev()),
+        };
+
+        for entry in iter {
+            let (key, _) = entry.context("iterate unclaimed games")?;
+            let Some(game_id) = Self::unclaimed_game_id(key.as_ref()) else {
+                continue;
+            };
+            if let Some(cursor) = cursor {
+                match order {
+                    SortOrder::Asc if game_id <= cursor => continue,
+                    SortOrder::Desc if game_id >= cursor => continue,
+                    _ => {}
+                }
+            }
+
+            if game_ids.len() < limit {
+                game_ids.push(game_id);
+                last_game_id = Some(game_id);
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        Ok(UnclaimedGameIdPage {
+            game_ids,
+            next_cursor: if has_more { last_game_id } else { None },
+        })
+    }
+
+    fn mark_unclaimed(
+        &mut self,
+        account: &Identity,
+        game_id: u32,
+        height: u32,
+    ) -> crate::Result<()> {
+        let key = Self::unclaimed_key(account, game_id);
+        self.unclaimed_tree
+            .insert(key, height.to_be_bytes().as_slice())
+            .context("persist unclaimed game entry")?;
+        self.unclaimed_tree
+            .flush()
+            .context("flush unclaimed game entries")?;
+        Ok(())
+    }
+
+    fn clear_unclaimed(&mut self, account: &Identity, game_id: u32) -> crate::Result<()> {
+        let key = Self::unclaimed_key(account, game_id);
+        self.unclaimed_tree
+            .remove(key)
+            .context("remove unclaimed game entry")?;
+        Ok(())
+    }
+
     fn update_snapshot(
         &mut self,
         snapshot: &OverviewSnapshot,
@@ -321,6 +444,23 @@ impl SnapshotStorage for SledSnapshotStorage {
         self.account_tree
             .flush()
             .context("flush account snapshots")?;
+
+        for entry in self.unclaimed_tree.iter() {
+            let (key, value) = entry.context("iterate unclaimed snapshots")?;
+            let value = value.as_ref();
+            if value.len() != 4 {
+                continue;
+            }
+            let height = u32::from_be_bytes(value.try_into().unwrap_or([0, 0, 0, 0]));
+            if height > to_height {
+                self.unclaimed_tree
+                    .remove(key)
+                    .context("remove unclaimed snapshot during rollback")?;
+            }
+        }
+        self.unclaimed_tree
+            .flush()
+            .context("flush unclaimed snapshots during rollback")?;
 
         // Historical snapshots are keyed by game id and are immutable once written,
         // so we leave them untouched during rollback.

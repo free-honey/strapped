@@ -1,5 +1,9 @@
 use crate::{
-    app::snapshot_storage::SnapshotStorage,
+    app::snapshot_storage::{
+        SnapshotStorage,
+        SortOrder,
+        UnclaimedGameIdPage,
+    },
     snapshot::{
         AccountSnapshot,
         HistoricalSnapshot,
@@ -8,7 +12,10 @@ use crate::{
 };
 use fuels::types::Identity;
 use std::{
-    collections::HashMap,
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
     sync::{
         Arc,
         Mutex,
@@ -19,6 +26,7 @@ type AccountSnapshotMap = HashMap<String, HashMap<u32, (AccountSnapshot, u32)>>;
 type SharedAccountSnapshots = Arc<Mutex<AccountSnapshotMap>>;
 type SharedHistoricalSnapshots = Arc<Mutex<HashMap<u32, HistoricalSnapshot>>>;
 type SharedOverviewSnapshot = Arc<Mutex<Option<(OverviewSnapshot, u32)>>>;
+type SharedUnclaimedSnapshots = Arc<Mutex<HashMap<String, BTreeMap<u32, u32>>>>;
 
 #[derive(Clone)]
 pub struct InMemorySnapshotStorage {
@@ -26,6 +34,7 @@ pub struct InMemorySnapshotStorage {
     snapshot: SharedOverviewSnapshot,
     account_snapshots: SharedAccountSnapshots,
     historical_snapshots: SharedHistoricalSnapshots,
+    unclaimed_snapshots: SharedUnclaimedSnapshots,
 }
 
 impl InMemorySnapshotStorage {
@@ -35,6 +44,7 @@ impl InMemorySnapshotStorage {
             snapshot: Arc::new(Mutex::new(None)),
             account_snapshots: Arc::new(Mutex::new(HashMap::new())),
             historical_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            unclaimed_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -44,6 +54,7 @@ impl InMemorySnapshotStorage {
             snapshot: Arc::new(Mutex::new(Some((snapshot, height)))),
             account_snapshots: Arc::new(Mutex::new(HashMap::new())),
             historical_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            unclaimed_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -57,6 +68,10 @@ impl InMemorySnapshotStorage {
 
     pub fn historical_snapshots(&self) -> SharedHistoricalSnapshots {
         self.historical_snapshots.clone()
+    }
+
+    pub fn unclaimed_snapshots(&self) -> SharedUnclaimedSnapshots {
+        self.unclaimed_snapshots.clone()
     }
 
     pub fn identity_key(account: &Identity) -> String {
@@ -105,6 +120,77 @@ impl SnapshotStorage for InMemorySnapshotStorage {
             .and_then(|inner| inner.get(&game_id))
             .cloned();
         Ok(maybe_snapshot)
+    }
+
+    fn unclaimed_game_ids(
+        &self,
+        account: &Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> crate::Result<UnclaimedGameIdPage> {
+        let key = Self::identity_key(account);
+        let guard = self.unclaimed_snapshots.lock().unwrap();
+        let Some(entries) = guard.get(&key) else {
+            return Ok(UnclaimedGameIdPage {
+                game_ids: Vec::new(),
+                next_cursor: None,
+            });
+        };
+
+        let mut game_ids = Vec::new();
+        let mut last_game_id = None;
+        let mut has_more = false;
+
+        let iter: Box<dyn Iterator<Item = (&u32, &u32)>> = match order {
+            SortOrder::Asc => Box::new(entries.iter()),
+            SortOrder::Desc => Box::new(entries.iter().rev()),
+        };
+
+        for (game_id, _) in iter {
+            if let Some(cursor) = cursor {
+                match order {
+                    SortOrder::Asc if *game_id <= cursor => continue,
+                    SortOrder::Desc if *game_id >= cursor => continue,
+                    _ => {}
+                }
+            }
+
+            if game_ids.len() < limit {
+                game_ids.push(*game_id);
+                last_game_id = Some(*game_id);
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        Ok(UnclaimedGameIdPage {
+            game_ids,
+            next_cursor: if has_more { last_game_id } else { None },
+        })
+    }
+
+    fn mark_unclaimed(
+        &mut self,
+        account: &Identity,
+        game_id: u32,
+        height: u32,
+    ) -> crate::Result<()> {
+        let key = Self::identity_key(account);
+        let mut guard = self.unclaimed_snapshots.lock().unwrap();
+        let entry = guard.entry(key).or_default();
+        entry.insert(game_id, height);
+        Ok(())
+    }
+
+    fn clear_unclaimed(&mut self, account: &Identity, game_id: u32) -> crate::Result<()> {
+        let key = Self::identity_key(account);
+        let mut guard = self.unclaimed_snapshots.lock().unwrap();
+        if let Some(inner) = guard.get_mut(&key) {
+            inner.remove(&game_id);
+        }
+        Ok(())
     }
 
     fn update_snapshot(
