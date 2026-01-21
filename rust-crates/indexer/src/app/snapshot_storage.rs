@@ -17,6 +17,12 @@ pub enum SortOrder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BetHistoryGameIdPage {
+    pub game_ids: Vec<u32>,
+    pub next_cursor: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnclaimedGameIdPage {
     pub game_ids: Vec<u32>,
     pub next_cursor: Option<u32>,
@@ -38,6 +44,26 @@ pub trait SnapshotStorage {
         account: &Identity,
         game_id: u32,
     ) -> crate::Result<Option<(AccountSnapshot, u32)>>;
+
+    /// list game ids with bets for the account
+    fn bet_history_game_ids(
+        &self,
+        account: &Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> crate::Result<BetHistoryGameIdPage>;
+
+    /// record a bet for the account/game in the bet-history index
+    fn record_bet_history(
+        &mut self,
+        account: &Identity,
+        game_id: u32,
+        height: u32,
+    ) -> crate::Result<()>;
+
+    /// list account addresses that placed bets for a game
+    fn bettors_for_game(&self, game_id: u32) -> crate::Result<Vec<String>>;
 
     /// list unclaimed game ids for the account
     fn unclaimed_game_ids(

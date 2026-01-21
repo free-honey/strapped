@@ -84,6 +84,19 @@ struct UnclaimedGamesPageDto {
     next_cursor: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct BetHistoryGameDto {
+    game_id: u32,
+    account_snapshot: AccountSnapshot,
+    historical_snapshot: HistoricalSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct BetHistoryPageDto {
+    games: Vec<BetHistoryGameDto>,
+    next_cursor: Option<u32>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct UnclaimedGamesQueryParams {
     limit: Option<usize>,
@@ -146,6 +159,10 @@ impl ActixQueryApi {
                 .route(
                     "/account/{identity}/unclaimed",
                     web::get().to(handle_unclaimed_games),
+                )
+                .route(
+                    "/account/{identity}/bet-history",
+                    web::get().to(handle_bet_history),
                 )
                 .route(
                     "/account/{identity}/{game_id}",
@@ -303,6 +320,58 @@ async fn handle_unclaimed_games(
     }))
 }
 
+async fn handle_bet_history(
+    sender: web::Data<mpsc::Sender<Query>>,
+    account_identity: web::Path<String>,
+    params: web::Query<UnclaimedGamesQueryParams>,
+) -> actix_web::Result<web::Json<BetHistoryPageDto>> {
+    tracing::info!("received bet history request");
+    let limit = params.limit.unwrap_or(DEFAULT_UNCLAIMED_PAGE_SIZE);
+    if limit == 0 || limit > MAX_UNCLAIMED_PAGE_SIZE {
+        return Err(ErrorBadRequest("invalid limit for bet history"));
+    }
+    let order = match params.order.as_deref().unwrap_or("desc") {
+        "asc" => SortOrder::Asc,
+        "desc" => SortOrder::Desc,
+        _ => return Err(ErrorBadRequest("invalid order for bet history")),
+    };
+    let inner = Address::from_str(&account_identity)
+        .map_err(|_| UrlencodedError::Payload(PayloadError::EncodingCorrupted))?;
+    let identity = Identity::Address(inner);
+    let (response_sender, response_receiver) = oneshot::channel();
+    let query = Query::bet_history(
+        identity,
+        order,
+        limit,
+        params.cursor,
+        response_sender,
+    );
+
+    sender.get_ref().clone().send(query).await.map_err(|_| {
+        ErrorInternalServerError("unable to forward bet history query")
+    })?;
+
+    let page = response_receiver
+        .await
+        .map_err(|_| ErrorInternalServerError("bet history responder dropped"))?
+        .map_err(|_| ErrorInternalServerError("bet history query failed"))?;
+
+    let games = page
+        .games
+        .into_iter()
+        .map(|entry| BetHistoryGameDto {
+            game_id: entry.game_id,
+            account_snapshot: entry.account_snapshot,
+            historical_snapshot: entry.historical_snapshot,
+        })
+        .collect();
+
+    Ok(web::Json(BetHistoryPageDto {
+        games,
+        next_cursor: page.next_cursor,
+    }))
+}
+
 async fn handle_historical_account_snapshot(
     sender: web::Data<mpsc::Sender<Query>>,
     path: web::Path<(String, u32)>,
@@ -384,6 +453,9 @@ mod tests {
     use crate::{
         app::query_api::{
             AccountSnapshotQuery,
+            BetHistoryGame,
+            BetHistoryPage,
+            BetHistoryQuery,
             HistoricalAccountSnapshotQuery,
             HistoricalSnapshotQuery,
             UnclaimedGame,
@@ -662,6 +734,71 @@ mod tests {
                 .unwrap();
         } else {
             panic!("expected unclaimed games query got {:?}", query);
+        }
+
+        // then
+        let response = client_task.await.unwrap();
+        assert_eq!(response, expected_response);
+    }
+
+    #[tokio::test]
+    async fn query__can_get_bet_history_page() {
+        // given
+        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let client = reqwest::Client::new();
+        let expected_identity = Identity::default();
+        let expected_identity_str = match &expected_identity {
+            Identity::Address(address) => address.to_string(),
+            Identity::ContractId(contract) => contract.to_string(),
+        };
+        let url = format!(
+            "{}/account/{expected_identity_str}/bet-history?order=asc&limit=2",
+            api.base_url()
+        );
+        let expected_snapshot = AccountSnapshot::default();
+        let expected_game_id = 7u32;
+        let expected_history =
+            HistoricalSnapshot::new(expected_game_id, vec![Roll::Six], Vec::new());
+        let expected_response = BetHistoryPageDto {
+            games: vec![BetHistoryGameDto {
+                game_id: expected_game_id,
+                account_snapshot: expected_snapshot.clone(),
+                historical_snapshot: expected_history.clone(),
+            }],
+            next_cursor: Some(expected_game_id),
+        };
+
+        let client_task = tokio::spawn(async move {
+            let response = client.get(url).send().await.unwrap();
+            response.json::<BetHistoryPageDto>().await.unwrap()
+        });
+
+        // when
+        let query = api.query().await.unwrap().expect("expected query");
+        if let Query::BetHistory(inner) = query {
+            let BetHistoryQuery {
+                identity,
+                order,
+                limit,
+                cursor,
+                sender,
+            } = inner;
+            assert_eq!(expected_identity, identity);
+            assert_eq!(order, SortOrder::Asc);
+            assert_eq!(limit, 2);
+            assert_eq!(cursor, None);
+            sender
+                .send(Ok(BetHistoryPage {
+                    games: vec![BetHistoryGame {
+                        game_id: expected_game_id,
+                        account_snapshot: expected_snapshot.clone(),
+                        historical_snapshot: expected_history.clone(),
+                    }],
+                    next_cursor: Some(expected_game_id),
+                }))
+                .unwrap();
+        } else {
+            panic!("expected bet history query got {:?}", query);
         }
 
         // then

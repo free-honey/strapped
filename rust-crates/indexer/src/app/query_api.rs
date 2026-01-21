@@ -27,6 +27,7 @@ pub enum Query {
     HistoricalSnapshot(HistoricalSnapshotQuery),
     HistoricalAccountSnapshot(HistoricalAccountSnapshotQuery),
     UnclaimedGames(UnclaimedGamesQuery),
+    BetHistory(BetHistoryQuery),
     AllKnownStraps(oneshot::Sender<Vec<(AssetId, Strap)>>),
 }
 
@@ -80,6 +81,23 @@ impl Query {
         };
         Query::UnclaimedGames(inner)
     }
+
+    pub fn bet_history(
+        identity: Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+        sender: oneshot::Sender<crate::Result<BetHistoryPage>>,
+    ) -> Query {
+        let inner = BetHistoryQuery {
+            identity,
+            order,
+            limit,
+            cursor,
+            sender,
+        };
+        Query::BetHistory(inner)
+    }
 }
 
 #[derive(Debug)]
@@ -110,6 +128,15 @@ pub struct UnclaimedGamesQuery {
     pub sender: oneshot::Sender<crate::Result<UnclaimedGamesPage>>,
 }
 
+#[derive(Debug)]
+pub struct BetHistoryQuery {
+    pub identity: Identity,
+    pub order: SortOrder,
+    pub limit: usize,
+    pub cursor: Option<u32>,
+    pub sender: oneshot::Sender<crate::Result<BetHistoryPage>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnclaimedGame {
     pub game_id: u32,
@@ -118,7 +145,20 @@ pub struct UnclaimedGame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BetHistoryGame {
+    pub game_id: u32,
+    pub account_snapshot: AccountSnapshot,
+    pub historical_snapshot: HistoricalSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnclaimedGamesPage {
     pub games: Vec<UnclaimedGame>,
+    pub next_cursor: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BetHistoryPage {
+    pub games: Vec<BetHistoryGame>,
     pub next_cursor: Option<u32>,
 }
