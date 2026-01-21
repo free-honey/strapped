@@ -57,6 +57,7 @@ use fuels::{
         Identity,
     },
 };
+use std::str::FromStr;
 
 #[cfg(test)]
 mod tests;
@@ -596,8 +597,9 @@ impl<
                 continue;
             };
             let identity = Identity::Address(address);
-            let Some((account_snapshot, _)) =
-                self.snapshots.account_snapshot_at(&identity, previous_snapshot.game_id)?
+            let Some((account_snapshot, _)) = self
+                .snapshots
+                .account_snapshot_at(&identity, previous_snapshot.game_id)?
             else {
                 continue;
             };
@@ -605,8 +607,11 @@ impl<
                 continue;
             }
             if account_has_claimable_bets(&account_snapshot, &historical.rolls) {
-                self.snapshots
-                    .mark_unclaimed(&identity, previous_snapshot.game_id, height)?;
+                self.snapshots.mark_unclaimed(
+                    &identity,
+                    previous_snapshot.game_id,
+                    height,
+                )?;
             }
         }
 
