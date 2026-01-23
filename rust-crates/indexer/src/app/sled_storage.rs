@@ -1,8 +1,11 @@
 // Sled-backed storage implementations for snapshot and metadata persistence.
 use crate::{
     app::snapshot_storage::{
+        BetHistoryGameIdPage,
         MetadataStorage,
         SnapshotStorage,
+        SortOrder,
+        UnclaimedGameIdPage,
     },
     events::Strap,
     snapshot::{
@@ -41,6 +44,9 @@ pub struct SledSnapshotStorage {
     overview_meta: Tree,
     account_tree: Tree,
     historical_tree: Tree,
+    bet_history_tree: Tree,
+    bettors_by_game_tree: Tree,
+    unclaimed_tree: Tree,
 }
 
 #[derive(Clone)]
@@ -68,12 +74,24 @@ impl SledSnapshotStorage {
         let historical_tree = db
             .open_tree("historical_snapshots")
             .context("open historical_snapshots tree")?;
+        let bet_history_tree = db
+            .open_tree("bet_history")
+            .context("open bet_history tree")?;
+        let bettors_by_game_tree = db
+            .open_tree("bettors_by_game")
+            .context("open bettors_by_game tree")?;
+        let unclaimed_tree = db
+            .open_tree("unclaimed_games")
+            .context("open unclaimed_games tree")?;
 
         Ok(Self {
             overview_tree,
             overview_meta,
             account_tree,
             historical_tree,
+            bet_history_tree,
+            bettors_by_game_tree,
+            unclaimed_tree,
         })
     }
 
@@ -102,6 +120,27 @@ impl SledSnapshotStorage {
             self.account_tree
                 .flush()
                 .context("flush account snapshots during prune_from(0)")?;
+
+            self.bet_history_tree
+                .clear()
+                .context("clear bet history during prune_from(0)")?;
+            self.bet_history_tree
+                .flush()
+                .context("flush bet history during prune_from(0)")?;
+
+            self.bettors_by_game_tree
+                .clear()
+                .context("clear bettors by game during prune_from(0)")?;
+            self.bettors_by_game_tree
+                .flush()
+                .context("flush bettors by game during prune_from(0)")?;
+
+            self.unclaimed_tree
+                .clear()
+                .context("clear unclaimed snapshots during prune_from(0)")?;
+            self.unclaimed_tree
+                .flush()
+                .context("flush unclaimed snapshots during prune_from(0)")?;
 
             self.clear_latest_height()?;
 
@@ -180,6 +219,78 @@ impl SledSnapshotStorage {
         format!("{:?}", account)
     }
 
+    fn identity_address_key(account: &Identity) -> Option<String> {
+        match account {
+            Identity::Address(address) => Some(address.to_string()),
+            _ => None,
+        }
+    }
+
+    fn unclaimed_prefix(account: &Identity) -> Vec<u8> {
+        let mut prefix = Self::identity_key(account).into_bytes();
+        prefix.push(b'|');
+        prefix
+    }
+
+    fn bet_history_prefix(account: &Identity) -> Vec<u8> {
+        let mut prefix = Self::identity_key(account).into_bytes();
+        prefix.push(b'|');
+        prefix
+    }
+
+    fn bet_history_key(account: &Identity, game_id: u32) -> Vec<u8> {
+        let mut key = Self::bet_history_prefix(account);
+        key.extend_from_slice(&game_id.to_be_bytes());
+        key
+    }
+
+    fn bettors_by_game_prefix(game_id: u32) -> Vec<u8> {
+        let mut prefix = game_id.to_be_bytes().to_vec();
+        prefix.push(b'|');
+        prefix
+    }
+
+    fn bettors_by_game_key(game_id: u32, account_key: &str) -> Vec<u8> {
+        let mut key = Self::bettors_by_game_prefix(game_id);
+        key.extend_from_slice(account_key.as_bytes());
+        key
+    }
+
+    fn bettors_by_game_identity(key: &[u8]) -> Option<String> {
+        let pos = key.iter().rposition(|byte| *byte == b'|')?;
+        let suffix = &key[pos + 1..];
+        std::str::from_utf8(suffix)
+            .ok()
+            .map(|value| value.to_string())
+    }
+
+    fn unclaimed_key(account: &Identity, game_id: u32) -> Vec<u8> {
+        let mut key = Self::unclaimed_prefix(account);
+        key.extend_from_slice(&game_id.to_be_bytes());
+        key
+    }
+
+    fn unclaimed_game_id(key: &[u8]) -> Option<u32> {
+        if key.len() < 4 {
+            return None;
+        }
+        let tail = &key[key.len().saturating_sub(4)..];
+        let arr: [u8; 4] = tail.try_into().ok()?;
+        Some(u32::from_be_bytes(arr))
+    }
+
+    fn next_prefix(prefix: &[u8]) -> Option<Vec<u8>> {
+        let mut next = prefix.to_vec();
+        for idx in (0..next.len()).rev() {
+            if next[idx] < 0xFF {
+                next[idx] += 1;
+                next.truncate(idx + 1);
+                return Some(next);
+            }
+        }
+        None
+    }
+
     fn serialize_record<T: Serialize>(value: &T, label: &str) -> crate::Result<Vec<u8>> {
         serde_json::to_vec(value).with_context(|| format!("serialize {label}"))
     }
@@ -254,6 +365,178 @@ impl SnapshotStorage for SledSnapshotStorage {
         Ok(Some((record.snapshot, record.height)))
     }
 
+    fn bet_history_game_ids(
+        &self,
+        account: &Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> crate::Result<BetHistoryGameIdPage> {
+        let prefix = Self::bet_history_prefix(account);
+        let range_end = Self::next_prefix(&prefix).unwrap_or_else(|| {
+            let mut end = prefix.clone();
+            end.push(0xFF);
+            end
+        });
+        let mut game_ids = Vec::new();
+        let mut last_game_id = None;
+        let mut has_more = false;
+
+        let iter = self.bet_history_tree.range(prefix.clone()..range_end);
+        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> =
+            match order {
+                SortOrder::Asc => Box::new(iter),
+                SortOrder::Desc => Box::new(iter.rev()),
+            };
+
+        for entry in iter {
+            let (key, _) = entry.context("iterate bet history")?;
+            let Some(game_id) = Self::unclaimed_game_id(key.as_ref()) else {
+                continue;
+            };
+            if let Some(cursor) = cursor {
+                match order {
+                    SortOrder::Asc if game_id <= cursor => continue,
+                    SortOrder::Desc if game_id >= cursor => continue,
+                    _ => {}
+                }
+            }
+
+            if game_ids.len() < limit {
+                game_ids.push(game_id);
+                last_game_id = Some(game_id);
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        Ok(BetHistoryGameIdPage {
+            game_ids,
+            next_cursor: if has_more { last_game_id } else { None },
+        })
+    }
+
+    fn record_bet_history(
+        &mut self,
+        account: &Identity,
+        game_id: u32,
+        height: u32,
+    ) -> crate::Result<()> {
+        let bet_key = Self::bet_history_key(account, game_id);
+        self.bet_history_tree
+            .insert(bet_key, height.to_be_bytes().as_slice())
+            .context("persist bet history entry")?;
+        self.bet_history_tree
+            .flush()
+            .context("flush bet history entries")?;
+
+        if let Some(address_key) = Self::identity_address_key(account) {
+            let bettor_key = Self::bettors_by_game_key(game_id, &address_key);
+            self.bettors_by_game_tree
+                .insert(bettor_key, height.to_be_bytes().as_slice())
+                .context("persist bettors by game entry")?;
+            self.bettors_by_game_tree
+                .flush()
+                .context("flush bettors by game entries")?;
+        }
+        Ok(())
+    }
+
+    fn bettors_for_game(&self, game_id: u32) -> crate::Result<Vec<String>> {
+        let prefix = Self::bettors_by_game_prefix(game_id);
+        let range_end = Self::next_prefix(&prefix).unwrap_or_else(|| {
+            let mut end = prefix.clone();
+            end.push(0xFF);
+            end
+        });
+        let mut identities = Vec::new();
+        let iter = self.bettors_by_game_tree.range(prefix.clone()..range_end);
+        for entry in iter {
+            let (key, _) = entry.context("iterate bettors by game")?;
+            if let Some(identity) = Self::bettors_by_game_identity(key.as_ref()) {
+                identities.push(identity);
+            }
+        }
+        Ok(identities)
+    }
+
+    fn unclaimed_game_ids(
+        &self,
+        account: &Identity,
+        order: SortOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> crate::Result<UnclaimedGameIdPage> {
+        let prefix = Self::unclaimed_prefix(account);
+        let range_end = Self::next_prefix(&prefix).unwrap_or_else(|| {
+            let mut end = prefix.clone();
+            end.push(0xFF);
+            end
+        });
+        let mut game_ids = Vec::new();
+        let mut last_game_id = None;
+        let mut has_more = false;
+
+        let iter = self.unclaimed_tree.range(prefix.clone()..range_end);
+        let iter: Box<dyn Iterator<Item = sled::Result<(sled::IVec, sled::IVec)>>> =
+            match order {
+                SortOrder::Asc => Box::new(iter),
+                SortOrder::Desc => Box::new(iter.rev()),
+            };
+
+        for entry in iter {
+            let (key, _) = entry.context("iterate unclaimed games")?;
+            let Some(game_id) = Self::unclaimed_game_id(key.as_ref()) else {
+                continue;
+            };
+            if let Some(cursor) = cursor {
+                match order {
+                    SortOrder::Asc if game_id <= cursor => continue,
+                    SortOrder::Desc if game_id >= cursor => continue,
+                    _ => {}
+                }
+            }
+
+            if game_ids.len() < limit {
+                game_ids.push(game_id);
+                last_game_id = Some(game_id);
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        Ok(UnclaimedGameIdPage {
+            game_ids,
+            next_cursor: if has_more { last_game_id } else { None },
+        })
+    }
+
+    fn mark_unclaimed(
+        &mut self,
+        account: &Identity,
+        game_id: u32,
+        height: u32,
+    ) -> crate::Result<()> {
+        let key = Self::unclaimed_key(account, game_id);
+        self.unclaimed_tree
+            .insert(key, height.to_be_bytes().as_slice())
+            .context("persist unclaimed game entry")?;
+        self.unclaimed_tree
+            .flush()
+            .context("flush unclaimed game entries")?;
+        Ok(())
+    }
+
+    fn clear_unclaimed(&mut self, account: &Identity, game_id: u32) -> crate::Result<()> {
+        let key = Self::unclaimed_key(account, game_id);
+        self.unclaimed_tree
+            .remove(key)
+            .context("remove unclaimed game entry")?;
+        Ok(())
+    }
+
     fn update_snapshot(
         &mut self,
         snapshot: &OverviewSnapshot,
@@ -321,6 +604,57 @@ impl SnapshotStorage for SledSnapshotStorage {
         self.account_tree
             .flush()
             .context("flush account snapshots")?;
+
+        for entry in self.bet_history_tree.iter() {
+            let (key, value) = entry.context("iterate bet history")?;
+            let value = value.as_ref();
+            if value.len() != 4 {
+                continue;
+            }
+            let height = u32::from_be_bytes(value.try_into().unwrap_or([0, 0, 0, 0]));
+            if height > to_height {
+                self.bet_history_tree
+                    .remove(key)
+                    .context("remove bet history during rollback")?;
+            }
+        }
+        self.bet_history_tree
+            .flush()
+            .context("flush bet history during rollback")?;
+
+        for entry in self.bettors_by_game_tree.iter() {
+            let (key, value) = entry.context("iterate bettors by game")?;
+            let value = value.as_ref();
+            if value.len() != 4 {
+                continue;
+            }
+            let height = u32::from_be_bytes(value.try_into().unwrap_or([0, 0, 0, 0]));
+            if height > to_height {
+                self.bettors_by_game_tree
+                    .remove(key)
+                    .context("remove bettors by game during rollback")?;
+            }
+        }
+        self.bettors_by_game_tree
+            .flush()
+            .context("flush bettors by game during rollback")?;
+
+        for entry in self.unclaimed_tree.iter() {
+            let (key, value) = entry.context("iterate unclaimed snapshots")?;
+            let value = value.as_ref();
+            if value.len() != 4 {
+                continue;
+            }
+            let height = u32::from_be_bytes(value.try_into().unwrap_or([0, 0, 0, 0]));
+            if height > to_height {
+                self.unclaimed_tree
+                    .remove(key)
+                    .context("remove unclaimed snapshot during rollback")?;
+            }
+        }
+        self.unclaimed_tree
+            .flush()
+            .context("flush unclaimed snapshots during rollback")?;
 
         // Historical snapshots are keyed by game id and are immutable once written,
         // so we leave them untouched during rollback.

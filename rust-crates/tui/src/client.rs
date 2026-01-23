@@ -6,6 +6,7 @@ use crate::{
         AccountData,
         IndexerClient,
         OverviewData,
+        UnclaimedOrder,
     },
     ui,
     wallets,
@@ -215,6 +216,7 @@ pub struct AppController {
     shared_prev_games: Vec<SharedGame>,
     alice_bets_hist: BetsHistory,
     alice_claimed: HashSet<u32>,
+    unclaimed_game_ids: HashSet<u32>,
     prev_alice_bets: BetsByRoll,
     strap_rewards_by_game: HashMap<u32, StrapRewards>,
     active_modifiers_by_game: HashMap<u32, ModifierEntries>,
@@ -256,6 +258,7 @@ impl AppController {
             shared_prev_games: Vec::new(),
             alice_bets_hist: HashMap::new(),
             alice_claimed: HashSet::new(),
+            unclaimed_game_ids: HashSet::new(),
             prev_alice_bets: Vec::new(),
             strap_rewards_by_game: HashMap::new(),
             active_modifiers_by_game: HashMap::new(),
@@ -343,11 +346,7 @@ impl AppController {
             if alice_bets_prev.iter().all(|(_, bets)| bets.is_empty()) {
                 self.alice_claimed.insert(prev);
             }
-            self.shared_prev_games
-                .sort_by(|a, b| b.game_id.cmp(&a.game_id));
-            if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
-                self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
-            }
+            self.truncate_shared_games();
             self.last_seen_game_id_alice = Some(current_game_id);
         }
         self.last_seen_game_id_alice = Some(current_game_id);
@@ -580,11 +579,7 @@ impl AppController {
             }
         }
 
-        self.shared_prev_games
-            .sort_by(|a, b| b.game_id.cmp(&a.game_id));
-        if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
-            self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
-        }
+        self.truncate_shared_games();
         Ok(())
     }
 
@@ -784,6 +779,23 @@ impl AppController {
                 modifiers,
             });
         }
+    }
+
+    fn truncate_shared_games(&mut self) {
+        self.shared_prev_games
+            .sort_by(|a, b| b.game_id.cmp(&a.game_id));
+        if self.shared_prev_games.len() <= GAME_HISTORY_DEPTH {
+            return;
+        }
+        let mut kept = Vec::new();
+        for entry in &self.shared_prev_games {
+            if kept.len() < GAME_HISTORY_DEPTH
+                || self.unclaimed_game_ids.contains(&entry.game_id)
+            {
+                kept.push(entry.clone());
+            }
+        }
+        self.shared_prev_games = kept;
     }
 
     pub async fn new(config: AppConfig) -> Result<Self> {
@@ -1033,11 +1045,28 @@ impl AppController {
                 self.alice_claimed.insert(record.game_id);
             }
         }
-        self.shared_prev_games
-            .sort_by(|a, b| b.game_id.cmp(&a.game_id));
-        if self.shared_prev_games.len() > GAME_HISTORY_DEPTH {
-            self.shared_prev_games.truncate(GAME_HISTORY_DEPTH);
+        self.truncate_shared_games();
+    }
+
+    fn ingest_unclaimed_records(&mut self, records: Vec<HistoryRecord>) {
+        let mut unclaimed = HashSet::new();
+        for record in records {
+            self.upsert_shared_game(
+                record.game_id,
+                record.rolls.clone(),
+                record.modifiers.clone(),
+            );
+            self.active_modifiers_by_game
+                .insert(record.game_id, record.modifiers.clone());
+            self.strap_rewards_by_game
+                .insert(record.game_id, record.strap_rewards.clone());
+            self.alice_bets_hist
+                .insert(record.game_id, record.per_roll_bets.clone());
+            self.alice_claimed.remove(&record.game_id);
+            unclaimed.insert(record.game_id);
         }
+        self.unclaimed_game_ids = unclaimed;
+        self.truncate_shared_games();
     }
 
     async fn refresh_chip_balance(&mut self) -> Result<()> {
@@ -1508,6 +1537,7 @@ impl AppController {
         }
         // mark as claimed in local cache for the current user
         self.alice_claimed.insert(game_id);
+        self.unclaimed_game_ids.remove(&game_id);
         // post-claim deltas
         let post_chip: u128 = me
             .account()
@@ -2132,12 +2162,14 @@ struct HistoryRecord {
 enum SnapshotWorkerCommand {
     FetchNow,
     FetchHistory(Vec<u32>),
+    FetchUnclaimed,
 }
 
 #[allow(clippy::large_enum_variant)]
 enum SnapshotWorkerEvent {
     Snapshot(SnapshotBundle),
     History(Vec<HistoryRecord>),
+    Unclaimed(Vec<HistoryRecord>),
 }
 
 async fn snapshot_worker(
@@ -2211,8 +2243,55 @@ async fn snapshot_worker(
         Ok(false)
     }
 
+    async fn fetch_unclaimed(
+        indexer: &IndexerClient,
+        identity: &Identity,
+        shutdown_rx: &mut oneshot::Receiver<()>,
+        snapshot_tx: &mpsc::UnboundedSender<SnapshotWorkerEvent>,
+    ) -> Result<bool> {
+        const PAGE_LIMIT: usize = 50;
+        const MAX_PAGES: usize = 100;
+        let mut records = Vec::new();
+        let mut cursor = None;
+        let mut pages = 0;
+
+        loop {
+            let page = tokio::select! {
+                biased;
+                _ = &mut *shutdown_rx => return Ok(true),
+                page = indexer.unclaimed_games_page(identity, UnclaimedOrder::Desc, PAGE_LIMIT, cursor) => page?,
+            };
+            for entry in page.games {
+                records.push(HistoryRecord {
+                    game_id: entry.game_id,
+                    rolls: entry.history.rolls,
+                    modifiers: entry.history.modifiers,
+                    strap_rewards: entry.history.strap_rewards,
+                    per_roll_bets: entry.account.per_roll_bets,
+                    claimed: false,
+                });
+            }
+            cursor = page.next_cursor;
+            pages += 1;
+            if cursor.is_none() || pages >= MAX_PAGES {
+                break;
+            }
+        }
+
+        snapshot_tx
+            .send(SnapshotWorkerEvent::Unclaimed(records))
+            .map_err(|_| eyre!("snapshot receiver dropped"))?;
+        Ok(false)
+    }
+
     let mut ticker = time::interval(poll_interval);
+    let mut unclaimed_ticker = time::interval(Duration::from_secs(10));
     fetch_snapshot(&indexer, &identity, &snapshot_tx).await?;
+    if let Err(err) =
+        fetch_unclaimed(&indexer, &identity, &mut shutdown_rx, &snapshot_tx).await
+    {
+        warn!(?err, "unclaimed snapshot fetch failed");
+    }
 
     loop {
         tokio::select! {
@@ -2221,6 +2300,11 @@ async fn snapshot_worker(
             _ = ticker.tick() => {
                 if let Err(err) = fetch_snapshot(&indexer, &identity, &snapshot_tx).await {
                     warn!(?err, "snapshot fetch failed");
+                }
+            }
+            _ = unclaimed_ticker.tick() => {
+                if let Err(err) = fetch_unclaimed(&indexer, &identity, &mut shutdown_rx, &snapshot_tx).await {
+                    warn!(?err, "unclaimed snapshot fetch failed");
                 }
             }
             cmd = cmd_rx.recv() => {
@@ -2246,6 +2330,18 @@ async fn snapshot_worker(
                             Ok(true) => break,
                             Ok(false) => {}
                             Err(err) => warn!(?err, "historical snapshot fetch failed"),
+                        }
+                    }
+                    SnapshotWorkerCommand::FetchUnclaimed => {
+                        if let Err(err) = fetch_unclaimed(
+                            &indexer,
+                            &identity,
+                            &mut shutdown_rx,
+                            &snapshot_tx,
+                        )
+                        .await
+                        {
+                            warn!(?err, "unclaimed snapshot fetch failed");
                         }
                     }
                 }
@@ -2284,6 +2380,7 @@ async fn run_loop(
         snapshot_event_tx,
     ));
     let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::FetchNow);
+    let _ = snapshot_cmd_tx.send(SnapshotWorkerCommand::FetchUnclaimed);
 
     let mut pending_post_action: Option<PostAction> = None;
     let mut last_snapshot: Option<AppSnapshot> = None;
@@ -2334,6 +2431,22 @@ async fn run_loop(
                             );
                             ui::draw(ui_state, &snapshot)
                                 .wrap_err("draw after history update failed")?;
+                            last_snapshot = Some(snapshot);
+                        }
+                    }
+                    Some(SnapshotWorkerEvent::Unclaimed(records)) => {
+                        controller.ingest_unclaimed_records(records);
+                        if last_snapshot.is_some() {
+                            let mut snapshot = controller
+                                .build_snapshot()
+                                .wrap_err("snapshot refresh after unclaimed update failed")?;
+                            process_post_action(
+                                &mut controller,
+                                &mut snapshot,
+                                &mut pending_post_action,
+                            );
+                            ui::draw(ui_state, &snapshot)
+                                .wrap_err("draw after unclaimed update failed")?;
                             last_snapshot = Some(snapshot);
                         }
                     }

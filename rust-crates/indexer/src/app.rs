@@ -4,10 +4,16 @@ use crate::{
         event_source::EventSource,
         query_api::{
             AccountSnapshotQuery,
+            BetHistoryGame,
+            BetHistoryPage,
+            BetHistoryQuery,
             HistoricalAccountSnapshotQuery,
             HistoricalSnapshotQuery,
             Query,
             QueryAPI,
+            UnclaimedGame,
+            UnclaimedGamesPage,
+            UnclaimedGamesQuery,
         },
         snapshot_storage::{
             MetadataStorage,
@@ -46,10 +52,12 @@ use anyhow::anyhow;
 use fuels::{
     tx::ContractIdExt,
     types::{
+        Address,
         ContractId,
         Identity,
     },
 };
+use std::str::FromStr;
 
 #[cfg(test)]
 mod tests;
@@ -104,6 +112,37 @@ fn accumulate_strap(bets: &mut Vec<(Strap, u64)>, strap: &Strap, amount: u64) {
     } else {
         bets.push((strap.clone(), amount));
     }
+}
+
+fn account_has_bets(snapshot: &AccountSnapshot) -> bool {
+    if snapshot.total_chip_bet > 0 || !snapshot.strap_bets.is_empty() {
+        return true;
+    }
+    snapshot
+        .per_roll_bets
+        .iter()
+        .any(|entry| !entry.bets.is_empty())
+}
+
+fn roll_hit_after_bet(target_roll: &Roll, bet_roll_index: u32, rolls: &[Roll]) -> bool {
+    rolls
+        .iter()
+        .enumerate()
+        .any(|(idx, r)| r == target_roll && bet_roll_index <= idx as u32)
+}
+
+fn account_has_claimable_bets(snapshot: &AccountSnapshot, rolls: &[Roll]) -> bool {
+    if rolls.is_empty() {
+        return false;
+    }
+    for roll_entry in &snapshot.per_roll_bets {
+        for bet in &roll_entry.bets {
+            if roll_hit_after_bet(&roll_entry.roll, bet.bet_roll_index, rolls) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 impl<Events, API, Snapshots, Metadata> App<Events, API, Snapshots, Metadata>
@@ -370,6 +409,94 @@ impl<
                     })?;
                 Ok(())
             }
+            Query::UnclaimedGames(inner) => {
+                let UnclaimedGamesQuery {
+                    identity,
+                    order,
+                    limit,
+                    cursor,
+                    sender,
+                } = inner;
+                let result = (|| {
+                    let page = self
+                        .snapshots
+                        .unclaimed_game_ids(&identity, order, limit, cursor)?;
+                    let mut games = Vec::with_capacity(page.game_ids.len());
+                    for game_id in page.game_ids {
+                        let Some((account_snapshot, _)) =
+                            self.snapshots.account_snapshot_at(&identity, game_id)?
+                        else {
+                            continue;
+                        };
+                        if account_snapshot.claimed_rewards.is_some() {
+                            continue;
+                        }
+                        if !account_has_bets(&account_snapshot) {
+                            continue;
+                        }
+                        let historical_snapshot =
+                            match self.snapshots.historical_snapshots(game_id) {
+                                Ok(snapshot) => snapshot,
+                                Err(_) => continue,
+                            };
+                        games.push(UnclaimedGame {
+                            game_id,
+                            account_snapshot,
+                            historical_snapshot,
+                        });
+                    }
+                    Ok(UnclaimedGamesPage {
+                        games,
+                        next_cursor: page.next_cursor,
+                    })
+                })();
+
+                sender.send(result).map_err(|_| {
+                    anyhow!("Could not send `UnclaimedGames` response for {identity:?}")
+                })?;
+                Ok(())
+            }
+            Query::BetHistory(inner) => {
+                let BetHistoryQuery {
+                    identity,
+                    order,
+                    limit,
+                    cursor,
+                    sender,
+                } = inner;
+                let result = (|| {
+                    let page = self
+                        .snapshots
+                        .bet_history_game_ids(&identity, order, limit, cursor)?;
+                    let mut games = Vec::with_capacity(page.game_ids.len());
+                    for game_id in page.game_ids {
+                        let Some((account_snapshot, _)) =
+                            self.snapshots.account_snapshot_at(&identity, game_id)?
+                        else {
+                            continue;
+                        };
+                        let historical_snapshot =
+                            match self.snapshots.historical_snapshots(game_id) {
+                                Ok(snapshot) => snapshot,
+                                Err(_) => continue,
+                            };
+                        games.push(BetHistoryGame {
+                            game_id,
+                            account_snapshot,
+                            historical_snapshot,
+                        });
+                    }
+                    Ok(BetHistoryPage {
+                        games,
+                        next_cursor: page.next_cursor,
+                    })
+                })();
+
+                sender.send(result).map_err(|_| {
+                    anyhow!("Could not send `BetHistory` response for {identity:?}")
+                })?;
+                Ok(())
+            }
             Query::AllKnownStraps(sender) => {
                 let straps = self.metadata.all_known_straps()?;
                 sender.send(straps).map_err(|straps| {
@@ -464,6 +591,30 @@ impl<
             .snapshots
             .write_historical_snapshot(previous_snapshot.game_id, &historical);
 
+        let bettors = self.snapshots.bettors_for_game(previous_snapshot.game_id)?;
+        for bettor in bettors {
+            let Ok(address) = Address::from_str(&bettor) else {
+                continue;
+            };
+            let identity = Identity::Address(address);
+            let Some((account_snapshot, _)) = self
+                .snapshots
+                .account_snapshot_at(&identity, previous_snapshot.game_id)?
+            else {
+                continue;
+            };
+            if account_snapshot.claimed_rewards.is_some() {
+                continue;
+            }
+            if account_has_claimable_bets(&account_snapshot, &historical.rolls) {
+                self.snapshots.mark_unclaimed(
+                    &identity,
+                    previous_snapshot.game_id,
+                    height,
+                )?;
+            }
+        }
+
         // Reset per-game tracking
         self.modifier_triggered.clear();
         self.modifier_purchased.clear();
@@ -545,6 +696,8 @@ impl<
             &account_snapshot,
             height,
         )?;
+        self.snapshots
+            .record_bet_history(&player, game_id, height)?;
         Ok(())
     }
 
@@ -590,7 +743,10 @@ impl<
             game_id,
             &account_snapshot,
             height,
-        )
+        )?;
+        self.snapshots
+            .record_bet_history(&player, game_id, height)?;
+        Ok(())
     }
 
     fn handle_claim_rewards_event(
@@ -631,7 +787,9 @@ impl<
             game_id,
             &account_snapshot,
             height,
-        )
+        )?;
+        self.snapshots.clear_unclaimed(&player, game_id)?;
+        Ok(())
     }
 
     fn handle_fund_pot_event(&mut self, event: FundPotEvent, height: u32) -> Result<()> {

@@ -69,6 +69,34 @@ pub struct HistoricalData {
     pub strap_rewards: Vec<(strapped::Roll, strapped::Strap, u64)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct UnclaimedGameData {
+    pub game_id: u32,
+    pub account: AccountData,
+    pub history: HistoricalData,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnclaimedGamesPage {
+    pub games: Vec<UnclaimedGameData>,
+    pub next_cursor: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnclaimedOrder {
+    Asc,
+    Desc,
+}
+
+impl UnclaimedOrder {
+    fn as_str(self) -> &'static str {
+        match self {
+            UnclaimedOrder::Asc => "asc",
+            UnclaimedOrder::Desc => "desc",
+        }
+    }
+}
+
 impl IndexerClient {
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
         let base_url = base_url.into().trim_end_matches('/').to_string();
@@ -143,6 +171,47 @@ impl IndexerClient {
         let identity_path = Self::identity_path(identity)?;
         let url = format!("{}/account/{}/{}", self.base_url, identity_path, game_id);
         self.fetch_account_data(url).await
+    }
+
+    pub async fn unclaimed_games_page(
+        &self,
+        identity: &Identity,
+        order: UnclaimedOrder,
+        limit: usize,
+        cursor: Option<u32>,
+    ) -> Result<UnclaimedGamesPage> {
+        let identity_path = Self::identity_path(identity)?;
+        let mut url = format!(
+            "{}/account/{}/unclaimed?order={}&limit={}",
+            self.base_url,
+            identity_path,
+            order.as_str(),
+            limit
+        );
+        if let Some(cursor) = cursor {
+            url.push_str(&format!("&cursor={cursor}"));
+        }
+        let res = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .wrap_err("indexer request failed")?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unavailable body>".to_string());
+            return Err(eyre!(
+                "indexer responded with {status} when fetching unclaimed games: {body}"
+            ));
+        }
+        let dto: UnclaimedGamesPageDto = res
+            .json()
+            .await
+            .wrap_err("invalid unclaimed games payload")?;
+        Ok(dto.into())
     }
 
     pub async fn all_known_straps(&self) -> Result<Vec<(AssetId, strapped::Strap)>> {
@@ -429,8 +498,13 @@ impl From<LatestSnapshotDto> for OverviewData {
 
 impl From<LatestAccountSnapshotDto> for AccountData {
     fn from(dto: LatestAccountSnapshotDto) -> Self {
-        let per_roll_bets = dto
-            .snapshot
+        AccountData::from_snapshot(dto.snapshot, dto.block_height)
+    }
+}
+
+impl AccountData {
+    fn from_snapshot(snapshot: AccountSnapshotDto, block_height: u32) -> Self {
+        let per_roll_bets = snapshot
             .per_roll_bets
             .into_iter()
             .map(|entry| {
@@ -448,32 +522,36 @@ impl From<LatestAccountSnapshotDto> for AccountData {
             .collect();
         AccountData {
             per_roll_bets,
-            strap_totals: dto
-                .snapshot
+            strap_totals: snapshot
                 .strap_bets
                 .into_iter()
                 .map(|(strap, amount)| (strap.into(), amount))
                 .collect(),
-            total_chip_bet: dto.snapshot.total_chip_bet,
-            total_chip_won: dto.snapshot.total_chip_won,
-            claimed_rewards: dto.snapshot.claimed_rewards.map(|(chips, straps)| {
+            total_chip_bet: snapshot.total_chip_bet,
+            total_chip_won: snapshot.total_chip_won,
+            claimed_rewards: snapshot.claimed_rewards.map(|(chips, straps)| {
                 (
                     chips,
                     straps.into_iter().map(|(s, n)| (s.into(), n)).collect(),
                 )
             }),
-            block_height: dto.block_height,
+            block_height,
         }
     }
 }
 
 impl From<HistoricalSnapshotDto> for HistoricalData {
     fn from(dto: HistoricalSnapshotDto) -> Self {
+        HistoricalData::from_inner(dto.snapshot)
+    }
+}
+
+impl HistoricalData {
+    fn from_inner(snapshot: HistoricalSnapshotInnerDto) -> Self {
         HistoricalData {
-            game_id: dto.snapshot.game_id,
-            rolls: dto.snapshot.rolls.into_iter().map(Into::into).collect(),
-            modifiers: dto
-                .snapshot
+            game_id: snapshot.game_id,
+            rolls: snapshot.rolls.into_iter().map(Into::into).collect(),
+            modifiers: snapshot
                 .modifiers
                 .into_iter()
                 .map(|entry| {
@@ -484,12 +562,42 @@ impl From<HistoricalSnapshotDto> for HistoricalData {
                     )
                 })
                 .collect(),
-            strap_rewards: dto
-                .snapshot
+            strap_rewards: snapshot
                 .strap_rewards
                 .into_iter()
                 .map(|(roll, strap, cost)| (roll.into(), strap.into(), cost))
                 .collect(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UnclaimedGamesPageDto {
+    games: Vec<UnclaimedGameDto>,
+    next_cursor: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct UnclaimedGameDto {
+    game_id: u32,
+    account_snapshot: AccountSnapshotDto,
+    historical_snapshot: HistoricalSnapshotInnerDto,
+}
+
+impl From<UnclaimedGamesPageDto> for UnclaimedGamesPage {
+    fn from(dto: UnclaimedGamesPageDto) -> Self {
+        let games = dto
+            .games
+            .into_iter()
+            .map(|entry| UnclaimedGameData {
+                game_id: entry.game_id,
+                account: AccountData::from_snapshot(entry.account_snapshot, 0),
+                history: HistoricalData::from_inner(entry.historical_snapshot),
+            })
+            .collect();
+        Self {
+            games,
+            next_cursor: dto.next_cursor,
         }
     }
 }
