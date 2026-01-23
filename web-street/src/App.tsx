@@ -3300,6 +3300,7 @@ export default function App() {
             <span aria-hidden="true">{isHeaderMenuOpen ? "✕" : "☰"}</span>
           </button>
           <h1 className="street-title">STRAPPED!</h1>
+          <span className="street-title__tag">Aardvark</span>
         </div>
         <div className="street-meta">
           <span className={`status-chip status-chip--${status}`}>{status}</span>

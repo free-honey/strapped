@@ -146,15 +146,38 @@ button,
   display: none;
 }
 
+.street-header__title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+}
+
 .street-title {
   font-family: "Press Start 2P", "VT323", monospace;
   letter-spacing: 0.65em;
   font-size: clamp(20px, 3vw, 28px);
   margin: 0;
+}
+
+.street-title__tag {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  right: -14px;
+  bottom: -20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 2px solid #3c2d22;
+  background: #e6403a;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff7ef;
+  box-shadow: 0 6px 10px rgba(31, 22, 18, 0.25);
+  transform: rotate(-8deg);
 }
 
 .chips-banner {
@@ -2607,11 +2630,11 @@ body.night .modal--shop-4 {
     align-items: center;
     justify-content: center;
     gap: 6px;
+    position: static;
+    transform: none;
   }
 
   .street-title {
-    position: static;
-    transform: none;
     margin: 0;
   }
 
