@@ -61,6 +61,19 @@ pub struct Strap {
     pub modifier: Modifier,
 }
 
+pub struct Equipment {
+    pub shirt: Option<Strap>,
+    pub pants: Option<Strap>,
+    pub shoes: Option<Strap>,
+    pub accessories: Vec<Strap>,
+}
+
+pub struct EquipmentBase {
+    pub shirt: Option<Strap>,
+    pub pants: Option<Strap>,
+    pub shoes: Option<Strap>,
+}
+
 pub struct PotStatus {
     pub pot_size: u64,
     pub chips_owed: u64,
@@ -73,6 +86,27 @@ impl Strap {
             level,
             kind,
             modifier,
+        }
+    }
+}
+
+impl Equipment {
+    pub fn empty() -> Equipment {
+        Equipment {
+            shirt: Option::None,
+            pants: Option::None,
+            shoes: Option::None,
+            accessories: Vec::new(),
+        }
+    }
+}
+
+impl EquipmentBase {
+    pub fn empty() -> EquipmentBase {
+        EquipmentBase {
+            shirt: Option::None,
+            pants: Option::None,
+            shoes: Option::None,
         }
     }
 }
