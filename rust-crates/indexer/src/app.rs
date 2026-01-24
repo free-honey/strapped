@@ -7,6 +7,7 @@ use crate::{
             BetHistoryGame,
             BetHistoryPage,
             BetHistoryQuery,
+            EquipmentSnapshotQuery,
             HistoricalAccountSnapshotQuery,
             HistoricalSnapshotQuery,
             Query,
@@ -26,6 +27,10 @@ use crate::{
         Event,
         FundPotEvent,
         InitializedEvent,
+        EquipmentAccessoryAddedEvent,
+        EquipmentAccessoryRemovedEvent,
+        EquipmentBaseClearedEvent,
+        EquipmentBaseSetEvent,
         Modifier,
         ModifierTriggeredEvent,
         NewGameEvent,
@@ -35,6 +40,7 @@ use crate::{
         Roll,
         RollEvent,
         Strap,
+        StrapKind,
     },
     snapshot::{
         ALL_ROLLS,
@@ -43,6 +49,7 @@ use crate::{
         AccountRollBets,
         AccountSnapshot,
         ActiveModifier,
+        EquipmentSnapshot,
         HistoricalSnapshot,
         ModifierShopEntry,
         OverviewSnapshot,
@@ -344,6 +351,18 @@ impl<
                 ContractEvent::PurchaseModifier(event) => {
                     self.handle_purchase_modifier_event(event, height)
                 }
+                ContractEvent::EquipmentBaseSet(event) => {
+                    self.handle_equipment_base_set_event(event, height)
+                }
+                ContractEvent::EquipmentBaseCleared(event) => {
+                    self.handle_equipment_base_cleared_event(event, height)
+                }
+                ContractEvent::EquipmentAccessoryAdded(event) => {
+                    self.handle_equipment_accessory_added_event(event, height)
+                }
+                ContractEvent::EquipmentAccessoryRemoved(event) => {
+                    self.handle_equipment_accessory_removed_event(event, height)
+                }
             },
         }
     }
@@ -371,6 +390,21 @@ impl<
                                 }
                         }
                     )?;
+                Ok(())
+            }
+            Query::LatestEquipmentSnapshot(inner) => {
+                let EquipmentSnapshotQuery { identity, sender } = inner;
+                let snapshot = self.snapshots.latest_equipment_snapshot(&identity)?;
+                sender
+                    .send(snapshot)
+                    .map_err(|maybe_snapshot| match maybe_snapshot {
+                        Some((snapshot, height)) => anyhow!(
+                            "Could not send `LatestEquipmentSnapshot` response for {identity:?}: {snapshot:?} at {height:?}"
+                        ),
+                        None => anyhow!(
+                            "Could not send `LatestEquipmentSnapshot` response for {identity:?}, also it was `None` btw"
+                        ),
+                    })?;
                 Ok(())
             }
             Query::HistoricalSnapshot(inner) => {
@@ -824,5 +858,112 @@ impl<
         }
         self.refresh_height(&mut snapshot, height);
         self.snapshots.update_snapshot(&snapshot, height)
+    }
+
+    fn handle_equipment_base_set_event(
+        &mut self,
+        event: EquipmentBaseSetEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling EquipmentBaseSetEvent at height {}", height);
+        let mut equipment = self
+            .snapshots
+            .latest_equipment_snapshot(&event.player)?
+            .map(|(snapshot, _)| snapshot)
+            .unwrap_or_else(EquipmentSnapshot::empty);
+        match event.slot {
+            StrapKind::Shirt => equipment.shirt = Some(event.strap.clone()),
+            StrapKind::Pants => equipment.pants = Some(event.strap.clone()),
+            StrapKind::Shoes => equipment.shoes = Some(event.strap.clone()),
+            _ => {}
+        }
+        self.remember_strap(&event.strap);
+        if let Some(replaced) = event.replaced {
+            self.remember_strap(&replaced);
+        }
+        self.snapshots.update_equipment_snapshot(
+            &event.player,
+            &equipment,
+            height,
+        )
+    }
+
+    fn handle_equipment_base_cleared_event(
+        &mut self,
+        event: EquipmentBaseClearedEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!("Handling EquipmentBaseClearedEvent at height {}", height);
+        let mut equipment = self
+            .snapshots
+            .latest_equipment_snapshot(&event.player)?
+            .map(|(snapshot, _)| snapshot)
+            .unwrap_or_else(EquipmentSnapshot::empty);
+        match event.slot {
+            StrapKind::Shirt => equipment.shirt = None,
+            StrapKind::Pants => equipment.pants = None,
+            StrapKind::Shoes => equipment.shoes = None,
+            _ => {}
+        }
+        self.remember_strap(&event.strap);
+        self.snapshots.update_equipment_snapshot(
+            &event.player,
+            &equipment,
+            height,
+        )
+    }
+
+    fn handle_equipment_accessory_added_event(
+        &mut self,
+        event: EquipmentAccessoryAddedEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!(
+            "Handling EquipmentAccessoryAddedEvent at height {}",
+            height
+        );
+        let mut equipment = self
+            .snapshots
+            .latest_equipment_snapshot(&event.player)?
+            .map(|(snapshot, _)| snapshot)
+            .unwrap_or_else(EquipmentSnapshot::empty);
+        let index = event.index as usize;
+        if index >= equipment.accessories.len() {
+            equipment.accessories.push(event.strap.clone());
+        } else {
+            equipment.accessories.insert(index, event.strap.clone());
+        }
+        self.remember_strap(&event.strap);
+        self.snapshots.update_equipment_snapshot(
+            &event.player,
+            &equipment,
+            height,
+        )
+    }
+
+    fn handle_equipment_accessory_removed_event(
+        &mut self,
+        event: EquipmentAccessoryRemovedEvent,
+        height: u32,
+    ) -> Result<()> {
+        tracing::info!(
+            "Handling EquipmentAccessoryRemovedEvent at height {}",
+            height
+        );
+        let mut equipment = self
+            .snapshots
+            .latest_equipment_snapshot(&event.player)?
+            .map(|(snapshot, _)| snapshot)
+            .unwrap_or_else(EquipmentSnapshot::empty);
+        let index = event.index as usize;
+        if index < equipment.accessories.len() {
+            equipment.accessories.remove(index);
+        }
+        self.remember_strap(&event.strap);
+        self.snapshots.update_equipment_snapshot(
+            &event.player,
+            &equipment,
+            height,
+        )
     }
 }

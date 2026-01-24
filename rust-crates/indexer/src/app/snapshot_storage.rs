@@ -1,5 +1,6 @@
 use crate::snapshot::{
     AccountSnapshot,
+    EquipmentSnapshot,
     HistoricalSnapshot,
     OverviewSnapshot,
 };
@@ -37,6 +38,12 @@ pub trait SnapshotStorage {
         &self,
         account: &Identity,
     ) -> crate::Result<Option<(AccountSnapshot, u32)>>;
+
+    /// retrieve latest equipment snapshot along with its block height
+    fn latest_equipment_snapshot(
+        &self,
+        account: &Identity,
+    ) -> crate::Result<Option<(EquipmentSnapshot, u32)>>;
 
     /// retrieve account snapshot for the given game id
     fn account_snapshot_at(
@@ -98,6 +105,14 @@ pub trait SnapshotStorage {
         account: &Identity,
         game_id: u32,
         account_snapshot: &AccountSnapshot,
+        height: u32,
+    ) -> crate::Result<()>;
+
+    /// write or overwrite equipment snapshot at given block height
+    fn update_equipment_snapshot(
+        &mut self,
+        account: &Identity,
+        equipment_snapshot: &EquipmentSnapshot,
         height: u32,
     ) -> crate::Result<()>;
 

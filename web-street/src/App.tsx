@@ -93,6 +93,18 @@ type AccountSnapshotResponse = {
   block_height: number;
 };
 
+type EquipmentSnapshot = {
+  shirt: Strap | null;
+  pants: Strap | null;
+  shoes: Strap | null;
+  accessories: Strap[];
+};
+
+type EquipmentSnapshotResponse = {
+  snapshot: EquipmentSnapshot;
+  block_height: number;
+};
+
 type StrapMetadata = {
   assetId: string;
   strap: Strap;
@@ -875,6 +887,31 @@ const normalizeAccountSnapshot = (input: unknown): AccountSnapshot | null => {
   };
 };
 
+const normalizeEquipmentSnapshot = (input: unknown): EquipmentSnapshot | null => {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  const snapshot =
+    record.snapshot && typeof record.snapshot === "object"
+      ? (record.snapshot as Record<string, unknown>)
+      : record;
+  const shirt = parseStrap(snapshot.shirt);
+  const pants = parseStrap(snapshot.pants);
+  const shoes = parseStrap(snapshot.shoes);
+  const accessories = Array.isArray(snapshot.accessories)
+    ? snapshot.accessories
+        .map((entry) => parseStrap(entry))
+        .filter((entry): entry is Strap => entry !== null)
+    : [];
+  return {
+    shirt,
+    pants,
+    shoes,
+    accessories,
+  };
+};
+
 const normalizeStrapMetadata = (input: unknown): StrapMetadata[] => {
   if (!Array.isArray(input)) {
     return [];
@@ -1160,6 +1197,7 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
+  const [infoTab, setInfoTab] = useState<"overview" | "equipment">("overview");
   const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
   const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
   const [betAmount, setBetAmount] = useState("1");
@@ -1181,6 +1219,31 @@ export default function App() {
   const [modifierPurchaseError, setModifierPurchaseError] = useState<string | null>(
     null
   );
+  const [equipmentSnapshot, setEquipmentSnapshot] =
+    useState<EquipmentSnapshot | null>(null);
+  const [equipmentStatus, setEquipmentStatus] = useState<FetchStatus>("idle");
+  const [equipmentError, setEquipmentError] = useState<string | null>(null);
+  const [equipmentActionStatus, setEquipmentActionStatus] = useState<
+    "idle" | "signing" | "pending" | "success" | "error"
+  >("idle");
+  const [equipmentActionError, setEquipmentActionError] = useState<string | null>(
+    null
+  );
+  const [equipmentActionTxId, setEquipmentActionTxId] = useState<string | null>(
+    null
+  );
+  const [selectedShirtAssetId, setSelectedShirtAssetId] = useState<string | null>(
+    null
+  );
+  const [selectedPantsAssetId, setSelectedPantsAssetId] = useState<string | null>(
+    null
+  );
+  const [selectedShoesAssetId, setSelectedShoesAssetId] = useState<string | null>(
+    null
+  );
+  const [selectedAccessoryAssetId, setSelectedAccessoryAssetId] = useState<
+    string | null
+  >(null);
   const [claimStatus, setClaimStatus] = useState<
     "idle" | "signing" | "pending" | "success" | "error"
   >("idle");
@@ -1614,6 +1677,26 @@ export default function App() {
       };
     });
   }, [ownedStraps]);
+  const ownedShirts = useMemo(
+    () => ownedStraps.filter((entry) => entry.strap.kind === "Shirt"),
+    [ownedStraps]
+  );
+  const ownedPants = useMemo(
+    () => ownedStraps.filter((entry) => entry.strap.kind === "Pants"),
+    [ownedStraps]
+  );
+  const ownedShoes = useMemo(
+    () => ownedStraps.filter((entry) => entry.strap.kind === "Shoes"),
+    [ownedStraps]
+  );
+  const ownedAccessories = useMemo(
+    () =>
+      ownedStraps.filter(
+        (entry) =>
+          !["Shirt", "Pants", "Shoes"].includes(entry.strap.kind ?? "")
+      ),
+    [ownedStraps]
+  );
 
   useEffect(() => {
     if (isConnected) {
@@ -1771,6 +1854,69 @@ export default function App() {
     };
 
     loadAccountSnapshot();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [baseUrl, walletAddress]);
+
+  useEffect(() => {
+    if (!baseUrl || !walletAddress) {
+      setEquipmentSnapshot(null);
+      setEquipmentStatus("idle");
+      setEquipmentError(null);
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const loadEquipmentSnapshot = async () => {
+      if (cancelled) {
+        return;
+      }
+      setEquipmentStatus("loading");
+      try {
+        const response = await fetch(
+          `${baseUrl}/account/${walletAddress}/equipment`
+        );
+        if (response.status === 404) {
+          if (!cancelled) {
+            setEquipmentSnapshot(null);
+            setEquipmentStatus("ok");
+            setEquipmentError(null);
+          }
+        } else if (!response.ok) {
+          throw new Error(`equipment snapshot responded with ${response.status}`);
+        } else {
+          const payload =
+            (await response.json()) as EquipmentSnapshotResponse | null;
+          const snapshot = payload ? normalizeEquipmentSnapshot(payload) : null;
+          if (!cancelled) {
+            setEquipmentSnapshot(snapshot);
+            setEquipmentStatus("ok");
+            setEquipmentError(null);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setEquipmentSnapshot(null);
+          setEquipmentStatus("error");
+          setEquipmentError(
+            err instanceof Error ? err.message : "Failed to load equipment"
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(loadEquipmentSnapshot, POLL_INTERVAL_MS);
+        }
+      }
+    };
+
+    loadEquipmentSnapshot();
 
     return () => {
       cancelled = true;
@@ -2481,6 +2627,171 @@ export default function App() {
       const message = err instanceof Error ? err.message : "Bet failed";
       setBetError(message);
       setBetStatus("error");
+    }
+  };
+
+  const getOwnedStrapByAssetId = (assetId: string | null) => {
+    if (!assetId) {
+      return null;
+    }
+    return ownedStraps.find((entry) => entry.assetId === assetId) ?? null;
+  };
+
+  const handleSetBaseEquipment = async (
+    slot: "shirt" | "pants" | "shoes",
+    assetId: string | null
+  ) => {
+    setEquipmentActionError(null);
+    setEquipmentActionTxId(null);
+
+    if (!isConnected || !wallet) {
+      setEquipmentActionError("Connect wallet to update equipment");
+      setEquipmentActionStatus("error");
+      return;
+    }
+
+    const selection = getOwnedStrapByAssetId(assetId);
+    if (!selection) {
+      setEquipmentActionError("Select a strap to equip");
+      setEquipmentActionStatus("error");
+      return;
+    }
+
+    setEquipmentActionStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const call =
+        slot === "shirt"
+          ? contract.functions.set_shirt(selection.strap)
+          : slot === "pants"
+            ? contract.functions.set_pants(selection.strap)
+            : contract.functions.set_shoes(selection.strap);
+      const response = await call
+        .callParams({
+          forward: {
+            amount: 1,
+            assetId: selection.assetId,
+          },
+        })
+        .call();
+      setEquipmentActionTxId(response.transactionId);
+      setEquipmentActionStatus("pending");
+      await response.waitForResult();
+      setEquipmentActionStatus("success");
+      await refreshBalances();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update equipment";
+      setEquipmentActionError(message);
+      setEquipmentActionStatus("error");
+    }
+  };
+
+  const handleClearBaseEquipment = async (
+    slot: "shirt" | "pants" | "shoes"
+  ) => {
+    setEquipmentActionError(null);
+    setEquipmentActionTxId(null);
+
+    if (!isConnected || !wallet) {
+      setEquipmentActionError("Connect wallet to update equipment");
+      setEquipmentActionStatus("error");
+      return;
+    }
+
+    setEquipmentActionStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const call =
+        slot === "shirt"
+          ? contract.functions.clear_shirt()
+          : slot === "pants"
+            ? contract.functions.clear_pants()
+            : contract.functions.clear_shoes();
+      const response = await call.call();
+      setEquipmentActionTxId(response.transactionId);
+      setEquipmentActionStatus("pending");
+      await response.waitForResult();
+      setEquipmentActionStatus("success");
+      await refreshBalances();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update equipment";
+      setEquipmentActionError(message);
+      setEquipmentActionStatus("error");
+    }
+  };
+
+  const handleAddAccessory = async (assetId: string | null) => {
+    setEquipmentActionError(null);
+    setEquipmentActionTxId(null);
+
+    if (!isConnected || !wallet) {
+      setEquipmentActionError("Connect wallet to update equipment");
+      setEquipmentActionStatus("error");
+      return;
+    }
+
+    const selection = getOwnedStrapByAssetId(assetId);
+    if (!selection) {
+      setEquipmentActionError("Select an accessory to add");
+      setEquipmentActionStatus("error");
+      return;
+    }
+
+    setEquipmentActionStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions
+        .add_accessory(selection.strap)
+        .callParams({
+          forward: {
+            amount: 1,
+            assetId: selection.assetId,
+          },
+        })
+        .call();
+      setEquipmentActionTxId(response.transactionId);
+      setEquipmentActionStatus("pending");
+      await response.waitForResult();
+      setEquipmentActionStatus("success");
+      await refreshBalances();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update equipment";
+      setEquipmentActionError(message);
+      setEquipmentActionStatus("error");
+    }
+  };
+
+  const handleRemoveAccessory = async (index: number) => {
+    setEquipmentActionError(null);
+    setEquipmentActionTxId(null);
+
+    if (!isConnected || !wallet) {
+      setEquipmentActionError("Connect wallet to update equipment");
+      setEquipmentActionStatus("error");
+      return;
+    }
+
+    setEquipmentActionStatus("signing");
+
+    try {
+      const contract = createStrappedContract(wallet, networkKey);
+      const response = await contract.functions.remove_accessory(index).call();
+      setEquipmentActionTxId(response.transactionId);
+      setEquipmentActionStatus("pending");
+      await response.waitForResult();
+      setEquipmentActionStatus("success");
+      await refreshBalances();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update equipment";
+      setEquipmentActionError(message);
+      setEquipmentActionStatus("error");
     }
   };
 
@@ -4457,67 +4768,281 @@ export default function App() {
               </button>
             </div>
             <div className="modal__body">
-              <div className="modal-card">
-                <h3>Status</h3>
-                <div className="modal-stack">
-                  <div>Game: {snapshot ? snapshot.game_id : "—"}</div>
-                  <div>Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}</div>
-                  <div>Owed: {snapshot ? formatNumber(snapshot.chips_owed) : "—"}</div>
-                  <div>
-                    Chips bet:{" "}
-                    {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
-                  </div>
-                  <div>
-                    Max bet size:{" "}
-                    {availableBetCapacity !== null
-                      ? formatNumber(availableBetCapacity)
-                      : "—"}
-                  </div>
-                </div>
+              <div className="modal-tabs">
+                <button
+                  type="button"
+                  className={`modal-tab${
+                    infoTab === "overview" ? " modal-tab--active" : ""
+                  }`}
+                  {...createPressHandlers(() => setInfoTab("overview"))}
+                >
+                  Overview
+                </button>
+                <button
+                  type="button"
+                  className={`modal-tab${
+                    infoTab === "equipment" ? " modal-tab--active" : ""
+                  }`}
+                  {...createPressHandlers(() => setInfoTab("equipment"))}
+                >
+                  Equipment
+                </button>
               </div>
-              <div className="modal-card">
-                <h3>Assets</h3>
-                <div className="modal-stack">
-                  <div>
-                    Base: {formatAssetLabel(baseAssetId, baseAssetTicker)}
-                  </div>
-                  <div>
-                    Chips: {formatAssetLabel(chipAssetId, chipAssetTicker)}
-                  </div>
-                </div>
-              </div>
-              <div className="modal-card">
-                <h3>Chain</h3>
-                <div className="modal-stack">
-                  <div>
-                    Block:{" "}
-                    {snapshot ? formatNumber(snapshot.current_block_height) : "—"}
-                  </div>
-                  <div>
-                    Next roll:{" "}
-                    {snapshot ? formatNumber(snapshot.next_roll_height) : "—"}
-                  </div>
-                  <div>
-                    Roll freq:{" "}
-                    {snapshot ? formatNumber(snapshot.roll_frequency) : "—"}
-                  </div>
-                </div>
-              </div>
-              <div className="modal-card">
-                <h3>Shop</h3>
-                {shopEntries.length > 0 ? (
-                  <div className="modal-stack">
-                    {shopEntries.slice(0, 6).map((entry, index) => (
-                      <div key={`shop-modal-${index}`}>
-                        {entry.modifier_roll} · {entry.modifier} ·{" "}
-                        {formatNumber(entry.price)}
+              {infoTab === "overview" ? (
+                <>
+                  <div className="modal-card">
+                    <h3>Status</h3>
+                    <div className="modal-stack">
+                      <div>Game: {snapshot ? snapshot.game_id : "—"}</div>
+                      <div>Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}</div>
+                      <div>Owed: {snapshot ? formatNumber(snapshot.chips_owed) : "—"}</div>
+                      <div>
+                        Chips bet:{" "}
+                        {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
                       </div>
-                    ))}
+                      <div>
+                        Max bet size:{" "}
+                        {availableBetCapacity !== null
+                          ? formatNumber(availableBetCapacity)
+                          : "—"}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="modal-muted">No shop entries yet.</div>
-                )}
-              </div>
+                  <div className="modal-card">
+                    <h3>Assets</h3>
+                    <div className="modal-stack">
+                      <div>
+                        Base: {formatAssetLabel(baseAssetId, baseAssetTicker)}
+                      </div>
+                      <div>
+                        Chips: {formatAssetLabel(chipAssetId, chipAssetTicker)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="modal-card">
+                    <h3>Chain</h3>
+                    <div className="modal-stack">
+                      <div>
+                        Block:{" "}
+                        {snapshot
+                          ? formatNumber(snapshot.current_block_height)
+                          : "—"}
+                      </div>
+                      <div>
+                        Next roll:{" "}
+                        {snapshot ? formatNumber(snapshot.next_roll_height) : "—"}
+                      </div>
+                      <div>
+                        Roll freq:{" "}
+                        {snapshot ? formatNumber(snapshot.roll_frequency) : "—"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="modal-card">
+                    <h3>Shop</h3>
+                    {shopEntries.length > 0 ? (
+                      <div className="modal-stack">
+                        {shopEntries.slice(0, 6).map((entry, index) => (
+                          <div key={`shop-modal-${index}`}>
+                            {entry.modifier_roll} · {entry.modifier} ·{" "}
+                            {formatNumber(entry.price)}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="modal-muted">No shop entries yet.</div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="modal-card">
+                  <h3>Current loadout</h3>
+                  <div className="modal-stack">
+                    <div>
+                      Shirt:{" "}
+                      {equipmentSnapshot?.shirt
+                        ? formatRewardCompact(equipmentSnapshot.shirt)
+                        : "—"}
+                    </div>
+                    <div>
+                      Pants:{" "}
+                      {equipmentSnapshot?.pants
+                        ? formatRewardCompact(equipmentSnapshot.pants)
+                        : "—"}
+                    </div>
+                    <div>
+                      Shoes:{" "}
+                      {equipmentSnapshot?.shoes
+                        ? formatRewardCompact(equipmentSnapshot.shoes)
+                        : "—"}
+                    </div>
+                  </div>
+                  <h3>Update base slots</h3>
+                  <div className="modal-stack">
+                    <label className="modal-select">
+                      <span>Shirt</span>
+                      <select
+                        value={selectedShirtAssetId ?? ""}
+                        onChange={(event) =>
+                          setSelectedShirtAssetId(event.target.value || null)
+                        }
+                      >
+                        <option value="">Select shirt</option>
+                        {ownedShirts.map((entry) => (
+                          <option key={entry.assetId} value={entry.assetId}>
+                            {formatRewardCompact(entry.strap)} ·{" "}
+                            {entry.assetId.slice(0, 6)}…
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() =>
+                          handleSetBaseEquipment("shirt", selectedShirtAssetId)
+                        }
+                      >
+                        Equip
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => handleClearBaseEquipment("shirt")}
+                      >
+                        Clear
+                      </button>
+                    </label>
+                    <label className="modal-select">
+                      <span>Pants</span>
+                      <select
+                        value={selectedPantsAssetId ?? ""}
+                        onChange={(event) =>
+                          setSelectedPantsAssetId(event.target.value || null)
+                        }
+                      >
+                        <option value="">Select pants</option>
+                        {ownedPants.map((entry) => (
+                          <option key={entry.assetId} value={entry.assetId}>
+                            {formatRewardCompact(entry.strap)} ·{" "}
+                            {entry.assetId.slice(0, 6)}…
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() =>
+                          handleSetBaseEquipment("pants", selectedPantsAssetId)
+                        }
+                      >
+                        Equip
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => handleClearBaseEquipment("pants")}
+                      >
+                        Clear
+                      </button>
+                    </label>
+                    <label className="modal-select">
+                      <span>Shoes</span>
+                      <select
+                        value={selectedShoesAssetId ?? ""}
+                        onChange={(event) =>
+                          setSelectedShoesAssetId(event.target.value || null)
+                        }
+                      >
+                        <option value="">Select shoes</option>
+                        {ownedShoes.map((entry) => (
+                          <option key={entry.assetId} value={entry.assetId}>
+                            {formatRewardCompact(entry.strap)} ·{" "}
+                            {entry.assetId.slice(0, 6)}…
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() =>
+                          handleSetBaseEquipment("shoes", selectedShoesAssetId)
+                        }
+                      >
+                        Equip
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => handleClearBaseEquipment("shoes")}
+                      >
+                        Clear
+                      </button>
+                    </label>
+                  </div>
+                  <h3>Accessories</h3>
+                  <div className="modal-stack">
+                    {equipmentSnapshot?.accessories?.length ? (
+                      equipmentSnapshot.accessories.map((strap, index) => (
+                        <div key={`${strapKey(strap)}-${index}`}>
+                          {formatRewardCompact(strap)}{" "}
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => handleRemoveAccessory(index)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="modal-muted">No accessories equipped.</div>
+                    )}
+                  </div>
+                  <h3>Add accessory</h3>
+                  <div className="modal-stack">
+                    <label className="modal-select">
+                      <span>Accessory</span>
+                      <select
+                        value={selectedAccessoryAssetId ?? ""}
+                        onChange={(event) =>
+                          setSelectedAccessoryAssetId(event.target.value || null)
+                        }
+                      >
+                        <option value="">Select accessory</option>
+                        {ownedAccessories.map((entry) => (
+                          <option key={entry.assetId} value={entry.assetId}>
+                            {formatRewardCompact(entry.strap)} ·{" "}
+                            {entry.assetId.slice(0, 6)}…
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() =>
+                          handleAddAccessory(selectedAccessoryAssetId)
+                        }
+                      >
+                        Add
+                      </button>
+                    </label>
+                  </div>
+                  <div className="modal-muted">
+                    {equipmentStatus === "loading"
+                      ? "Loading equipment..."
+                      : equipmentError ?? null}
+                  </div>
+                  <div className="modal-muted">
+                    {equipmentActionStatus === "pending"
+                      ? "Equipment update pending..."
+                      : equipmentActionStatus === "success"
+                        ? "Equipment updated."
+                        : equipmentActionStatus === "error"
+                          ? equipmentActionError
+                          : null}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

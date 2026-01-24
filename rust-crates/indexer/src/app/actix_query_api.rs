@@ -12,6 +12,7 @@ use crate::{
         ALL_ROLLS,
         AccountRollBets,
         AccountSnapshot,
+        EquipmentSnapshot,
         HistoricalSnapshot,
         OverviewSnapshot,
     },
@@ -59,6 +60,12 @@ struct LatestSnapshotDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct LatestAccountSnapshotDto {
     snapshot: AccountSnapshot,
+    block_height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct LatestEquipmentSnapshotDto {
+    snapshot: EquipmentSnapshot,
     block_height: u32,
 }
 
@@ -167,6 +174,10 @@ impl ActixQueryApi {
                     web::get().to(handle_bet_history),
                 )
                 .route(
+                    "/account/{identity}/equipment",
+                    web::get().to(handle_equipment_snapshot),
+                )
+                .route(
                     "/account/{identity}/{game_id}",
                     web::get().to(handle_historical_account_snapshot),
                 )
@@ -262,6 +273,34 @@ async fn handle_account_snapshot(
     {
         normalize_account_snapshot(&mut snapshot);
         Ok(web::Json(Some(LatestAccountSnapshotDto {
+            snapshot,
+            block_height,
+        })))
+    } else {
+        Ok(web::Json(None))
+    }
+}
+
+async fn handle_equipment_snapshot(
+    sender: web::Data<mpsc::Sender<Query>>,
+    account_identity: web::Path<String>,
+) -> actix_web::Result<web::Json<Option<LatestEquipmentSnapshotDto>>> {
+    tracing::info!("received equipment snapshot request");
+    let (response_sender, response_receiver) = oneshot::channel();
+    let inner = Address::from_str(&account_identity)
+        .map_err(|_| UrlencodedError::Payload(PayloadError::EncodingCorrupted))?;
+    let identity = Identity::Address(inner);
+    let query = Query::latest_equipment_snapshot(identity, response_sender);
+
+    sender.get_ref().clone().send(query).await.map_err(|_| {
+        ErrorInternalServerError("unable to forward equipment snapshot query")
+    })?;
+
+    if let Some((snapshot, block_height)) = response_receiver
+        .await
+        .map_err(|_| ErrorInternalServerError("equipment snapshot responder dropped"))?
+    {
+        Ok(web::Json(Some(LatestEquipmentSnapshotDto {
             snapshot,
             block_height,
         })))

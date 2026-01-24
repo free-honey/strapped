@@ -27,6 +27,10 @@ pub enum ContractEvent {
     ClaimRewards(ClaimRewardsEvent),
     FundPot(FundPotEvent),
     PurchaseModifier(PurchaseModifierEvent),
+    EquipmentBaseSet(EquipmentBaseSetEvent),
+    EquipmentBaseCleared(EquipmentBaseClearedEvent),
+    EquipmentAccessoryAdded(EquipmentAccessoryAddedEvent),
+    EquipmentAccessoryRemoved(EquipmentAccessoryRemovedEvent),
 }
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone, Serialize, Deserialize)]
@@ -226,6 +230,35 @@ pub struct PurchaseModifierEvent {
     pub expected_roll: Roll,
     pub expected_modifier: Modifier,
     pub purchaser: Identity,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub struct EquipmentBaseSetEvent {
+    pub player: Identity,
+    pub slot: StrapKind,
+    pub strap: Strap,
+    pub replaced: Option<Strap>,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub struct EquipmentBaseClearedEvent {
+    pub player: Identity,
+    pub slot: StrapKind,
+    pub strap: Strap,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub struct EquipmentAccessoryAddedEvent {
+    pub player: Identity,
+    pub strap: Strap,
+    pub index: u64,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub struct EquipmentAccessoryRemovedEvent {
+    pub player: Identity,
+    pub strap: Strap,
+    pub index: u64,
 }
 
 impl Event {

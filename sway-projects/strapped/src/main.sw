@@ -178,11 +178,11 @@ abi Strapped {
     fn get_my_equipment() -> Equipment;
 
     /// Set base equipment slots
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn set_shirt(strap: Strap);
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn set_pants(strap: Strap);
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn set_shoes(strap: Strap);
 
     /// Clear base equipment slots
@@ -194,7 +194,7 @@ abi Strapped {
     fn clear_shoes();
 
     /// Manage accessory equipment
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn add_accessory(strap: Strap);
     #[storage(read, write)]
     fn remove_accessory(index: u64);
@@ -800,9 +800,10 @@ impl Strapped for Contract {
         read_equipment(caller)
     }
 
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn set_shirt(strap: Strap) {
         require(strap.kind == StrapKind::Shirt, "strap must be a shirt");
+        require_strap_payment(strap);
         let caller = match msg_sender() {
             Ok(id) => id,
             Err(_) => {
@@ -815,13 +816,19 @@ impl Strapped for Contract {
             .get(caller)
             .try_read()
             .unwrap_or(EquipmentBase::empty());
+        let replaced = base.shirt;
         base.shirt = Some(strap);
         storage.equipment_base.insert(caller, base);
+        if let Some(previous) = replaced {
+            transfer(caller, strap_asset_id(previous), 1);
+        }
+        log_equipment_base_set_event(caller, StrapKind::Shirt, strap, replaced);
     }
 
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn set_pants(strap: Strap) {
         require(strap.kind == StrapKind::Pants, "strap must be pants");
+        require_strap_payment(strap);
         let caller = match msg_sender() {
             Ok(id) => id,
             Err(_) => {
@@ -834,13 +841,19 @@ impl Strapped for Contract {
             .get(caller)
             .try_read()
             .unwrap_or(EquipmentBase::empty());
+        let replaced = base.pants;
         base.pants = Some(strap);
         storage.equipment_base.insert(caller, base);
+        if let Some(previous) = replaced {
+            transfer(caller, strap_asset_id(previous), 1);
+        }
+        log_equipment_base_set_event(caller, StrapKind::Pants, strap, replaced);
     }
 
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn set_shoes(strap: Strap) {
         require(strap.kind == StrapKind::Shoes, "strap must be shoes");
+        require_strap_payment(strap);
         let caller = match msg_sender() {
             Ok(id) => id,
             Err(_) => {
@@ -853,8 +866,13 @@ impl Strapped for Contract {
             .get(caller)
             .try_read()
             .unwrap_or(EquipmentBase::empty());
+        let replaced = base.shoes;
         base.shoes = Some(strap);
         storage.equipment_base.insert(caller, base);
+        if let Some(previous) = replaced {
+            transfer(caller, strap_asset_id(previous), 1);
+        }
+        log_equipment_base_set_event(caller, StrapKind::Shoes, strap, replaced);
     }
 
     #[storage(read, write)]
@@ -871,8 +889,14 @@ impl Strapped for Contract {
             .get(caller)
             .try_read()
             .unwrap_or(EquipmentBase::empty());
+        let removed = base.shirt;
+        require(removed.is_some(), "shirt slot is empty");
         base.shirt = Option::None;
         storage.equipment_base.insert(caller, base);
+        if let Some(strap) = removed {
+            transfer(caller, strap_asset_id(strap), 1);
+            log_equipment_base_cleared_event(caller, StrapKind::Shirt, strap);
+        }
     }
 
     #[storage(read, write)]
@@ -889,8 +913,14 @@ impl Strapped for Contract {
             .get(caller)
             .try_read()
             .unwrap_or(EquipmentBase::empty());
+        let removed = base.pants;
+        require(removed.is_some(), "pants slot is empty");
         base.pants = Option::None;
         storage.equipment_base.insert(caller, base);
+        if let Some(strap) = removed {
+            transfer(caller, strap_asset_id(strap), 1);
+            log_equipment_base_cleared_event(caller, StrapKind::Pants, strap);
+        }
     }
 
     #[storage(read, write)]
@@ -907,13 +937,20 @@ impl Strapped for Contract {
             .get(caller)
             .try_read()
             .unwrap_or(EquipmentBase::empty());
+        let removed = base.shoes;
+        require(removed.is_some(), "shoes slot is empty");
         base.shoes = Option::None;
         storage.equipment_base.insert(caller, base);
+        if let Some(strap) = removed {
+            transfer(caller, strap_asset_id(strap), 1);
+            log_equipment_base_cleared_event(caller, StrapKind::Shoes, strap);
+        }
     }
 
-    #[storage(read, write)]
+    #[storage(read, write), payable]
     fn add_accessory(strap: Strap) {
         require(!is_base_kind(strap.kind), "accessories cannot be shirt, pants, or shoes");
+        require_strap_payment(strap);
         let caller = match msg_sender() {
             Ok(id) => id,
             Err(_) => {
@@ -926,12 +963,10 @@ impl Strapped for Contract {
             .get(caller)
             .load_vec();
         require(accessories.len() < 3, "accessory slots are full");
+        let new_index = accessories.len();
         accessories.push(strap);
-        let mut stored = storage.equipment_accessories.get(caller);
-        stored.clear();
-        for accessory in accessories.iter() {
-            stored.push(accessory);
-        }
+        store_accessories(caller, accessories);
+        log_equipment_accessory_added_event(caller, strap, new_index);
     }
 
     #[storage(read, write)]
@@ -948,12 +983,10 @@ impl Strapped for Contract {
             .get(caller)
             .load_vec();
         require(index < accessories.len(), "accessory index out of bounds");
-        let _ = accessories.remove(index);
-        let mut stored = storage.equipment_accessories.get(caller);
-        stored.clear();
-        for accessory in accessories.iter() {
-            stored.push(accessory);
-        }
+        let removed = accessories.remove(index);
+        store_accessories(caller, accessories);
+        transfer(caller, strap_asset_id(removed), 1);
+        log_equipment_accessory_removed_event(caller, removed, index);
     }
 }
 
@@ -982,6 +1015,28 @@ fn is_base_kind(kind: StrapKind) -> bool {
         StrapKind::Pants => true,
         StrapKind::Shoes => true,
         _ => false,
+    }
+}
+
+#[storage(read)]
+fn require_strap_payment(strap: Strap) {
+    let asset_id = strap_asset_id(strap);
+    require(msg_asset_id() == asset_id, "Must send the correct strap");
+    require(msg_amount() == 1, "Must send exactly 1 strap");
+}
+
+fn strap_asset_id(strap: Strap) -> AssetId {
+    let strap_sub_id = strap.into_sub_id();
+    let contract_id = ContractId::this();
+    AssetId::new(contract_id, strap_sub_id)
+}
+
+#[storage(write)]
+fn store_accessories(identity: Identity, accessories: Vec<Strap>) {
+    let mut stored = storage.equipment_accessories.get(identity);
+    stored.clear();
+    for accessory in accessories.iter() {
+        stored.push(accessory);
     }
 }
 

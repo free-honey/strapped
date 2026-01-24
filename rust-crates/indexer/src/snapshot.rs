@@ -170,6 +170,25 @@ pub struct AccountSnapshot {
     pub per_roll_bets: Vec<AccountRollBets>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EquipmentSnapshot {
+    pub shirt: Option<Strap>,
+    pub pants: Option<Strap>,
+    pub shoes: Option<Strap>,
+    pub accessories: Vec<Strap>,
+}
+
+impl EquipmentSnapshot {
+    pub fn empty() -> Self {
+        Self {
+            shirt: None,
+            pants: None,
+            shoes: None,
+            accessories: Vec::new(),
+        }
+    }
+}
+
 impl AccountSnapshot {
     pub fn new() -> Self {
         Self::default()

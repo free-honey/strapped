@@ -3,6 +3,7 @@ use crate::{
     events::Strap,
     snapshot::{
         AccountSnapshot,
+        EquipmentSnapshot,
         HistoricalSnapshot,
         OverviewSnapshot,
     },
@@ -24,6 +25,7 @@ pub trait QueryAPI {
 pub enum Query {
     LatestSnapshot(oneshot::Sender<(OverviewSnapshot, u32)>),
     LatestAccountSnapshot(AccountSnapshotQuery),
+    LatestEquipmentSnapshot(EquipmentSnapshotQuery),
     HistoricalSnapshot(HistoricalSnapshotQuery),
     HistoricalAccountSnapshot(HistoricalAccountSnapshotQuery),
     UnclaimedGames(UnclaimedGamesQuery),
@@ -38,6 +40,14 @@ impl Query {
     ) -> Query {
         let inner = AccountSnapshotQuery { identity, sender };
         Query::LatestAccountSnapshot(inner)
+    }
+
+    pub fn latest_equipment_snapshot(
+        identity: Identity,
+        sender: oneshot::Sender<Option<(EquipmentSnapshot, u32)>>,
+    ) -> Query {
+        let inner = EquipmentSnapshotQuery { identity, sender };
+        Query::LatestEquipmentSnapshot(inner)
     }
 
     pub fn historical_snapshot(
@@ -104,6 +114,12 @@ impl Query {
 pub struct AccountSnapshotQuery {
     pub identity: Identity,
     pub sender: oneshot::Sender<Option<(AccountSnapshot, u32)>>,
+}
+
+#[derive(Debug)]
+pub struct EquipmentSnapshotQuery {
+    pub identity: Identity,
+    pub sender: oneshot::Sender<Option<(EquipmentSnapshot, u32)>>,
 }
 
 #[derive(Debug)]
