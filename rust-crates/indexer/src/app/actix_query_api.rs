@@ -75,6 +75,14 @@ struct HistoricalSnapshotDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeploymentConfigDto {
+    pub network_url: String,
+    pub contract_id: String,
+    pub chip_asset_id: String,
+    pub chip_asset_ticker: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct StrapMetadataDto {
     asset_id: AssetId,
     strap: Strap,
@@ -144,7 +152,10 @@ pub struct ActixQueryApi {
 }
 
 impl ActixQueryApi {
-    pub async fn new(port: Option<u16>) -> Result<Self> {
+    pub async fn new(
+        port: Option<u16>,
+        deployment_config: Option<DeploymentConfigDto>,
+    ) -> Result<Self> {
         let (sender, receiver) = mpsc::channel(16);
 
         let listener = TcpListener::bind(("0.0.0.0", port.unwrap_or(0)))
@@ -159,12 +170,15 @@ impl ActixQueryApi {
         let server_sender = sender.clone();
         let server = HttpServer::new(move || {
             let sender = server_sender.clone();
+            let deployment_config = deployment_config.clone();
             // server_routes(sender)
 
             App::new()
                 .app_data(web::Data::new(sender))
+                .app_data(web::Data::new(deployment_config))
                 .wrap(Cors::permissive())
                 .route("/snapshot/latest", web::get().to(handle_latest_snapshot))
+                .route("/deployment", web::get().to(handle_deployment_config))
                 .route(
                     "/account/{identity}/unclaimed",
                     web::get().to(handle_unclaimed_games),
@@ -250,6 +264,17 @@ async fn handle_latest_snapshot(
         snapshot,
         block_height,
     }))
+}
+
+async fn handle_deployment_config(
+    deployment_config: web::Data<Option<DeploymentConfigDto>>,
+) -> actix_web::Result<web::Json<DeploymentConfigDto>> {
+    let Some(config) = deployment_config.get_ref().clone() else {
+        return Err(ErrorInternalServerError(
+            "deployment config unavailable in indexer",
+        ));
+    };
+    Ok(web::Json(config))
 }
 
 async fn handle_account_snapshot(
@@ -508,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_and_respond_to_latest_overview_snapshot() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}/snapshot/latest", api.base_url());
         let expected_height = 42;
@@ -541,7 +566,7 @@ mod tests {
     #[tokio::test]
     async fn query__cors_allows_any_origin() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}/snapshot/latest", api.base_url());
 
@@ -572,9 +597,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query__can_get_deployment_config() {
+        // given
+        let expected = DeploymentConfigDto {
+            network_url: "https://testnet.fuel.network".to_string(),
+            contract_id: "0xcontract".to_string(),
+            chip_asset_id: "0xchip".to_string(),
+            chip_asset_ticker: "CHIP".to_string(),
+        };
+        let api = ActixQueryApi::new(None, Some(expected.clone()))
+            .await
+            .unwrap();
+        let client = reqwest::Client::new();
+        let url = format!("{}/deployment", api.base_url());
+
+        // when
+        let response = client.get(url).send().await.unwrap();
+        let body = response.json::<DeploymentConfigDto>().await.unwrap();
+
+        // then
+        assert_eq!(body, expected);
+    }
+
+    #[tokio::test]
     async fn query__can_get_and_respond_to_latest_account_snapshot() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let expected_identity = Identity::default();
         let expected_identity_str = match expected_identity {
@@ -622,7 +670,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_historical_account_snapshot() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let expected_identity = Identity::default();
         let expected_identity_str = match &expected_identity {
@@ -672,7 +720,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_historical_snapshot() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let expected_game_id = 7u32;
         let url = format!("{}/historical/{expected_game_id}", api.base_url());
@@ -713,7 +761,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_unclaimed_games_page() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let expected_identity = Identity::default();
         let expected_identity_str = match &expected_identity {
@@ -778,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_bet_history_page() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let expected_identity = Identity::default();
         let expected_identity_str = match &expected_identity {
@@ -843,7 +891,7 @@ mod tests {
     #[tokio::test]
     async fn query__can_get_all_known_straps() {
         // given
-        let mut api = ActixQueryApi::new(None).await.unwrap();
+        let mut api = ActixQueryApi::new(None, None).await.unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}/straps", api.base_url());
         let expected = vec![

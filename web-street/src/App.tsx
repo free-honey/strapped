@@ -17,7 +17,12 @@ import {
   useState,
 } from "react";
 import { createStrappedContract } from "./fuel/client";
-import { DEFAULT_NETWORK, FUEL_NETWORKS, FuelNetworkKey } from "./fuel/config";
+import {
+  DEFAULT_NETWORK,
+  fetchFuelNetworks,
+  FuelNetworkKey,
+  FuelNetworks,
+} from "./fuel/config";
 
 const POLL_INTERVAL_MS = 1000;
 const MAX_OWED_PERCENTAGE = 5;
@@ -1174,6 +1179,8 @@ export default function App() {
     () => normalizeBaseUrl(import.meta.env.VITE_INDEXER_URL as string | undefined),
     []
   );
+  const [fuelNetworks, setFuelNetworks] = useState<FuelNetworks | null>(null);
+  const [fuelNetworksError, setFuelNetworksError] = useState<string | null>(null);
   const showDebugConsole = import.meta.env.VITE_DEBUG_CONSOLE === "true";
   const [debugEntries, setDebugEntries] = useState<string[]>([]);
   const appendDebugEntry = useCallback((message: string) => {
@@ -1182,6 +1189,34 @@ export default function App() {
       return next.length > 200 ? next.slice(next.length - 200) : next;
     });
   }, []);
+  useEffect(() => {
+    if (!baseUrl) {
+      setFuelNetworks(null);
+      setFuelNetworksError("VITE_INDEXER_URL is not set");
+      return;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const networks = await fetchFuelNetworks(baseUrl);
+        if (!cancelled) {
+          setFuelNetworks(networks);
+          setFuelNetworksError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setFuelNetworks(null);
+          setFuelNetworksError((err as Error).message);
+        }
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl]);
   const [status, setStatus] = useState<FetchStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SnapshotResponse | null>(null);
@@ -1446,9 +1481,16 @@ export default function App() {
     }
   }, [debugEntries, showDebugConsole]);
   const walletAddress = account ?? null;
-  const chipAssetId = FUEL_NETWORKS[networkKey].chipAssetId;
-  const chipAssetTicker = FUEL_NETWORKS[networkKey].chipAssetTicker;
-  const baseAssetTicker = FUEL_NETWORKS[networkKey].baseAssetTicker;
+  const activeNetwork = fuelNetworks?.[networkKey] ?? null;
+  const chipAssetId = activeNetwork?.chipAssetId ?? null;
+  const chipAssetTicker = activeNetwork?.chipAssetTicker ?? "";
+  const baseAssetTicker = activeNetwork?.baseAssetTicker ?? "ETH";
+  const requireContractId = useCallback(() => {
+    if (!activeNetwork) {
+      throw new Error("Deployment config unavailable");
+    }
+    return activeNetwork.contractId;
+  }, [activeNetwork]);
   const shouldHandlePress = useCallback(() => {
     return Date.now() - lastPressAtRef.current >= 350;
   }, []);
@@ -1969,6 +2011,10 @@ export default function App() {
       setChipBalanceOverride(null);
       return;
     }
+    if (!chipAssetId) {
+      setChipBalanceOverride(null);
+      return;
+    }
     try {
       const result = await provider.getBalances(walletAddress);
       const balances = Array.isArray(result)
@@ -2011,7 +2057,8 @@ export default function App() {
         .filter((entry): entry is OwnedStrap => entry !== null);
 
       setOwnedStraps(owned);
-      setChipBalanceOverride(byAssetId.get(chipAssetId) ?? null);
+      const chipBalance = chipAssetId ? byAssetId.get(chipAssetId) ?? null : null;
+      setChipBalanceOverride(chipBalance);
     } catch (err) {
       setOwnedStraps([]);
     }
@@ -2602,7 +2649,7 @@ export default function App() {
     setRollFallbackFace(null);
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const response = await contract.functions.roll_dice().call();
       setRollTxId(response.transactionId);
       setRollStatus("pending");
@@ -2653,7 +2700,7 @@ export default function App() {
     setBetStatus("signing");
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const bet =
         betKind === "chip"
           ? { Chip: undefined }
@@ -2716,7 +2763,7 @@ export default function App() {
     setEquipmentActionStatus("signing");
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const call =
         slot === "shirt"
           ? contract.functions.set_shirt(selection.strap)
@@ -2762,7 +2809,7 @@ export default function App() {
     setEquipmentActionStatus("signing");
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const call =
         slot === "shirt"
           ? contract.functions.clear_shirt()
@@ -2806,7 +2853,7 @@ export default function App() {
     setEquipmentActionStatus("signing");
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const response = await contract.functions
         .add_accessory(selection.strap)
         .callParams({
@@ -2845,7 +2892,7 @@ export default function App() {
     setEquipmentActionStatus("signing");
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const response = await contract.functions.remove_accessory(index).call();
       setEquipmentActionTxId(response.transactionId);
       setEquipmentActionStatus("pending");
@@ -2876,12 +2923,18 @@ export default function App() {
       setModifierPurchaseKey(entryKey);
       return;
     }
+    if (!chipAssetId) {
+      setModifierPurchaseError("Deployment config unavailable");
+      setModifierPurchaseStatus("error");
+      setModifierPurchaseKey(entryKey);
+      return;
+    }
 
     setModifierPurchaseKey(entryKey);
     setModifierPurchaseStatus("signing");
 
     try {
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const response = await contract.functions
         .purchase_modifier(roll, entry.modifier)
         .callParams({
@@ -2921,14 +2974,16 @@ export default function App() {
 
     try {
       let preChipBalance: bigint | null = null;
-      try {
-        const balance = await wallet.getBalance(chipAssetId);
-        preChipBalance = BigInt(balance.toString());
-      } catch (err) {
-        preChipBalance = null;
+      if (chipAssetId) {
+        try {
+          const balance = await wallet.getBalance(chipAssetId);
+          preChipBalance = BigInt(balance.toString());
+        } catch (err) {
+          preChipBalance = null;
+        }
       }
 
-      const contract = createStrappedContract(wallet, networkKey);
+      const contract = createStrappedContract(wallet, requireContractId());
       const response = await contract.functions
         .claim_rewards(entry.gameId, enabledModifiers)
         .call();
@@ -2938,15 +2993,18 @@ export default function App() {
       await refreshBalances();
 
       let chipDelta: number | null = null;
-      try {
-        const postBalance = await wallet.getBalance(chipAssetId);
-        if (preChipBalance !== null) {
-          const postValue = BigInt(postBalance.toString());
-          const delta = postValue > preChipBalance ? postValue - preChipBalance : 0n;
-          chipDelta = Number(delta);
+      if (chipAssetId) {
+        try {
+          const postBalance = await wallet.getBalance(chipAssetId);
+          if (preChipBalance !== null) {
+            const postValue = BigInt(postBalance.toString());
+            const delta =
+              postValue > preChipBalance ? postValue - preChipBalance : 0n;
+            chipDelta = Number(delta);
+          }
+        } catch (err) {
+          chipDelta = null;
         }
-      } catch (err) {
-        chipDelta = null;
       }
 
       const accountBets = entry.account?.per_roll_bets ?? [];
@@ -3698,7 +3756,7 @@ export default function App() {
               onChange={handleNetworkChange}
               disabled={walletStatus === "connecting"}
             >
-              {Object.entries(FUEL_NETWORKS).map(([key, network]) => (
+              {Object.entries(fuelNetworks ?? {}).map(([key, network]) => (
                 <option key={key} value={key}>
                   {network.label}
                 </option>

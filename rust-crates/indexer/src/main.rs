@@ -22,7 +22,10 @@ use fuels::types::ContractId;
 use indexer::app::{
     App,
     RunState,
-    actix_query_api::ActixQueryApi,
+    actix_query_api::{
+        ActixQueryApi,
+        DeploymentConfigDto,
+    },
     fuel_indexer_event_source::{
         FuelIndexerEventSource,
         parse_event_logs,
@@ -153,6 +156,16 @@ async fn main() -> anyhow::Result<()> {
             (cid, None)
         }
     };
+    let deployment_config = record_used.as_ref().and_then(|record| {
+        let chip_asset_id = record.chip_asset_id.clone()?;
+        let chip_asset_ticker = record.chip_asset_ticker.clone()?;
+        Some(DeploymentConfigDto {
+            network_url: record.network_url.clone(),
+            contract_id: record.contract_id.clone(),
+            chip_asset_id,
+            chip_asset_ticker,
+        })
+    });
     let override_start_height = args.start_height;
     let mut start_height = if let Some(ref record) = record_used {
         match record.deployment_block_height {
@@ -280,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
         start_block_height,
     )
     .await?;
-    let api = ActixQueryApi::new(args.port).await?;
+    let api = ActixQueryApi::new(args.port, deployment_config).await?;
     let mut app = App::new(events, api, snapshots, metadata, contract_id);
 
     tracing::info!("Starting indexer service");
