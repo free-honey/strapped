@@ -12,6 +12,7 @@
         "npm-cache"
       ],
       "commands": [
+        "cp ../.deployments/test/deployments.json src/fuel/deployments.test.json",
         "npm run build",
         "mkdir -p bin",
         "curl -sSL https://github.com/static-web-server/static-web-server/releases/download/v2.32.0/static-web-server-v2.32.0-x86_64-unknown-linux-gnu.tar.gz -o /tmp/static-web-server.tar.gz",
