@@ -1,6 +1,5 @@
 import {
   useAccount,
-  useBalance,
   useConnect,
   useConnectUI,
   useDisconnect,
@@ -1191,13 +1190,15 @@ export default function App() {
   const [isGamesOpen, setIsGamesOpen] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isDiceHistoryOpen, setIsDiceHistoryOpen] = useState(false);
-  const [isClosetOpen, setIsClosetOpen] = useState(false);
+  const [isEquipmentOpen, setIsEquipmentOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [gamesTab, setGamesTab] = useState<"recent" | "unclaimed">("recent");
-  const [infoTab, setInfoTab] = useState<"overview" | "equipment">("overview");
+  const [equipmentTab, setEquipmentTab] = useState<"equipment" | "wardrobe">(
+    "equipment"
+  );
   const [betTargetRoll, setBetTargetRoll] = useState<Roll | null>(null);
   const [betKind, setBetKind] = useState<"chip" | "strap">("chip");
   const [betAmount, setBetAmount] = useState("1");
@@ -1232,18 +1233,10 @@ export default function App() {
   const [equipmentActionTxId, setEquipmentActionTxId] = useState<string | null>(
     null
   );
-  const [selectedShirtAssetId, setSelectedShirtAssetId] = useState<string | null>(
-    null
-  );
-  const [selectedPantsAssetId, setSelectedPantsAssetId] = useState<string | null>(
-    null
-  );
-  const [selectedShoesAssetId, setSelectedShoesAssetId] = useState<string | null>(
-    null
-  );
-  const [selectedAccessoryAssetId, setSelectedAccessoryAssetId] = useState<
-    string | null
+  const [equipmentPickerSlot, setEquipmentPickerSlot] = useState<
+    "shirt" | "pants" | "shoes" | null
   >(null);
+  const [isAccessoryPickerOpen, setIsAccessoryPickerOpen] = useState(false);
   const [claimStatus, setClaimStatus] = useState<
     "idle" | "signing" | "pending" | "success" | "error"
   >("idle");
@@ -1626,11 +1619,7 @@ export default function App() {
       window.removeEventListener("pointercancel", clearPanPoint, true);
     };
   }, []);
-  const { balance: chipBalance } = useBalance({
-    account: walletAddress,
-    assetId: chipAssetId,
-  });
-  const displayChipBalance = chipBalanceOverride ?? chipBalance;
+  const displayChipBalance = chipBalanceOverride;
   const closetGroups = useMemo(() => {
     if (ownedStraps.length === 0) {
       return [];
@@ -1697,6 +1686,26 @@ export default function App() {
       ),
     [ownedStraps]
   );
+  const equipmentPickerEntries = useMemo(() => {
+    if (equipmentPickerSlot === "shirt") {
+      return ownedShirts;
+    }
+    if (equipmentPickerSlot === "pants") {
+      return ownedPants;
+    }
+    if (equipmentPickerSlot === "shoes") {
+      return ownedShoes;
+    }
+    return [];
+  }, [equipmentPickerSlot, ownedShirts, ownedPants, ownedShoes]);
+  const equipmentPickerKind =
+    equipmentPickerSlot === "shirt"
+      ? "Shirt"
+      : equipmentPickerSlot === "pants"
+        ? "Pants"
+        : equipmentPickerSlot === "shoes"
+          ? "Shoes"
+          : null;
 
   useEffect(() => {
     if (isConnected) {
@@ -1799,6 +1808,11 @@ export default function App() {
       setKnownStraps([]);
     }
   }, [baseUrl]);
+  const fetchStrapsRef = useRef(fetchStraps);
+
+  useEffect(() => {
+    fetchStrapsRef.current = fetchStraps;
+  }, [fetchStraps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1863,6 +1877,67 @@ export default function App() {
     };
   }, [baseUrl, walletAddress]);
 
+  const loadEquipmentSnapshot = useCallback(
+    async (
+      isCancelled?: () => boolean,
+      options?: { silent?: boolean }
+    ) => {
+      if (!baseUrl || !walletAddress) {
+        if (!isCancelled?.()) {
+          setEquipmentSnapshot(null);
+          setEquipmentStatus("idle");
+          setEquipmentError(null);
+        }
+        return;
+      }
+
+      if (isCancelled?.()) {
+        return;
+      }
+      if (!options?.silent) {
+        setEquipmentStatus("loading");
+      }
+
+      try {
+        const response = await fetch(
+          `${baseUrl}/account/${walletAddress}/equipment`
+        );
+        if (isCancelled?.()) {
+          return;
+        }
+        if (response.status === 404) {
+          setEquipmentSnapshot(null);
+          setEquipmentStatus("ok");
+          setEquipmentError(null);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`equipment snapshot responded with ${response.status}`);
+        }
+        const payload = (await response.json()) as
+          | EquipmentSnapshotResponse
+          | null;
+        if (isCancelled?.()) {
+          return;
+        }
+        const snapshot = payload ? normalizeEquipmentSnapshot(payload) : null;
+        setEquipmentSnapshot(snapshot);
+        setEquipmentStatus("ok");
+        setEquipmentError(null);
+      } catch (err) {
+        if (isCancelled?.()) {
+          return;
+        }
+        setEquipmentSnapshot(null);
+        setEquipmentStatus("error");
+        setEquipmentError(
+          err instanceof Error ? err.message : "Failed to load equipment"
+        );
+      }
+    },
+    [baseUrl, walletAddress]
+  );
+
   useEffect(() => {
     if (!baseUrl || !walletAddress) {
       setEquipmentSnapshot(null);
@@ -1870,61 +1945,23 @@ export default function App() {
       setEquipmentError(null);
       return;
     }
+    if (!isEquipmentOpen) {
+      return;
+    }
 
     let cancelled = false;
-    let timeoutId: number | undefined;
+    const isCancelled = () => cancelled;
 
-    const loadEquipmentSnapshot = async () => {
-      if (cancelled) {
-        return;
-      }
-      setEquipmentStatus("loading");
-      try {
-        const response = await fetch(
-          `${baseUrl}/account/${walletAddress}/equipment`
-        );
-        if (response.status === 404) {
-          if (!cancelled) {
-            setEquipmentSnapshot(null);
-            setEquipmentStatus("ok");
-            setEquipmentError(null);
-          }
-        } else if (!response.ok) {
-          throw new Error(`equipment snapshot responded with ${response.status}`);
-        } else {
-          const payload =
-            (await response.json()) as EquipmentSnapshotResponse | null;
-          const snapshot = payload ? normalizeEquipmentSnapshot(payload) : null;
-          if (!cancelled) {
-            setEquipmentSnapshot(snapshot);
-            setEquipmentStatus("ok");
-            setEquipmentError(null);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setEquipmentSnapshot(null);
-          setEquipmentStatus("error");
-          setEquipmentError(
-            err instanceof Error ? err.message : "Failed to load equipment"
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          timeoutId = window.setTimeout(loadEquipmentSnapshot, POLL_INTERVAL_MS);
-        }
-      }
-    };
-
-    loadEquipmentSnapshot();
+    loadEquipmentSnapshot(isCancelled);
+    const intervalId = window.setInterval(() => {
+      loadEquipmentSnapshot(isCancelled, { silent: true });
+    }, 1000);
 
     return () => {
       cancelled = true;
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
+      window.clearInterval(intervalId);
     };
-  }, [baseUrl, walletAddress]);
+  }, [baseUrl, walletAddress, isEquipmentOpen, loadEquipmentSnapshot]);
 
   const refreshBalances = useCallback(async () => {
     if (!provider || !walletAddress) {
@@ -1979,6 +2016,11 @@ export default function App() {
       setOwnedStraps([]);
     }
   }, [provider, walletAddress, knownStraps, chipAssetId]);
+  const refreshBalancesRef = useRef(refreshBalances);
+
+  useEffect(() => {
+    refreshBalancesRef.current = refreshBalances;
+  }, [refreshBalances]);
 
   useEffect(() => {
     if (!provider || !walletAddress) {
@@ -2005,15 +2047,15 @@ export default function App() {
   }, [provider, walletAddress, knownStraps, chipAssetId, refreshBalances]);
 
   useEffect(() => {
-    if (!isClosetOpen) {
+    if (!isEquipmentOpen) {
       return;
     }
     const refreshCloset = async () => {
-      await fetchStraps();
-      await refreshBalances();
+      await fetchStrapsRef.current();
+      await refreshBalancesRef.current();
     };
     refreshCloset();
-  }, [isClosetOpen, fetchStraps, refreshBalances]);
+  }, [isEquipmentOpen]);
 
   useEffect(() => {
     if (!baseUrl || !walletAddress || !snapshot || !isGamesOpen) {
@@ -2168,10 +2210,12 @@ export default function App() {
       isGamesOpen ||
       isInfoOpen ||
       isDiceHistoryOpen ||
-      isClosetOpen ||
+      isEquipmentOpen ||
       betTargetRoll ||
       isStrapKindPickerOpen ||
       isStrapPickerOpen ||
+      equipmentPickerSlot ||
+      isAccessoryPickerOpen ||
       Boolean(claimModifierEntry) ||
       Boolean(claimResult)
   );
@@ -2179,11 +2223,13 @@ export default function App() {
     isGamesOpen ||
       isInfoOpen ||
       isDiceHistoryOpen ||
-      isClosetOpen ||
+      isEquipmentOpen ||
       isTutorialOpen ||
       betTargetRoll ||
       isStrapKindPickerOpen ||
       isStrapPickerOpen ||
+      equipmentPickerSlot ||
+      isAccessoryPickerOpen ||
       Boolean(claimModifierEntry) ||
       Boolean(claimResult)
   );
@@ -2223,12 +2269,20 @@ export default function App() {
         setIsStrapKindPickerOpen(false);
         return;
       }
+      if (equipmentPickerSlot) {
+        setEquipmentPickerSlot(null);
+        return;
+      }
+      if (isAccessoryPickerOpen) {
+        setIsAccessoryPickerOpen(false);
+        return;
+      }
       if (betTargetRoll) {
         closeBetModal();
         return;
       }
-      if (isClosetOpen) {
-        setIsClosetOpen(false);
+      if (isEquipmentOpen) {
+        setIsEquipmentOpen(false);
         return;
       }
       if (isDiceHistoryOpen) {
@@ -2257,8 +2311,10 @@ export default function App() {
     isAnyModalOpen,
     isStrapPickerOpen,
     isStrapKindPickerOpen,
+    equipmentPickerSlot,
+    isAccessoryPickerOpen,
     betTargetRoll,
-    isClosetOpen,
+    isEquipmentOpen,
     isDiceHistoryOpen,
     isInfoOpen,
     isGamesOpen,
@@ -2679,6 +2735,9 @@ export default function App() {
       setEquipmentActionStatus("pending");
       await response.waitForResult();
       setEquipmentActionStatus("success");
+      if (isEquipmentOpen) {
+        await loadEquipmentSnapshot(undefined, { silent: true });
+      }
       await refreshBalances();
     } catch (err) {
       const message =
@@ -2715,6 +2774,9 @@ export default function App() {
       setEquipmentActionStatus("pending");
       await response.waitForResult();
       setEquipmentActionStatus("success");
+      if (isEquipmentOpen) {
+        await loadEquipmentSnapshot(undefined, { silent: true });
+      }
       await refreshBalances();
     } catch (err) {
       const message =
@@ -2758,6 +2820,9 @@ export default function App() {
       setEquipmentActionStatus("pending");
       await response.waitForResult();
       setEquipmentActionStatus("success");
+      if (isEquipmentOpen) {
+        await loadEquipmentSnapshot(undefined, { silent: true });
+      }
       await refreshBalances();
     } catch (err) {
       const message =
@@ -2786,6 +2851,9 @@ export default function App() {
       setEquipmentActionStatus("pending");
       await response.waitForResult();
       setEquipmentActionStatus("success");
+      if (isEquipmentOpen) {
+        await loadEquipmentSnapshot(undefined, { silent: true });
+      }
       await refreshBalances();
     } catch (err) {
       const message =
@@ -3261,7 +3329,7 @@ export default function App() {
       id: "other-features",
       title: "Other fun features!",
       eyebrow: "How to play",
-      body: "Check your closet for all earned straps and keep an eye out for other exciting events.",
+      body: "Check your wardrobe for all earned straps and keep an eye out for other exciting events.",
       backLabel: "Back: Claiming Winnings",
       nextLabel: "Done",
     },
@@ -3611,7 +3679,7 @@ export default function App() {
             <span aria-hidden="true">{isHeaderMenuOpen ? "✕" : "☰"}</span>
           </button>
           <h1 className="street-title">STRAPPED!</h1>
-          <span className="street-title__tag">Aardvark</span>
+          <span className="street-title__tag">Binturong</span>
         </div>
         <div className="street-meta">
           <span className={`status-chip status-chip--${status}`}>{status}</span>
@@ -4509,58 +4577,348 @@ export default function App() {
         </div>
       ) : null}
 
-      {isClosetOpen && (
+      {isEquipmentOpen && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal modal--tall">
             <div className="modal__header">
               <div>
-                <div className="modal__eyebrow">Wardrobe</div>
-                <h2 className="modal__title">Closet</h2>
+                <div className="modal__eyebrow">Equipment</div>
+                <h2 className="modal__title">Loadout</h2>
               </div>
               <button
                 className="ghost-button"
                 type="button"
-                {...createPressHandlers(() => setIsClosetOpen(false))}
+                {...createPressHandlers(() => {
+                  setIsAccessoryPickerOpen(false);
+                  setEquipmentPickerSlot(null);
+                  setIsEquipmentOpen(false);
+                })}
               >
                 Close
               </button>
             </div>
             <div className="modal__body modal__body--scroll">
-              {ownedStraps.length > 0 ? (
-                <div className="closet-list">
-                  {closetGroups.map((group) => (
-                    <div key={`closet-kind-${group.kind}`} className="closet-kind">
-                      <div className="closet-kind__badge">
-                        <div className="closet-kind__icon" aria-hidden="true">
-                          {group.emoji}
+              <div className="modal-card modal-card--wide">
+                <div className="modal-tabs">
+                  <button
+                    type="button"
+                    className={`modal-tab${
+                      equipmentTab === "equipment" ? " modal-tab--active" : ""
+                    }`}
+                    {...createPressHandlers(() => setEquipmentTab("equipment"))}
+                  >
+                    Equipment
+                  </button>
+                  <button
+                    type="button"
+                    className={`modal-tab${
+                      equipmentTab === "wardrobe" ? " modal-tab--active" : ""
+                    }`}
+                    {...createPressHandlers(() => setEquipmentTab("wardrobe"))}
+                  >
+                    Wardrobe
+                  </button>
+                </div>
+                {equipmentTab === "equipment" ? (
+                  <div className="modal-stack">
+                    <h3>Equipment</h3>
+                    <div className="modal-stack">
+                      <div className="modal-row">
+                        <div>
+                          Shirt:{" "}
+                          {equipmentSnapshot?.shirt
+                            ? formatRewardCompact(equipmentSnapshot.shirt)
+                            : "—"}
+                        </div>
+                        <div className="modal-actions">
+                          {equipmentSnapshot?.shirt ? (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => handleClearBaseEquipment("shirt")}
+                            >
+                              Clear
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => setEquipmentPickerSlot("shirt")}
+                              disabled={ownedShirts.length === 0}
+                            >
+                              Equip
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <div className="closet-kind__items">
-                        {group.entries.map((entry) => (
-                          <div
-                            key={`closet-${entry.assetId}`}
-                            className="closet-variant"
-                          >
-                            <div className="closet-variant__title">
-                              {modifierEmojis[entry.strap.modifier] ?? ""}
-                              L{entry.strap.level} · {formatQuantity(entry.amount)}
+                      <div className="modal-row">
+                        <div>
+                          Pants:{" "}
+                          {equipmentSnapshot?.pants
+                            ? formatRewardCompact(equipmentSnapshot.pants)
+                            : "—"}
+                        </div>
+                        <div className="modal-actions">
+                          {equipmentSnapshot?.pants ? (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => handleClearBaseEquipment("pants")}
+                            >
+                              Clear
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => setEquipmentPickerSlot("pants")}
+                              disabled={ownedPants.length === 0}
+                            >
+                              Equip
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="modal-row">
+                        <div>
+                          Shoes:{" "}
+                          {equipmentSnapshot?.shoes
+                            ? formatRewardCompact(equipmentSnapshot.shoes)
+                            : "—"}
+                        </div>
+                        <div className="modal-actions">
+                          {equipmentSnapshot?.shoes ? (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => handleClearBaseEquipment("shoes")}
+                            >
+                              Clear
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              onClick={() => setEquipmentPickerSlot("shoes")}
+                              disabled={ownedShoes.length === 0}
+                            >
+                              Equip
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <h3>Accessories</h3>
+                    <div className="modal-stack">
+                      {equipmentSnapshot?.accessories?.length ? (
+                        equipmentSnapshot.accessories.map((strap, index) => (
+                          <div key={`${strapKey(strap)}-${index}`} className="modal-row">
+                            <div>{formatRewardCompact(strap)}</div>
+                            <div className="modal-actions">
+                              <button
+                                type="button"
+                                className="ghost-button"
+                                onClick={() => handleRemoveAccessory(index)}
+                              >
+                                Remove
+                              </button>
                             </div>
-                            <div className="closet-variant__asset">
-                              Asset: {formatAssetId(entry.assetId)}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="modal-muted">No accessories equipped.</div>
+                      )}
+                      <div className="modal-row">
+                        <div>Add accessory</div>
+                        <div className="modal-actions">
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => setIsAccessoryPickerOpen(true)}
+                            disabled={ownedAccessories.length === 0}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                      {ownedAccessories.length === 0 ? (
+                        <div className="modal-muted">No accessories available.</div>
+                      ) : null}
+                    </div>
+                    <div className="modal-muted">
+                      {equipmentStatus === "loading"
+                        ? "Loading equipment..."
+                        : equipmentError ?? null}
+                    </div>
+                    <div className="modal-muted">
+                      {equipmentActionStatus === "pending"
+                        ? "Equipment update pending..."
+                        : equipmentActionStatus === "success"
+                          ? "Equipment updated."
+                          : equipmentActionStatus === "error"
+                            ? equipmentActionError
+                            : null}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {ownedStraps.length > 0 ? (
+                      <div className="closet-list">
+                        {closetGroups.map((group) => (
+                          <div
+                            key={`closet-kind-${group.kind}`}
+                            className="closet-kind"
+                          >
+                            <div className="closet-kind__badge">
+                              <div
+                                className="closet-kind__icon"
+                                aria-hidden="true"
+                              >
+                                {group.emoji}
+                              </div>
+                            </div>
+                            <div className="closet-kind__items">
+                              {group.entries.map((entry) => (
+                                <div
+                                  key={`closet-${entry.assetId}`}
+                                  className="closet-variant"
+                                >
+                                  <div className="closet-variant__title">
+                                    {modifierEmojis[entry.strap.modifier] ?? ""}
+                                    L{entry.strap.level} ·{" "}
+                                    {formatQuantity(entry.amount)}
+                                  </div>
+                                  <div className="closet-variant__asset">
+                                    Asset: {formatAssetId(entry.assetId)}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="modal-muted">No straps yet.</div>
-              )}
+                    ) : (
+                      <div className="modal-muted">No straps yet.</div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {equipmentPickerSlot && equipmentPickerKind ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Equipment</div>
+                <h2 className="modal__title">Choose {equipmentPickerKind}</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                {...createPressHandlers(() => setEquipmentPickerSlot(null))}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {equipmentPickerEntries.length ? (
+                <div className="closet-kind">
+                  <div className="closet-kind__badge">
+                    <div className="closet-kind__icon" aria-hidden="true">
+                      {strapEmojis[equipmentPickerKind] ?? "🎁"}
+                    </div>
+                  </div>
+                  <div className="closet-kind__items">
+                    {equipmentPickerEntries.map((entry) => (
+                      <button
+                        key={`equip-${equipmentPickerKind}-${entry.assetId}`}
+                        type="button"
+                        className="bet-variant"
+                        {...createPressHandlers(() => {
+                          void handleSetBaseEquipment(
+                            equipmentPickerSlot,
+                            entry.assetId
+                          ).finally(() => {
+                            setEquipmentPickerSlot(null);
+                          });
+                        })}
+                      >
+                        <div className="bet-variant__title">
+                          {formatRewardCompact(entry.strap)}
+                        </div>
+                        <div className="bet-variant__meta">
+                          L{entry.strap.level} · {formatQuantity(entry.amount)}
+                        </div>
+                        <div className="bet-variant__asset">
+                          Asset: {formatAssetId(entry.assetId)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-muted">No equipment available.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isAccessoryPickerOpen ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal modal--tall">
+            <div className="modal__header">
+              <div>
+                <div className="modal__eyebrow">Accessories</div>
+                <h2 className="modal__title">Choose accessory</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                {...createPressHandlers(() => setIsAccessoryPickerOpen(false))}
+              >
+                Close
+              </button>
+            </div>
+            <div className="modal__body modal__body--scroll">
+              {ownedAccessories.length ? (
+                <div className="closet-kind">
+                  <div className="closet-kind__items">
+                    {ownedAccessories.map((entry) => (
+                      <button
+                        key={`accessory-${entry.assetId}`}
+                        type="button"
+                        className="bet-variant"
+                        {...createPressHandlers(() => {
+                          void handleAddAccessory(entry.assetId).finally(() => {
+                            setIsAccessoryPickerOpen(false);
+                          });
+                        })}
+                      >
+                        <div className="bet-variant__title">
+                          {formatRewardCompact(entry.strap)}
+                        </div>
+                        <div className="bet-variant__meta">
+                          L{entry.strap.level} · {formatQuantity(entry.amount)}
+                        </div>
+                        <div className="bet-variant__asset">
+                          Asset: {formatAssetId(entry.assetId)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-muted">No accessories available.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <footer className="street-footer">
         <div className="footer-actions">
@@ -4570,9 +4928,12 @@ export default function App() {
           <button
             className="ghost-button"
             type="button"
-            {...createPressHandlers(() => setIsClosetOpen(true))}
+            {...createPressHandlers(() => {
+              setEquipmentTab("equipment");
+              setIsEquipmentOpen(true);
+            })}
           >
-            STRAPS CLOSET
+            Equipment
           </button>
           <button
             className="ghost-button"
@@ -4673,11 +5034,12 @@ export default function App() {
                 className="mobile-nav__action"
                 type="button"
                 {...createPressHandlers(() => {
-                  setIsClosetOpen(true);
+                  setEquipmentTab("equipment");
+                  setIsEquipmentOpen(true);
                   setIsMobileMenuOpen(false);
                 })}
               >
-                Closet
+                Equipment
               </button>
               <button
                 className="mobile-nav__action"
@@ -4768,281 +5130,63 @@ export default function App() {
               </button>
             </div>
             <div className="modal__body">
-              <div className="modal-tabs">
-                <button
-                  type="button"
-                  className={`modal-tab${
-                    infoTab === "overview" ? " modal-tab--active" : ""
-                  }`}
-                  {...createPressHandlers(() => setInfoTab("overview"))}
-                >
-                  Overview
-                </button>
-                <button
-                  type="button"
-                  className={`modal-tab${
-                    infoTab === "equipment" ? " modal-tab--active" : ""
-                  }`}
-                  {...createPressHandlers(() => setInfoTab("equipment"))}
-                >
-                  Equipment
-                </button>
-              </div>
-              {infoTab === "overview" ? (
-                <>
-                  <div className="modal-card">
-                    <h3>Status</h3>
-                    <div className="modal-stack">
-                      <div>Game: {snapshot ? snapshot.game_id : "—"}</div>
-                      <div>Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}</div>
-                      <div>Owed: {snapshot ? formatNumber(snapshot.chips_owed) : "—"}</div>
-                      <div>
-                        Chips bet:{" "}
-                        {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
-                      </div>
-                      <div>
-                        Max bet size:{" "}
-                        {availableBetCapacity !== null
-                          ? formatNumber(availableBetCapacity)
-                          : "—"}
-                      </div>
-                    </div>
+              <div className="modal-card">
+                <h3>Status</h3>
+                <div className="modal-stack">
+                  <div>Game: {snapshot ? snapshot.game_id : "—"}</div>
+                  <div>Pot: {snapshot ? formatNumber(snapshot.pot_size) : "—"}</div>
+                  <div>Owed: {snapshot ? formatNumber(snapshot.chips_owed) : "—"}</div>
+                  <div>
+                    Chips bet:{" "}
+                    {snapshot ? formatNumber(snapshot.total_chip_bets) : "—"}
                   </div>
-                  <div className="modal-card">
-                    <h3>Assets</h3>
-                    <div className="modal-stack">
-                      <div>
-                        Base: {formatAssetLabel(baseAssetId, baseAssetTicker)}
-                      </div>
-                      <div>
-                        Chips: {formatAssetLabel(chipAssetId, chipAssetTicker)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="modal-card">
-                    <h3>Chain</h3>
-                    <div className="modal-stack">
-                      <div>
-                        Block:{" "}
-                        {snapshot
-                          ? formatNumber(snapshot.current_block_height)
-                          : "—"}
-                      </div>
-                      <div>
-                        Next roll:{" "}
-                        {snapshot ? formatNumber(snapshot.next_roll_height) : "—"}
-                      </div>
-                      <div>
-                        Roll freq:{" "}
-                        {snapshot ? formatNumber(snapshot.roll_frequency) : "—"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="modal-card">
-                    <h3>Shop</h3>
-                    {shopEntries.length > 0 ? (
-                      <div className="modal-stack">
-                        {shopEntries.slice(0, 6).map((entry, index) => (
-                          <div key={`shop-modal-${index}`}>
-                            {entry.modifier_roll} · {entry.modifier} ·{" "}
-                            {formatNumber(entry.price)}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="modal-muted">No shop entries yet.</div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="modal-card">
-                  <h3>Current loadout</h3>
-                  <div className="modal-stack">
-                    <div>
-                      Shirt:{" "}
-                      {equipmentSnapshot?.shirt
-                        ? formatRewardCompact(equipmentSnapshot.shirt)
-                        : "—"}
-                    </div>
-                    <div>
-                      Pants:{" "}
-                      {equipmentSnapshot?.pants
-                        ? formatRewardCompact(equipmentSnapshot.pants)
-                        : "—"}
-                    </div>
-                    <div>
-                      Shoes:{" "}
-                      {equipmentSnapshot?.shoes
-                        ? formatRewardCompact(equipmentSnapshot.shoes)
-                        : "—"}
-                    </div>
-                  </div>
-                  <h3>Update base slots</h3>
-                  <div className="modal-stack">
-                    <label className="modal-select">
-                      <span>Shirt</span>
-                      <select
-                        value={selectedShirtAssetId ?? ""}
-                        onChange={(event) =>
-                          setSelectedShirtAssetId(event.target.value || null)
-                        }
-                      >
-                        <option value="">Select shirt</option>
-                        {ownedShirts.map((entry) => (
-                          <option key={entry.assetId} value={entry.assetId}>
-                            {formatRewardCompact(entry.strap)} ·{" "}
-                            {entry.assetId.slice(0, 6)}…
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() =>
-                          handleSetBaseEquipment("shirt", selectedShirtAssetId)
-                        }
-                      >
-                        Equip
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() => handleClearBaseEquipment("shirt")}
-                      >
-                        Clear
-                      </button>
-                    </label>
-                    <label className="modal-select">
-                      <span>Pants</span>
-                      <select
-                        value={selectedPantsAssetId ?? ""}
-                        onChange={(event) =>
-                          setSelectedPantsAssetId(event.target.value || null)
-                        }
-                      >
-                        <option value="">Select pants</option>
-                        {ownedPants.map((entry) => (
-                          <option key={entry.assetId} value={entry.assetId}>
-                            {formatRewardCompact(entry.strap)} ·{" "}
-                            {entry.assetId.slice(0, 6)}…
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() =>
-                          handleSetBaseEquipment("pants", selectedPantsAssetId)
-                        }
-                      >
-                        Equip
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() => handleClearBaseEquipment("pants")}
-                      >
-                        Clear
-                      </button>
-                    </label>
-                    <label className="modal-select">
-                      <span>Shoes</span>
-                      <select
-                        value={selectedShoesAssetId ?? ""}
-                        onChange={(event) =>
-                          setSelectedShoesAssetId(event.target.value || null)
-                        }
-                      >
-                        <option value="">Select shoes</option>
-                        {ownedShoes.map((entry) => (
-                          <option key={entry.assetId} value={entry.assetId}>
-                            {formatRewardCompact(entry.strap)} ·{" "}
-                            {entry.assetId.slice(0, 6)}…
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() =>
-                          handleSetBaseEquipment("shoes", selectedShoesAssetId)
-                        }
-                      >
-                        Equip
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() => handleClearBaseEquipment("shoes")}
-                      >
-                        Clear
-                      </button>
-                    </label>
-                  </div>
-                  <h3>Accessories</h3>
-                  <div className="modal-stack">
-                    {equipmentSnapshot?.accessories?.length ? (
-                      equipmentSnapshot.accessories.map((strap, index) => (
-                        <div key={`${strapKey(strap)}-${index}`}>
-                          {formatRewardCompact(strap)}{" "}
-                          <button
-                            type="button"
-                            className="ghost-button"
-                            onClick={() => handleRemoveAccessory(index)}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="modal-muted">No accessories equipped.</div>
-                    )}
-                  </div>
-                  <h3>Add accessory</h3>
-                  <div className="modal-stack">
-                    <label className="modal-select">
-                      <span>Accessory</span>
-                      <select
-                        value={selectedAccessoryAssetId ?? ""}
-                        onChange={(event) =>
-                          setSelectedAccessoryAssetId(event.target.value || null)
-                        }
-                      >
-                        <option value="">Select accessory</option>
-                        {ownedAccessories.map((entry) => (
-                          <option key={entry.assetId} value={entry.assetId}>
-                            {formatRewardCompact(entry.strap)} ·{" "}
-                            {entry.assetId.slice(0, 6)}…
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() =>
-                          handleAddAccessory(selectedAccessoryAssetId)
-                        }
-                      >
-                        Add
-                      </button>
-                    </label>
-                  </div>
-                  <div className="modal-muted">
-                    {equipmentStatus === "loading"
-                      ? "Loading equipment..."
-                      : equipmentError ?? null}
-                  </div>
-                  <div className="modal-muted">
-                    {equipmentActionStatus === "pending"
-                      ? "Equipment update pending..."
-                      : equipmentActionStatus === "success"
-                        ? "Equipment updated."
-                        : equipmentActionStatus === "error"
-                          ? equipmentActionError
-                          : null}
+                  <div>
+                    Max bet size:{" "}
+                    {availableBetCapacity !== null
+                      ? formatNumber(availableBetCapacity)
+                      : "—"}
                   </div>
                 </div>
-              )}
+              </div>
+              <div className="modal-card">
+                <h3>Assets</h3>
+                <div className="modal-stack">
+                  <div>Base: {formatAssetLabel(baseAssetId, baseAssetTicker)}</div>
+                  <div>Chips: {formatAssetLabel(chipAssetId, chipAssetTicker)}</div>
+                </div>
+              </div>
+              <div className="modal-card">
+                <h3>Chain</h3>
+                <div className="modal-stack">
+                  <div>
+                    Block:{" "}
+                    {snapshot ? formatNumber(snapshot.current_block_height) : "—"}
+                  </div>
+                  <div>
+                    Next roll:{" "}
+                    {snapshot ? formatNumber(snapshot.next_roll_height) : "—"}
+                  </div>
+                  <div>
+                    Roll freq:{" "}
+                    {snapshot ? formatNumber(snapshot.roll_frequency) : "—"}
+                  </div>
+                </div>
+              </div>
+              <div className="modal-card">
+                <h3>Shop</h3>
+                {shopEntries.length > 0 ? (
+                  <div className="modal-stack">
+                    {shopEntries.slice(0, 6).map((entry, index) => (
+                      <div key={`shop-modal-${index}`}>
+                        {entry.modifier_roll} · {entry.modifier} ·{" "}
+                        {formatNumber(entry.price)}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="modal-muted">No shop entries yet.</div>
+                )}
+              </div>
             </div>
           </div>
         </div>
