@@ -673,7 +673,8 @@ impl SnapshotStorage for SledSnapshotStorage {
 
         for entry in self.equipment_tree.iter() {
             let (key, value) = entry.context("iterate equipment snapshots")?;
-            let record = deserialize::<SnapshotRecord<EquipmentSnapshot>>(value.as_ref())?;
+            let record =
+                deserialize::<SnapshotRecord<EquipmentSnapshot>>(value.as_ref())?;
             if record.height > to_height {
                 self.remove_equipment_entry(key.as_ref())?;
             }

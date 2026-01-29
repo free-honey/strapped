@@ -4,11 +4,11 @@ use crate::{
     events::{
         ClaimRewardsEvent,
         ContractEvent,
-        Event,
         EquipmentAccessoryAddedEvent,
         EquipmentAccessoryRemovedEvent,
         EquipmentBaseClearedEvent,
         EquipmentBaseSetEvent,
+        Event,
         FundPotEvent,
         Modifier as AppModifier,
         ModifierTriggeredEvent,
@@ -18,7 +18,7 @@ use crate::{
         PurchaseModifierEvent,
         Roll as AppRoll,
         Strap as AppStrap,
-    StrapKind as AppStrapKind,
+        StrapKind as AppStrapKind,
     },
 };
 use anyhow::anyhow;
@@ -57,11 +57,11 @@ use fuels::{
 };
 use generated_abi::strapped_types::{
     ClaimRewardsEvent as AbiClaimRewardsEvent,
-    FundPotEvent as AbiFundPotEvent,
     EquipmentAccessoryAddedEvent as AbiEquipmentAccessoryAddedEvent,
     EquipmentAccessoryRemovedEvent as AbiEquipmentAccessoryRemovedEvent,
     EquipmentBaseClearedEvent as AbiEquipmentBaseClearedEvent,
     EquipmentBaseSetEvent as AbiEquipmentBaseSetEvent,
+    FundPotEvent as AbiFundPotEvent,
     InitializedEvent,
     Modifier as AbiModifier,
     ModifierTriggeredEvent as AbiModifierTriggeredEvent,

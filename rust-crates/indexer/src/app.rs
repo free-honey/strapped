@@ -24,13 +24,13 @@ use crate::{
     events::{
         ClaimRewardsEvent,
         ContractEvent,
-        Event,
-        FundPotEvent,
-        InitializedEvent,
         EquipmentAccessoryAddedEvent,
         EquipmentAccessoryRemovedEvent,
         EquipmentBaseClearedEvent,
         EquipmentBaseSetEvent,
+        Event,
+        FundPotEvent,
+        InitializedEvent,
         Modifier,
         ModifierTriggeredEvent,
         NewGameEvent,
@@ -881,11 +881,8 @@ impl<
         if let Some(replaced) = event.replaced {
             self.remember_strap(&replaced);
         }
-        self.snapshots.update_equipment_snapshot(
-            &event.player,
-            &equipment,
-            height,
-        )
+        self.snapshots
+            .update_equipment_snapshot(&event.player, &equipment, height)
     }
 
     fn handle_equipment_base_cleared_event(
@@ -906,11 +903,8 @@ impl<
             _ => {}
         }
         self.remember_strap(&event.strap);
-        self.snapshots.update_equipment_snapshot(
-            &event.player,
-            &equipment,
-            height,
-        )
+        self.snapshots
+            .update_equipment_snapshot(&event.player, &equipment, height)
     }
 
     fn handle_equipment_accessory_added_event(
@@ -918,10 +912,7 @@ impl<
         event: EquipmentAccessoryAddedEvent,
         height: u32,
     ) -> Result<()> {
-        tracing::info!(
-            "Handling EquipmentAccessoryAddedEvent at height {}",
-            height
-        );
+        tracing::info!("Handling EquipmentAccessoryAddedEvent at height {}", height);
         let mut equipment = self
             .snapshots
             .latest_equipment_snapshot(&event.player)?
@@ -934,11 +925,8 @@ impl<
             equipment.accessories.insert(index, event.strap.clone());
         }
         self.remember_strap(&event.strap);
-        self.snapshots.update_equipment_snapshot(
-            &event.player,
-            &equipment,
-            height,
-        )
+        self.snapshots
+            .update_equipment_snapshot(&event.player, &equipment, height)
     }
 
     fn handle_equipment_accessory_removed_event(
@@ -960,10 +948,7 @@ impl<
             equipment.accessories.remove(index);
         }
         self.remember_strap(&event.strap);
-        self.snapshots.update_equipment_snapshot(
-            &event.player,
-            &equipment,
-            height,
-        )
+        self.snapshots
+            .update_equipment_snapshot(&event.player, &equipment, height)
     }
 }

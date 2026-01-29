@@ -68,12 +68,7 @@ async fn set_shirt__rejects_wrong_kind() {
     // given
 
     // when
-    let result = ctx
-        .alice_instance()
-        .methods()
-        .set_shirt(pants)
-        .call()
-        .await;
+    let result = ctx.alice_instance().methods().set_shirt(pants).call().await;
 
     // then
     assert!(result.is_err());
@@ -139,7 +134,12 @@ async fn add_accessory__fails_without_strap_asset() {
     // given
 
     // when
-    let result = ctx.alice_instance().methods().add_accessory(hat).call().await;
+    let result = ctx
+        .alice_instance()
+        .methods()
+        .add_accessory(hat)
+        .call()
+        .await;
 
     // then
     assert!(result.is_err());
@@ -415,10 +415,6 @@ async fn remove_accessory__returns_strap() {
         .unwrap();
 
     // then
-    let balance = ctx
-        .alice()
-        .get_asset_balance(&hat_asset_id)
-        .await
-        .unwrap();
+    let balance = ctx.alice().get_asset_balance(&hat_asset_id).await.unwrap();
     assert_eq!(balance, 1);
 }
