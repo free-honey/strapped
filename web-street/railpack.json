@@ -12,11 +12,11 @@
         "npm-cache"
       ],
       "commands": [
-        "cd web-street && npm run build",
-        "mkdir -p web-street/bin",
+        "npm run build",
+        "mkdir -p bin",
         "curl -sSL https://github.com/static-web-server/static-web-server/releases/download/v2.32.0/static-web-server-v2.32.0-x86_64-unknown-linux-gnu.tar.gz -o /tmp/static-web-server.tar.gz",
-        "tar -xzf /tmp/static-web-server.tar.gz -C web-street/bin --strip-components=1",
-        "chmod +x web-street/bin/static-web-server"
+        "tar -xzf /tmp/static-web-server.tar.gz -C bin --strip-components=1",
+        "chmod +x bin/static-web-server"
       ]
     }
   },
@@ -25,11 +25,11 @@
       {
         "step": "build",
         "include": [
-          "web-street/dist",
-          "web-street/bin/static-web-server"
+          "dist",
+          "bin/static-web-server"
         ]
       }
     ],
-    "startCommand": "./web-street/bin/static-web-server --root ./web-street/dist --host 0.0.0.0 --port ${PORT}"
+    "startCommand": "./bin/static-web-server --root ./dist --host 0.0.0.0 --port ${PORT}"
   }
 }
