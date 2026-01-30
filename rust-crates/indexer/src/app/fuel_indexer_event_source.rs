@@ -4,6 +4,10 @@ use crate::{
     events::{
         ClaimRewardsEvent,
         ContractEvent,
+        EquipmentAccessoryAddedEvent,
+        EquipmentAccessoryRemovedEvent,
+        EquipmentBaseClearedEvent,
+        EquipmentBaseSetEvent,
         Event,
         FundPotEvent,
         Modifier as AppModifier,
@@ -53,6 +57,10 @@ use fuels::{
 };
 use generated_abi::strapped_types::{
     ClaimRewardsEvent as AbiClaimRewardsEvent,
+    EquipmentAccessoryAddedEvent as AbiEquipmentAccessoryAddedEvent,
+    EquipmentAccessoryRemovedEvent as AbiEquipmentAccessoryRemovedEvent,
+    EquipmentBaseClearedEvent as AbiEquipmentBaseClearedEvent,
+    EquipmentBaseSetEvent as AbiEquipmentBaseSetEvent,
     FundPotEvent as AbiFundPotEvent,
     InitializedEvent,
     Modifier as AbiModifier,
@@ -205,6 +213,10 @@ fn map_strap(strap: AbiStrap) -> AppStrap {
     )
 }
 
+fn map_optional_strap(strap: Option<AbiStrap>) -> Option<AppStrap> {
+    strap.map(map_strap)
+}
+
 fn map_identity(identity: Identity) -> Identity {
     identity
 }
@@ -330,6 +342,39 @@ pub fn parse_event_logs(decoder: DecoderConfig, receipt: &Receipt) -> Option<Eve
                 purchaser: map_identity(event.purchaser),
             };
             Some(Event::ContractEvent(ContractEvent::PurchaseModifier(inner)))
+        },
+        AbiEquipmentBaseSetEvent => |event| {
+            let inner = EquipmentBaseSetEvent {
+                player: map_identity(event.player),
+                slot: map_strap_kind(event.slot),
+                strap: map_strap(event.strap),
+                replaced: map_optional_strap(event.replaced),
+            };
+            Some(Event::ContractEvent(ContractEvent::EquipmentBaseSet(inner)))
+        },
+        AbiEquipmentBaseClearedEvent => |event| {
+            let inner = EquipmentBaseClearedEvent {
+                player: map_identity(event.player),
+                slot: map_strap_kind(event.slot),
+                strap: map_strap(event.strap),
+            };
+            Some(Event::ContractEvent(ContractEvent::EquipmentBaseCleared(inner)))
+        },
+        AbiEquipmentAccessoryAddedEvent => |event| {
+            let inner = EquipmentAccessoryAddedEvent {
+                player: map_identity(event.player),
+                strap: map_strap(event.strap),
+                index: event.index,
+            };
+            Some(Event::ContractEvent(ContractEvent::EquipmentAccessoryAdded(inner)))
+        },
+        AbiEquipmentAccessoryRemovedEvent => |event| {
+            let inner = EquipmentAccessoryRemovedEvent {
+                player: map_identity(event.player),
+                strap: map_strap(event.strap),
+                index: event.index,
+            };
+            Some(Event::ContractEvent(ContractEvent::EquipmentAccessoryRemoved(inner)))
         }
 
     )

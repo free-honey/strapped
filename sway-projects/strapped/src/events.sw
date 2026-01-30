@@ -198,6 +198,85 @@ pub fn log_fund_pot_event(chips_amount: u64, funder: Identity) {
     log(event);
 }
 
+pub struct EquipmentBaseSetEvent {
+    player: Identity,
+    slot: StrapKind,
+    strap: Strap,
+    replaced: Option<Strap>,
+}
+
+pub fn log_equipment_base_set_event(
+    player: Identity,
+    slot: StrapKind,
+    strap: Strap,
+    replaced: Option<Strap>,
+) {
+    let event = EquipmentBaseSetEvent {
+        player,
+        slot,
+        strap,
+        replaced,
+    };
+    log(event);
+}
+
+pub struct EquipmentBaseClearedEvent {
+    player: Identity,
+    slot: StrapKind,
+    strap: Strap,
+}
+
+pub fn log_equipment_base_cleared_event(
+    player: Identity,
+    slot: StrapKind,
+    strap: Strap,
+) {
+    let event = EquipmentBaseClearedEvent {
+        player,
+        slot,
+        strap,
+    };
+    log(event);
+}
+
+pub struct EquipmentAccessoryAddedEvent {
+    player: Identity,
+    strap: Strap,
+    index: u64,
+}
+
+pub fn log_equipment_accessory_added_event(
+    player: Identity,
+    strap: Strap,
+    index: u64,
+) {
+    let event = EquipmentAccessoryAddedEvent {
+        player,
+        strap,
+        index,
+    };
+    log(event);
+}
+
+pub struct EquipmentAccessoryRemovedEvent {
+    player: Identity,
+    strap: Strap,
+    index: u64,
+}
+
+pub fn log_equipment_accessory_removed_event(
+    player: Identity,
+    strap: Strap,
+    index: u64,
+) {
+    let event = EquipmentAccessoryRemovedEvent {
+        player,
+        strap,
+        index,
+    };
+    log(event);
+}
+
 pub struct PurchaseModifierEvent {
     expected_roll: Roll,
     expected_modifier: Modifier,

@@ -10,6 +10,7 @@ use crate::{
     events::Strap,
     snapshot::{
         AccountSnapshot,
+        EquipmentSnapshot,
         HistoricalSnapshot,
         OverviewSnapshot,
     },
@@ -43,6 +44,7 @@ pub struct SledSnapshotStorage {
     overview_tree: Tree,
     overview_meta: Tree,
     account_tree: Tree,
+    equipment_tree: Tree,
     historical_tree: Tree,
     bet_history_tree: Tree,
     bettors_by_game_tree: Tree,
@@ -71,6 +73,9 @@ impl SledSnapshotStorage {
         let account_tree = db
             .open_tree("account_snapshots")
             .context("open account_snapshots tree")?;
+        let equipment_tree = db
+            .open_tree("equipment_snapshots")
+            .context("open equipment_snapshots tree")?;
         let historical_tree = db
             .open_tree("historical_snapshots")
             .context("open historical_snapshots tree")?;
@@ -88,6 +93,7 @@ impl SledSnapshotStorage {
             overview_tree,
             overview_meta,
             account_tree,
+            equipment_tree,
             historical_tree,
             bet_history_tree,
             bettors_by_game_tree,
@@ -120,6 +126,13 @@ impl SledSnapshotStorage {
             self.account_tree
                 .flush()
                 .context("flush account snapshots during prune_from(0)")?;
+
+            self.equipment_tree
+                .clear()
+                .context("clear equipment snapshots during prune_from(0)")?;
+            self.equipment_tree
+                .flush()
+                .context("flush equipment snapshots during prune_from(0)")?;
 
             self.bet_history_tree
                 .clear()
@@ -213,6 +226,10 @@ impl SledSnapshotStorage {
 
     fn account_key(account: &Identity, game_id: u32) -> Vec<u8> {
         format!("{}|{}", Self::identity_key(account), game_id).into_bytes()
+    }
+
+    fn equipment_key(account: &Identity) -> Vec<u8> {
+        Self::identity_key(account).into_bytes()
     }
 
     fn identity_key(account: &Identity) -> String {
@@ -325,10 +342,32 @@ impl SledSnapshotStorage {
         Ok(())
     }
 
+    fn persist_equipment(
+        &self,
+        key: Vec<u8>,
+        record: &SnapshotRecord<EquipmentSnapshot>,
+    ) -> crate::Result<()> {
+        let bytes = Self::serialize_record(record, "equipment snapshot record")?;
+        self.equipment_tree
+            .insert(key, bytes)
+            .context("persist equipment snapshot")?;
+        self.equipment_tree
+            .flush()
+            .context("flush equipment snapshots")?;
+        Ok(())
+    }
+
     fn remove_account_entry(&self, key: &[u8]) -> crate::Result<()> {
         self.account_tree
             .remove(key)
             .context("remove account snapshot entry")?;
+        Ok(())
+    }
+
+    fn remove_equipment_entry(&self, key: &[u8]) -> crate::Result<()> {
+        self.equipment_tree
+            .remove(key)
+            .context("remove equipment snapshot entry")?;
         Ok(())
     }
 }
@@ -349,6 +388,19 @@ impl SnapshotStorage for SledSnapshotStorage {
             return Ok(None);
         };
         self.account_snapshot_at(account, record.snapshot.game_id)
+    }
+
+    fn latest_equipment_snapshot(
+        &self,
+        account: &Identity,
+    ) -> crate::Result<Option<(EquipmentSnapshot, u32)>> {
+        let key = Self::equipment_key(account);
+        let value = match self.equipment_tree.get(key)? {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        let record = deserialize::<SnapshotRecord<EquipmentSnapshot>>(value.as_ref())?;
+        Ok(Some((record.snapshot, record.height)))
     }
 
     fn account_snapshot_at(
@@ -566,6 +618,20 @@ impl SnapshotStorage for SledSnapshotStorage {
         self.persist_account(key, &record)
     }
 
+    fn update_equipment_snapshot(
+        &mut self,
+        account: &Identity,
+        equipment_snapshot: &EquipmentSnapshot,
+        height: u32,
+    ) -> crate::Result<()> {
+        let record = SnapshotRecord {
+            snapshot: equipment_snapshot.clone(),
+            height,
+        };
+        let key = Self::equipment_key(account);
+        self.persist_equipment(key, &record)
+    }
+
     fn roll_back_snapshots(&mut self, to_height: u32) -> crate::Result<()> {
         let mut latest_candidate = None;
 
@@ -604,6 +670,18 @@ impl SnapshotStorage for SledSnapshotStorage {
         self.account_tree
             .flush()
             .context("flush account snapshots")?;
+
+        for entry in self.equipment_tree.iter() {
+            let (key, value) = entry.context("iterate equipment snapshots")?;
+            let record =
+                deserialize::<SnapshotRecord<EquipmentSnapshot>>(value.as_ref())?;
+            if record.height > to_height {
+                self.remove_equipment_entry(key.as_ref())?;
+            }
+        }
+        self.equipment_tree
+            .flush()
+            .context("flush equipment snapshots")?;
 
         for entry in self.bet_history_tree.iter() {
             let (key, value) = entry.context("iterate bet history")?;

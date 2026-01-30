@@ -21,7 +21,7 @@ npm run preview
 
 ## Railway
 
-- Set the service root to `web-street` so Railway picks up `web-street/railpack.json`.
+- Set the Railway config file to `web-street/railpack.json`.
 - Add `VITE_INDEXER_URL` in the Railway service variables.
 - The build caches `node_modules`, `node_modules/.vite`, and the npm cache to speed deploys.
 
