@@ -24,13 +24,19 @@
 ## Binturong
 ### Features
 #### Equipped state + suit-up flow + shop + party menu
-- [ ] Contract: Add equipped state per player with required slot(s) and run-entry validation.
-- [ ] Contract: Add suit-up / opt-in action that checks required gear.
+- [x] Contract: Add equipped state per player with required slot(s).
+- [ ] Contract: Add run-entry validation for required gear.
+- [ ] Contract: Add suit-up / opt-in action.
+- [ ] Contract: Add suit-up validation that checks required gear.
 - [ ] Contract: Add a basic shop for level-1 straps (purchase + inventory update).
-- [ ] UI: Add a suit-up flow (select gear, confirm equipped state).
+- [x] UI: Add a suit-up flow (select gear, confirm equipped state).
+- [ ] UI: Add suit-up flow validation/error states for required gear.
 - [ ] UI: Add a shop screen for level-1 gear (browse, buy).
 - [ ] UI: Add a party menu showing your gear and party members' gear.
-- [ ] Indexer/API: Expose equipped state, shop items, inventory, and party roster/gear.
+- [x] Indexer/API: Expose equipped state.
+- [ ] Indexer/API: Expose shop items.
+- [ ] Indexer/API: Expose inventory.
+- [ ] Indexer/API: Expose party roster/gear.
 - [ ] Tests: Add tests for equip validation and shop purchase; add a UI smoke test.
 
 #### Run lifecycle + room generation
